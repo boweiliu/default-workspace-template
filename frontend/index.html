@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat Hub Alt</title>
+  </head>
+  <body class="app-body">
+    <div id="app"></div>
+    <script>
+      // One-way notice to an embedding host frame (if any) about which path
+      // is showing -- useful for a host that wants to reopen this app at the
+      // same place later. Not part of embed-contract.ts's request/response
+      // protocol since nothing replies to it; a no-op with no host present.
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "embed:location", path: location.pathname + location.search }, "*");
+      }
+    </script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>
