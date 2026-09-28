@@ -1,0 +1,11 @@
+name = "signup-preview"
+display_name = "Live click-through preview of the sign-up plan-selector redesign"
+icon = "icon.svg"
+priority = "user"
+program = "signup-preview"
+
+# How update-app boots a throwaway preview of this app: on a free port, over a
+# scratch copy of its data (see .agents/skills/update-app/scripts/preview_app.py).
+[preview]
+env = {SIGNUP_PREVIEW_PORT = "{port:main}", SIGNUP_PREVIEW_HOST = "{host}", SIGNUP_PREVIEW_DATA_DIR = "{copy:data}"}
+copies = {data = "data/.apps/signup-preview"}
