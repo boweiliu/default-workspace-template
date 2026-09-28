@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, jsonify, request, send_file
+from werkzeug.serving import run_simple
 
 # Persistent state for this app lives under DATA_DIR. It defaults to
 # ``data/.apps/signup-preview/`` but is overridable via the ``SIGNUP_PREVIEW_DATA_DIR`` env var
@@ -253,8 +254,6 @@ def health() -> Response:
 
 
 def main() -> None:
-    from werkzeug.serving import run_simple
-
     run_simple(
         "127.0.0.1", PORT, app, threaded=True, use_reloader=False, use_debugger=False
     )
