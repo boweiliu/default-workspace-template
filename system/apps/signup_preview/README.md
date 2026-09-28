@@ -14,6 +14,7 @@ Each PR under review has its own bundle, picked with `?pr=`:
 - `?pr=1439` -- the plan cards alone (plans still named Free).
 - `?pr=1440` -- the Free-to-Limited rename alone (still the dropdown).
 - no `pr`, or `?pr=both` -- both together.
+- `?pr=ally` -- the three-card variant with Ally (stacked on 1439), shown with the rename.
 
 Combine with the waitlist scenarios below, e.g. `/signup?pr=1439&waitlist=1`.
 
