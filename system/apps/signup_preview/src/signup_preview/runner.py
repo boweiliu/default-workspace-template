@@ -2,7 +2,7 @@
 
 Serves the connector frontend's real built bundle
 (``apps/remote_service_connector/frontend``, copied into
-``assets/accounts_dist/`` -- rebuild + recopy after any source change; see
+``assets/builds/<pr>/`` -- rebuild + recopy after any source change; see
 this app's README) behind an in-memory stub of the pages it needs
 (``/login``, ``/signup``, ``/manage``, the static doc pages) and its JSON API
 (``/accounts/api/*``), mirroring the routes the real backend
@@ -63,10 +63,13 @@ DATA_DIR = Path(os.environ.get("SIGNUP_PREVIEW_DATA_DIR", "data/.apps/signup-pre
 # Never hardcode the port at the ``run_simple`` call, or the override is bypassed.
 PORT = int(os.environ.get("SIGNUP_PREVIEW_PORT", "8080"))
 
-# The real built connector-frontend bundle, copied in from
-# .external_worktrees/mngr/apps/remote_service_connector/frontend/dist -- see
-# this app's README for the rebuild-and-recopy command.
-_DIST_DIR = Path(__file__).parent / "assets" / "accounts_dist"
+# The real built connector-frontend bundles, one per PR under review, each
+# copied in from .external_worktrees/mngr/apps/remote_service_connector/frontend/dist
+# built on that PR's branch -- see this app's README for the rebuild-and-recopy
+# command. A page picks its bundle with ?pr=<number>; "both" is every PR
+# together and the default.
+_BUILDS_DIR = Path(__file__).parent / "assets" / "builds"
+_DEFAULT_BUILD = "both"
 
 # Sessions: cookie value -> {"user_id", "email"}. In-memory only, no
 # real auth backend -- sign-up/sign-in always succeed. Resets on restart.
@@ -84,8 +87,16 @@ _LOCATION_BEACON = (
 )
 
 
+def _build_dir() -> Path:
+    """The bundle this request's page asked for (?pr= on the page, else its Referer)."""
+    requested = request.args.get("pr") or _page_query().get("pr", [""])[0]
+    if requested and (_BUILDS_DIR / requested).is_dir() and "/" not in requested:
+        return _BUILDS_DIR / requested
+    return _BUILDS_DIR / _DEFAULT_BUILD
+
+
 def _serve_dist_file(filename: str) -> Response:
-    page_path = _DIST_DIR / filename
+    page_path = _build_dir() / filename
     if not page_path.is_file():
         return Response(
             f"<!doctype html><html><body><h1>Preview bundle missing: {filename}</h1>"
@@ -131,11 +142,14 @@ def privacy_policy() -> Response:
 
 @app.route("/accounts/assets/<path:asset_path>")
 def accounts_asset(asset_path: str) -> Response:
-    assets_dir = (_DIST_DIR / "assets").resolve()
-    candidate = (assets_dir / asset_path).resolve()
-    if not candidate.is_relative_to(assets_dir) or not candidate.is_file():
-        return Response("Not found", status=404)
-    return send_file(candidate)
+    # Vite content-hashes asset names, so each bundle's files are distinct and
+    # an asset can be looked up across every bundle.
+    for build_dir in sorted(_BUILDS_DIR.iterdir()):
+        assets_dir = (build_dir / "assets").resolve()
+        candidate = (assets_dir / asset_path).resolve()
+        if candidate.is_relative_to(assets_dir) and candidate.is_file():
+            return send_file(candidate)
+    return Response("Not found", status=404)
 
 
 def _current_session() -> dict[str, str] | None:

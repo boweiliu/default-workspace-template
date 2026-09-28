@@ -9,6 +9,14 @@ across a restart.
 
 ## Scenarios
 
+Each PR under review has its own bundle, picked with `?pr=`:
+
+- `?pr=1439` -- the plan cards alone (plans still named Free).
+- `?pr=1440` -- the Free-to-Limited rename alone (still the dropdown).
+- no `pr`, or `?pr=both` -- both together.
+
+Combine with the waitlist scenarios below, e.g. `/signup?pr=1439&waitlist=1`.
+
 - `/signup` -- the waitlist off (dev tiers): the plan cards are selectable.
 - `/signup?waitlist=1` -- production's default for a signup with no invite
   code: the cards are greyed out under the "Guest (waitlist)" note.
@@ -17,15 +25,17 @@ across a restart.
 
 ## Updating after a source change
 
-The bundle in `src/signup_preview/assets/accounts_dist/` is a snapshot, not
+The bundles in `src/signup_preview/assets/builds/` are snapshots, not
 a live link. After changing the connector frontend
 (`apps/remote_service_connector/frontend` in the `mngr` external worktree),
-rebuild and recopy it, then restart:
+rebuild on the PR's branch and recopy it into that PR's bundle, then restart:
 
 ```bash
 cd .external_worktrees/mngr/apps/remote_service_connector/frontend
-pnpm run build
-cp -r dist/* /home/user/workspace/system/apps/signup_preview/src/signup_preview/assets/accounts_dist/
+pnpm install --frozen-lockfile && pnpm run build
+rm -rf /home/user/workspace/system/apps/signup_preview/src/signup_preview/assets/builds/<pr>
+mkdir -p /home/user/workspace/system/apps/signup_preview/src/signup_preview/assets/builds/<pr>
+cp -r dist/* /home/user/workspace/system/apps/signup_preview/src/signup_preview/assets/builds/<pr>/
 supervisorctl restart signup-preview
 ```
 
