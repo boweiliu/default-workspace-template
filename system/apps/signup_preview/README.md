@@ -11,12 +11,11 @@ across a restart.
 
 Each PR under review has its own bundle, picked with `?pr=`:
 
-- `?pr=1439` -- the plan cards alone (plans still named Free).
-- `?pr=1440` -- the Free-to-Limited rename alone (still the dropdown).
-- no `pr`, or `?pr=both` -- both together.
-- `?pr=ally` -- the three-card variant with Ally (stacked on 1439), shown with the rename.
+- `?pr=two` -- the 2-card alternative (Limited, Explorer; PR 1449).
+- `?pr=three` -- the 3-card alternative (Limited, Explorer, Ally; PR 1450).
+- `1439`, `1440`, `ally`, `both` -- earlier, now-closed PRs, kept so old links still load.
 
-Combine with the waitlist scenarios below, e.g. `/signup?pr=1439&waitlist=1`.
+Combine with the waitlist scenarios below, e.g. `/signup?pr=two&waitlist=1`.
 
 - `/signup` -- the waitlist off (dev tiers): the plan cards are selectable.
 - `/signup?waitlist=1` -- production's default for a signup with no invite
