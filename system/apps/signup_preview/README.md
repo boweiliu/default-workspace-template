@@ -7,6 +7,14 @@ its API (`/accounts/api/*`) -- no real backend, no auth, no database. Signing
 up or in always succeeds and sets a fake session cookie; nothing persists
 across a restart.
 
+## Scenarios
+
+- `/signup` -- the waitlist off (dev tiers): the plan cards are selectable.
+- `/signup?waitlist=1` -- production's default for a signup with no invite
+  code: the cards are greyed out under the "Guest (waitlist)" note.
+- `/signup?invite=someone@example.com` -- an invited signup: the cards are
+  selectable under the invited-email line.
+
 ## Updating after a source change
 
 The bundle in `src/signup_preview/assets/accounts_dist/` is a snapshot, not

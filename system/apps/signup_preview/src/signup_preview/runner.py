@@ -40,6 +40,8 @@ unmodified -- nothing rewrites anything.
 
 import os
 import secrets
+from urllib.parse import parse_qs
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,8 @@ def _serve_dist_file(filename: str) -> Response:
 @app.route("/auth/reset-password")
 @app.route("/auth/verify-email")
 @app.route("/check-inbox")
+@app.route("/downloads")
+@app.route("/invite")
 def spa_page() -> Response:
     return _serve_dist_file("index.html")
 
@@ -140,12 +144,51 @@ def _current_session() -> dict[str, str] | None:
     return _SESSIONS.get(cookie)
 
 
+def _page_query() -> dict[str, list[str]]:
+    """The query string of the page that made this API call (from Referer).
+
+    The SPA fetches its config without forwarding the page's query, so the
+    preview reads it back from the same-origin Referer to pick a scenario.
+    """
+    return parse_qs(urlparse(request.headers.get("Referer", "")).query)
+
+
 @app.route("/accounts/api/config")
 def accounts_config() -> Response:
     # google_enabled=True so the preview matches the real default (Google
     # leads the sign-up tab) -- this is what Josh's review flagged as missing
     # from an earlier preview build.
-    return jsonify({"turnstile_site_key": "", "google_enabled": True})
+    #
+    # Preview-only scenarios, picked by the page's own query string:
+    # ?waitlist=1 is the production default for a code-less signup (the
+    # waitlist is on and no invite code is present); ?invite=<email> adds a
+    # presented invite code for that email. Neither is the real backend's
+    # contract -- the real config reads a cookie set by /invite/<code>.
+    query = _page_query()
+    invited_email = query.get("invite", [""])[0]
+    is_waitlist_enabled = bool(invited_email) or query.get("waitlist", [""])[0] == "1"
+    return jsonify(
+        {
+            "turnstile_site_key": "",
+            "google_enabled": True,
+            "waitlist_enabled": is_waitlist_enabled,
+            "signup_code": {"email": invited_email, "pinned_plan": None} if invited_email else None,
+        }
+    )
+
+
+@app.route("/accounts/api/downloads")
+def accounts_downloads() -> Response:
+    # The waitlist-off answer: the three installers, as the real API lists them.
+    return jsonify(
+        {
+            "platforms": [
+                {"platform": "mac-arm64", "label": "macOS (Apple silicon)", "url": "#"},
+                {"platform": "linux-deb", "label": "Linux (.deb)", "url": "#"},
+                {"platform": "linux-appimage", "label": "Linux (AppImage)", "url": "#"},
+            ]
+        }
+    )
 
 
 @app.route("/accounts/api/me")
