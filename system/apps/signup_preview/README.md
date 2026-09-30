@@ -13,6 +13,8 @@ Each PR under review has its own bundle, picked with `?pr=`:
 
 - `?pr=two` -- the 2-card alternative (Limited, Explorer; PR 1449).
 - `?pr=three` -- the 3-card alternative (Limited, Explorer, Ally; PR 1450).
+- `?pr=main` -- current `main`, unmodified -- the "before" for any PR's comparison.
+- `?pr=studio-wordmark` -- the "Studio" wordmark placeholder (PR 1529).
 - `1439`, `1440`, `ally`, `both` -- earlier, now-closed PRs, kept so old links still load.
 
 Combine with the waitlist scenarios below, e.g. `/signup?pr=two&waitlist=1`.
