@@ -61,6 +61,9 @@ DOC_PAGES: dict[str, str] = {
 FALLBACK_ROUTES = ("/login", "/signup")
 
 NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# A page path becomes a directory under each side of the site, so it is held to
+# plain route segments (no dots, no empty segments).
+PAGE_PATTERN = re.compile(r"^(?:/[a-z0-9][a-z0-9_-]*)+$")
 
 
 class PreviewError(Exception):
@@ -82,6 +85,8 @@ def page_state(path: str) -> str:
 
 def page_dir_name(path: str) -> str:
     """The directory a page is written to under a side: ``/auth/verify-email`` -> ``auth/verify-email``."""
+    if not PAGE_PATTERN.fullmatch(path):
+        raise PreviewError(f"page {path!r} is not a plain route like /login or /auth/verify-email")
     return path.strip("/")
 
 

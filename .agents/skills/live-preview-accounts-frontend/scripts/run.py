@@ -30,6 +30,7 @@ from accounts_preview_common import (  # noqa: E402
     PAGE_CATALOG,
     PreviewError,
     Workspace,
+    page_dir_name,
     resolve_commit,
     validate_name,
 )
@@ -65,8 +66,7 @@ def parse_pages(value: str) -> list[str]:
     pages = [part.strip() for part in value.split(",") if part.strip()]
     known = set(PAGE_CATALOG) | set(DOC_PAGES)
     for page in pages:
-        if not page.startswith("/"):
-            raise PreviewError(f"page {page!r} must be a path like /login")
+        page_dir_name(page)
         if page not in known:
             _say(f"note: {page} is not a page this skill knows; it is captured signed out under its path")
     return sorted(dict.fromkeys(pages), key=route_sort_key)

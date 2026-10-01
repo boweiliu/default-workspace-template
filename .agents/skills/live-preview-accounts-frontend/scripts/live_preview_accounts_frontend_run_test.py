@@ -10,8 +10,9 @@ NAME = "studio-wordmark-preview"
 
 def test_parse_pages_orders_main_pages_first_and_drops_duplicates() -> None:
     assert run.parse_pages("/terms-of-service, /check-inbox,/login,/login") == ["/login", "/check-inbox", "/terms-of-service"]
-    with pytest.raises(PreviewError, match="must be a path"):
-        run.parse_pages("login")
+    for bad in ("login", "/../escape", "/a//b", "/a/"):
+        with pytest.raises(PreviewError, match="not a plain route"):
+            run.parse_pages(bad)
 
 
 @pytest.mark.parametrize(
