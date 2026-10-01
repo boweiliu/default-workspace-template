@@ -103,7 +103,7 @@ def test_a_failed_build_leaves_no_worktree_and_no_partial_bundle(workspace: Work
         build_side(workspace, "x-preview", "after", "main", None)
     worktrees = subprocess.run(["git", "-C", str(repo), "worktree", "list"], capture_output=True, text=True).stdout
     assert len(worktrees.splitlines()) == 1
-    assert list((workspace.scratch / "worktrees").iterdir()) == []
+    assert not workspace.scratch.exists()
     assert not (workspace.app_dir("x-preview") / "builds").exists() or not any(
         (workspace.app_dir("x-preview") / "builds").iterdir()
     )

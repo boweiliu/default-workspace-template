@@ -116,13 +116,12 @@ def test_read_change_takes_the_merge_base_diff_from_git(tmp_path: Path) -> None:
     repo = tmp_path / "mngr"
     subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
     base_files = {f"{FRONTEND_PATH}/{path}": text for path, text in SOURCES.items()}
-    base = _commit(repo, base_files, "base")
+    _commit(repo, base_files, "base")
     subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
     after = _commit(repo, {f"{FRONTEND_PATH}/src/DownloadsPage.ts": SOURCES["src/DownloadsPage.ts"] + "// tweak\n"}, "tweak")
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
     # main moves on after the branch point; the merge-base diff must not pick this up.
     main_tip = _commit(repo, {f"{FRONTEND_PATH}/src/ManagePage.ts": SOURCES["src/ManagePage.ts"] + "// later\n"}, "later")
     changed, sources = read_change(repo, main_tip, after)
-    assert base
     assert changed == ["src/DownloadsPage.ts"]
     assert discover_pages(changed, sources)[0] == ["/downloads"]

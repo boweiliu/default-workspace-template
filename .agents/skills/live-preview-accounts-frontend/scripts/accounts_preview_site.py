@@ -133,6 +133,7 @@ def build_side(ws: Workspace, name: str, side: str, ref: str, deploy_id: str | N
             git(ws.mngr_repo, "worktree", "remove", "--force", str(worktree), check=False)
             git(ws.mngr_repo, "worktree", "prune", check=False)
         shutil.rmtree(worktree, ignore_errors=True)
+        _remove_if_empty(worktree.parent, ws.scratch)
     remote = git(ws.mngr_repo, "remote", "get-url", "origin", check=False).strip()
     github = _github_url(remote)
     subject, committed_at = git(ws.mngr_repo, "log", "-1", "--format=%s%n%cI", commit).splitlines()[:2]
@@ -151,6 +152,15 @@ def build_side(ws: Workspace, name: str, side: str, ref: str, deploy_id: str | N
     (staging / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     _swap_in(staging, final)
     return provenance
+
+
+def _remove_if_empty(*directories: Path) -> None:
+    """Drop scratch directories once nothing is left in them (a parallel build may still be using one)."""
+    for directory in directories:
+        try:
+            directory.rmdir()
+        except OSError:
+            return
 
 
 def _swap_in(staging: Path, final: Path) -> None:
