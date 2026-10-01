@@ -261,6 +261,27 @@ _SERIALIZE_JS = """([side, captured]) => {
 }"""
 
 
+# Runs in the captured page: resolve once #app shows text and its markup has
+# stopped changing (unchanged across three samples 200 ms apart), or false
+# after 15 s. "networkidle" alone is not enough: under load the bundle can
+# still be on its first, text-less spinner render when the network goes quiet.
+_SETTLE_JS = """async () => {
+  const deadline = Date.now() + 15000;
+  let last = null;
+  let steady = 0;
+  while (Date.now() < deadline) {
+    const app = document.getElementById('app');
+    const markup = app ? app.innerHTML : '';
+    const hasText = app ? app.innerText.trim().length > 0 : false;
+    steady = hasText && markup === last ? steady + 1 : 0;
+    if (steady >= 2) return true;
+    last = markup;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}"""
+
+
 def capture_page(
     browser: Any,
     dist: Path,
@@ -311,10 +332,8 @@ def capture_page(
         page = context.new_page()
         page.on("pageerror", lambda error: page_errors.append(str(error)))
         page.goto(CAPTURE_ORIGIN + path, wait_until="networkidle", timeout=30000)
-        page.wait_for_function(
-            "document.getElementById('app')?.children.length > 0", timeout=10000
-        )
-        page.wait_for_timeout(300)
+        if not page.evaluate(_SETTLE_JS):
+            page_errors.append("the page never settled into a rendered view with text")
         final_path = (
             page.url[len(CAPTURE_ORIGIN) :]
             if page.url.startswith(CAPTURE_ORIGIN)

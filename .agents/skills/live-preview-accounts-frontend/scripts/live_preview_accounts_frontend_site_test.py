@@ -272,3 +272,25 @@ def test_a_page_that_redirects_elsewhere_fails_the_render_and_leaves_the_old_sit
     assert [
         p.name for p in site.parent.iterdir() if p.name.startswith(".site.staging")
     ] == []
+
+
+@needs_browser
+def test_capture_waits_for_a_late_render_rather_than_saving_the_spinner(
+    browser, tmp_path: Path
+) -> None:
+    late = (
+        "app.innerHTML = '<div class=spinner></div>';"
+        "setTimeout(() => { app.innerHTML = '<h1>Rendered late</h1>'; }, 1500);"
+    )
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "assets" / "index-abc.js").write_text(
+        "const app = document.getElementById('app');" + late
+    )
+    (dist / "index.html").write_text(
+        '<!doctype html><html><head><script type="module" src="/accounts/assets/index-abc.js"></script>'
+        '</head><body><div id="app"></div></body></html>'
+    )
+    result = _capture(browser, dist, "/login")
+    assert "<h1>Rendered late</h1>" in result["html"]
+    assert result["page_errors"] == []
