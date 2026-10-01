@@ -25,7 +25,12 @@ def _isolate_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def workspace(tmp_path: Path) -> Workspace:
     root = tmp_path / "workspace"
-    for directory in ("data/.state", "data/.secrets", "data/.apps", "system/supervisord.conf.d"):
+    for directory in (
+        "data/.state",
+        "data/.secrets",
+        "data/.apps",
+        "system/supervisord.conf.d",
+    ):
         (root / directory).mkdir(parents=True)
     return Workspace(root, tmp_path / "mngr")
 

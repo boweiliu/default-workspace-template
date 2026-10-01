@@ -86,7 +86,9 @@ def page_state(path: str) -> str:
 def page_dir_name(path: str) -> str:
     """The directory a page is written to under a side: ``/auth/verify-email`` -> ``auth/verify-email``."""
     if not PAGE_PATTERN.fullmatch(path):
-        raise PreviewError(f"page {path!r} is not a plain route like /login or /auth/verify-email")
+        raise PreviewError(
+            f"page {path!r} is not a plain route like /login or /auth/verify-email"
+        )
     return path.strip("/")
 
 
@@ -108,7 +110,9 @@ class Workspace:
 
     def __init__(self, root: Path, mngr_repo: Path | None = None) -> None:
         self.root = root.absolute()
-        self.mngr_repo = (mngr_repo or self.root / ".external_worktrees" / "mngr").absolute()
+        self.mngr_repo = (
+            mngr_repo or self.root / ".external_worktrees" / "mngr"
+        ).absolute()
 
     @property
     def frontend(self) -> Path:
@@ -176,18 +180,35 @@ class Workspace:
 
 def load_forward_port() -> ModuleType:
     """The workspace's registration script, loaded by path (it is stdlib-only and not a package)."""
-    return _load_module("_forward_port", DEFAULT_ROOT / "system" / "scripts" / "forward_port.py")
+    return _load_module(
+        "_forward_port", DEFAULT_ROOT / "system" / "scripts" / "forward_port.py"
+    )
 
 
 def load_grants_module() -> ModuleType:
     """The share gateway's grants module (stdlib-only), so this skill writes grants exactly as the gateway does."""
     return _load_module(
-        "_share_gateway_grants", DEFAULT_ROOT / "system" / "services" / "share_gateway" / "src" / "share_gateway" / "grants.py"
+        "_share_gateway_grants",
+        DEFAULT_ROOT
+        / "system"
+        / "services"
+        / "share_gateway"
+        / "src"
+        / "share_gateway"
+        / "grants.py",
     )
 
 
 def load_claude_p() -> ModuleType:
-    return _load_module("_claude_p", DEFAULT_ROOT / ".agents" / "skills" / "use-ai-integration" / "scripts" / "claude_p.py")
+    return _load_module(
+        "_claude_p",
+        DEFAULT_ROOT
+        / ".agents"
+        / "skills"
+        / "use-ai-integration"
+        / "scripts"
+        / "claude_p.py",
+    )
 
 
 def _load_module(module_name: str, path: Path) -> ModuleType:
@@ -205,19 +226,70 @@ def _load_module(module_name: str, path: Path) -> ModuleType:
 
 
 def validate_name(name: str) -> None:
-    if not NAME_PATTERN.fullmatch(name):
-        raise PreviewError(f"invalid preview name {name!r}: use kebab-case, e.g. 'studio-wordmark-preview'")
+    if (
+        not NAME_PATTERN.fullmatch(name)
+        or not name.endswith("-preview")
+        or name == "-preview"
+    ):
+        raise PreviewError(
+            f"invalid preview name {name!r}: use kebab-case ending in -preview, e.g. 'studio-wordmark-preview'"
+        )
     problem = load_forward_port().validate_service_name(name)
     if problem is not None:
         raise PreviewError(problem)
 
 
-def git(repo: Path, *args: str, check: bool = True, extra_config: tuple[str, ...] = ()) -> str:
+def is_owned(ws: "Workspace", name: str) -> bool:
+    """Whether ``data/.apps/<name>/`` is a preview this skill made (its state carries the skill's marker)."""
+    return ws.load_state(name).get("skill") == SKILL_NAME
+
+
+def claim_name(ws: "Workspace", name: str) -> None:
+    """Refuse a name some other app already uses; a preview this skill made may be re-run."""
+    if is_owned(ws, name):
+        return
+    taken: list[str] = []
+    if name in _registry_names(ws.apps_registry):
+        taken.append(f"it is registered in {ws.apps_registry}")
+    if ws.app_dir(name).exists():
+        taken.append(f"{ws.app_dir(name)} already exists")
+    for conf in {ws.supervisord_dropins / f"{name}.conf", ws.conf_path(name)}:
+        if conf.exists():
+            taken.append(f"{conf} already exists")
+    if taken:
+        raise PreviewError(
+            f"the name {name!r} is taken ({'; '.join(taken)}); pick another --name"
+        )
+    ws.update_state(name, skill=SKILL_NAME)
+
+
+def require_owned(ws: "Workspace", name: str) -> None:
+    if not is_owned(ws, name):
+        raise PreviewError(
+            f"there is no preview named {name!r} made by this skill -- run the pages step first"
+        )
+
+
+def _registry_names(registry: Path) -> set[str]:
+    if not registry.is_file():
+        return set()
+    return {
+        str(app.get("name"))
+        for app in tomllib.loads(registry.read_text()).get("apps", [])
+    }
+
+
+def git(
+    repo: Path, *args: str, check: bool = True, extra_config: tuple[str, ...] = ()
+) -> str:
     config_args: list[str] = []
     for entry in extra_config:
         config_args += ["-c", entry]
     proc = subprocess.run(
-        ["git", *config_args, "-C", str(repo), *args], capture_output=True, text=True, check=False
+        ["git", *config_args, "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise PreviewError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
@@ -226,13 +298,23 @@ def git(repo: Path, *args: str, check: bool = True, extra_config: tuple[str, ...
 
 def resolve_commit(repo: Path, ref: str) -> str:
     proc = subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{ref}^{{commit}}",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
-        raise PreviewError(f"unknown git ref {ref!r} in {repo} (run the fetch step first?)")
+        raise PreviewError(
+            f"unknown git ref {ref!r} in {repo} (run the fetch step first?)"
+        )
     return proc.stdout.strip()
 
 

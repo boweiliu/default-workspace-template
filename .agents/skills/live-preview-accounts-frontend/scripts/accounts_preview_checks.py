@@ -25,8 +25,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import sync_playwright
-
 from accounts_preview_common import (
     DOC_PAGES,
     PROD_BASE,
@@ -38,6 +36,7 @@ from accounts_preview_common import (
     utc_now,
 )
 from accounts_preview_site import VIEWPORT, http_get, launch_browser, side_url
+from playwright.sync_api import sync_playwright
 
 REVIEW_MODEL = "claude-haiku-4-5"
 
@@ -103,10 +102,16 @@ def compare_with_prod(before_dist: Path) -> dict[str, Any]:
 def _pixel_diff(page: Any, first: bytes, second: bytes) -> dict[str, Any]:
     if first == second:
         return {"identical": True, "ratio": 0.0}
-    result = page.evaluate(_PIXEL_DIFF_JS, [base64.b64encode(first).decode(), base64.b64encode(second).decode()])
+    result = page.evaluate(
+        _PIXEL_DIFF_JS,
+        [base64.b64encode(first).decode(), base64.b64encode(second).decode()],
+    )
     if not result["same_size"]:
         return {"identical": False, "ratio": 1.0, "sizes": result["sizes"]}
-    return {"identical": result["differing"] == 0, "ratio": result["differing"] / max(result["total"], 1)}
+    return {
+        "identical": result["differing"] == 0,
+        "ratio": result["differing"] / max(result["total"], 1),
+    }
 
 
 def _shoot(context: Any, url: str) -> tuple[int | None, bytes, bool]:
@@ -115,8 +120,14 @@ def _shoot(context: Any, url: str) -> tuple[int | None, bytes, bool]:
     try:
         response = page.goto(url, wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(300)
-        has_text = bool(page.evaluate("document.body && document.body.innerText.trim().length > 0"))
-        return (response.status if response else None), page.screenshot(full_page=True), has_text
+        has_text = bool(
+            page.evaluate("document.body && document.body.innerText.trim().length > 0")
+        )
+        return (
+            (response.status if response else None),
+            page.screenshot(full_page=True),
+            has_text,
+        )
     finally:
         page.close()
 
@@ -128,7 +139,9 @@ def _sheet_html(label: str, panels: list[tuple[str, bytes | None]]) -> str:
             body = '<div class="na">No prod comparison: this view is captured signed in as a sample account.</div>'
         else:
             body = f'<img src="data:image/png;base64,{base64.b64encode(png).decode()}">'
-        cells.append(f"<div class=cell><div class=cap>{html.escape(caption)}</div>{body}</div>")
+        cells.append(
+            f"<div class=cell><div class=cap>{html.escape(caption)}</div>{body}</div>"
+        )
     return (
         "<!doctype html><html><head><style>"
         "body{margin:0;font:600 14px system-ui,sans-serif;background:#d0d0d0}"
@@ -141,14 +154,20 @@ def _sheet_html(label: str, panels: list[tuple[str, bytes | None]]) -> str:
 
 
 def verify_preview(
-    ws: Workspace, name: str, pages: list[str], local_url: str, allow_prod_mismatch: bool = False
+    ws: Workspace,
+    name: str,
+    pages: list[str],
+    local_url: str,
+    allow_prod_mismatch: bool = False,
 ) -> dict[str, Any]:
     """Run every check against the hosted preview; writes ``site/_raw/verify/`` and returns the report."""
     out = ws.site_dir(name) / "_raw" / "verify"
     out.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
     warnings: list[str] = []
-    prod = compare_with_prod(ws.build_dir(name, "before") / "dist")
+    # The rendered site's own copy of the before bundle: a newer build that was
+    # never rendered must not vouch for pages rendered from an older one.
+    prod = compare_with_prod(ws.site_dir(name) / "_raw" / "before" / "dist")
     if not prod["assets_match"]:
         message = (
             f"the before build's assets {prod['before_assets']} are not the ones prod serves "
@@ -171,10 +190,14 @@ def verify_preview(
                 entry: dict[str, Any] = {"label": label, "state": page_state(path)}
                 shots: dict[str, bytes] = {}
                 for side in ("before", "after"):
-                    status, png, has_text = _shoot(context, local_url.rstrip("/") + side_url(side, path))
+                    status, png, has_text = _shoot(
+                        context, local_url.rstrip("/") + side_url(side, path)
+                    )
                     entry[f"{side}_status"] = status
                     if status != 200 or not has_text:
-                        failures.append(f"{label} ({side}) did not load: status {status}, visible text {has_text}")
+                        failures.append(
+                            f"{label} ({side}) did not load: status {status}, visible text {has_text}"
+                        )
                     shots[side] = png
                     (out / f"{slug}.{side}.png").write_bytes(png)
                 prod_png: bytes | None = None
@@ -196,10 +219,19 @@ def verify_preview(
                 sheet_page = context.new_page()
                 try:
                     sheet_page.set_content(
-                        _sheet_html(label, [("prod", prod_png), ("before", shots["before"]), ("after", shots["after"])])
+                        _sheet_html(
+                            label,
+                            [
+                                ("prod", prod_png),
+                                ("before", shots["before"]),
+                                ("after", shots["after"]),
+                            ],
+                        )
                     )
                     sheet_page.wait_for_timeout(200)
-                    (out / f"{slug}.sheet.png").write_bytes(sheet_page.screenshot(full_page=True))
+                    (out / f"{slug}.sheet.png").write_bytes(
+                        sheet_page.screenshot(full_page=True)
+                    )
                 finally:
                     sheet_page.close()
                 entry["sheet"] = f"{slug}.sheet.png"
@@ -246,8 +278,12 @@ def parse_review(text: str, routes: list[str]) -> list[dict[str, Any]]:
     try:
         verdicts = json.loads(text[start : end + 1])
     except json.JSONDecodeError as error:
-        raise PreviewError(f"the review answer was not valid JSON ({error}): {text[:300]!r}") from error
-    if not isinstance(verdicts, list) or not all(isinstance(item, dict) for item in verdicts):
+        raise PreviewError(
+            f"the review answer was not valid JSON ({error}): {text[:300]!r}"
+        ) from error
+    if not isinstance(verdicts, list) or not all(
+        isinstance(item, dict) for item in verdicts
+    ):
         raise PreviewError("the review answer was not a list of objects")
     answered = {str(item.get("page")) for item in verdicts}
     missing = [route for route in routes if route not in answered]
@@ -257,7 +293,11 @@ def parse_review(text: str, routes: list[str]) -> list[dict[str, Any]]:
 
 
 def review_preview(
-    ws: Workspace, name: str, report: dict[str, Any], intent: str, model: str = REVIEW_MODEL
+    ws: Workspace,
+    name: str,
+    report: dict[str, Any],
+    intent: str,
+    model: str = REVIEW_MODEL,
 ) -> dict[str, Any]:
     """One Claude call over every side-by-side sheet; writes ``site/_raw/verify/review.json``."""
     from_dir = ws.site_dir(name) / "_raw" / "verify"
@@ -267,7 +307,9 @@ def review_preview(
         if entry.get("sheet")
     ]
     if not sheets:
-        raise PreviewError("no side-by-side sheets to review -- run the verify step first")
+        raise PreviewError(
+            "no side-by-side sheets to review -- run the verify step first"
+        )
     claude_p = load_claude_p()
     result = claude_p.claude_p_task(
         review_prompt(intent, sheets),

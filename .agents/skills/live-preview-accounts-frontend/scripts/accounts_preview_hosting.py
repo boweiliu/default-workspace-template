@@ -32,6 +32,7 @@ from accounts_preview_common import (
     SKILL_DIR,
     PreviewError,
     Workspace,
+    is_owned,
     load_grants_module,
     page_label,
     program_name,
@@ -43,7 +44,10 @@ from accounts_preview_site import side_url
 LOWEST_PORT = 8080
 # Ports the template's services hold that may not appear in a drop-in's URL.
 _RESERVED_PORTS = {8000, 8010, 8030, 8081}
-_PORT_IN_TEXT = re.compile(r"(?:localhost|127\.0\.0\.1):(\d{2,5})|http\.server\s+(\d{2,5})")
+SKILL_MARKER = "made by the live-preview-accounts-frontend skill"
+_PORT_IN_TEXT = re.compile(
+    r"(?:localhost|127\.0\.0\.1):(\d{2,5})|http\.server\s+(\d{2,5})"
+)
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
@@ -93,8 +97,10 @@ def conf_text(ws: Workspace, name: str, port: int) -> str:
         f"python3 system/scripts/forward_port.py --name {name} --url http://localhost:{port} "
         f"--icon-file {app}/icon.svg --display-name '{display_name(name)}' --program {program}"
     )
-    serve = f"exec python3 -m http.server {port} --bind 127.0.0.1 --directory {app}/site"
-    return f"""; Throwaway before/after preview made by the live-preview-accounts-frontend skill.
+    serve = (
+        f"exec python3 -m http.server {port} --bind 127.0.0.1 --directory {app}/site"
+    )
+    return f"""; Throwaway before/after preview {SKILL_MARKER}.
 ; Remove with: uv run .agents/skills/live-preview-accounts-frontend/scripts/run.py teardown --name {name}
 [program:{program}]
 command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "{register} && {serve}"
@@ -130,7 +136,6 @@ def _wait_until_serving(url: str, timeout: float) -> bool:
 def host_preview(
     ws: Workspace,
     name: str,
-    state: dict[str, Any],
     run: Runner = _run,
     wait_timeout: float = 60,
     is_serving: Callable[[str, float], bool] = _wait_until_serving,
@@ -139,26 +144,47 @@ def host_preview(
     program = program_name(name)
     conf = ws.conf_path(name)
     if not (ws.site_dir(name) / "index.html").is_file():
-        raise PreviewError(f"no rendered site for {name!r} -- run the render step first")
+        raise PreviewError(
+            f"no rendered site for {name!r} -- run the render step first"
+        )
     created = False
     if conf.exists():
-        port = state.get("port")
-        if not port or f"[program:{program}]" not in conf.read_text():
-            raise PreviewError(f"{conf} exists but was not made for preview {name!r}; pick another --name")
+        text = conf.read_text()
+        match = re.search(r"http\.server (\d+)", text)
+        if (
+            f"[program:{program}]" not in text
+            or SKILL_MARKER not in text
+            or match is None
+        ):
+            raise PreviewError(
+                f"{conf} exists but was not made for preview {name!r}; pick another --name"
+            )
+        port = int(match.group(1))
     else:
         port = pick_port(ws)
         shutil.copy2(SKILL_DIR / "assets" / "icon.svg", ws.app_dir(name) / "icon.svg")
         conf.write_text(conf_text(ws, name, port))
         created = True
-        for command in (["supervisorctl", "reread"], ["supervisorctl", "update", program]):
+    # Recorded before anything can fail, so a re-run finds its own program again.
+    ws.update_state(name, port=port)
+    status = run(["supervisorctl", "status", program])
+    if created or "no such process" in (status.stdout + status.stderr).lower():
+        for command in (
+            ["supervisorctl", "reread"],
+            ["supervisorctl", "update", program],
+        ):
             result = run(command)
             if result.returncode != 0:
-                raise PreviewError(f"{' '.join(command)} failed: {result.stdout}{result.stderr}")
-    status = run(["supervisorctl", "status", program])
+                raise PreviewError(
+                    f"{' '.join(command)} failed: {result.stdout}{result.stderr}"
+                )
+        status = run(["supervisorctl", "status", program])
     if "RUNNING" not in status.stdout:
         started = run(["supervisorctl", "start", program])
         if started.returncode != 0 and "already started" not in started.stdout:
-            raise PreviewError(f"supervisorctl start {program} failed: {started.stdout}{started.stderr}")
+            raise PreviewError(
+                f"supervisorctl start {program} failed: {started.stdout}{started.stderr}"
+            )
     if not is_serving(f"http://127.0.0.1:{port}/", wait_timeout):
         raise PreviewError(
             f"the preview did not answer on port {port} within {wait_timeout:.0f}s; "
@@ -170,17 +196,25 @@ def host_preview(
 def public_base_url(ws: Workspace, name: str) -> str:
     domain = read_share_domain(ws.share_env)
     if domain is None:
-        raise PreviewError(f"workspace sharing is not enabled ({ws.share_env} has no SHARE_WORKSPACE_DOMAIN)")
+        raise PreviewError(
+            f"workspace sharing is not enabled ({ws.share_env} has no SHARE_WORKSPACE_DOMAIN)"
+        )
     label = read_registry_label(ws.apps_registry, name)
     if label is None:
-        raise PreviewError(f"{name!r} is not registered in {ws.apps_registry} -- run the host step first")
+        raise PreviewError(
+            f"{name!r} is not registered in {ws.apps_registry} -- run the host step first"
+        )
     return f"https://{label}.{domain}"
 
 
 def _load_or_empty_grants(grants: Any, path: Path) -> Any:
-    if path.exists():
+    """The grants document, an empty one when there is no file, or None when it is malformed."""
+    if not path.exists():
+        return grants.Grants(workspace=grants.GrantList([], [], []), services={})
+    try:
         return grants.load_grants(path)
-    return grants.Grants(workspace=grants.GrantList([], [], []), services={})
+    except grants.GrantsError:
+        return None
 
 
 def share_preview(ws: Workspace, name: str, email_domain: str) -> dict[str, Any]:
@@ -192,6 +226,10 @@ def share_preview(ws: Workspace, name: str, email_domain: str) -> dict[str, Any]
         raise PreviewError(f"invalid email domain {email_domain!r}")
     with grants.locked_grants_file(ws.grants_file):
         document = _load_or_empty_grants(grants, ws.grants_file)
+        if document is None:
+            raise PreviewError(
+                f"{ws.grants_file} is malformed; fix it in the minds app's sharing settings first"
+            )
         scope = document.services.setdefault(name, grants.GrantList([], [], []))
         changed = domain not in scope.email_domains
         if changed:
@@ -206,7 +244,11 @@ def unshare_preview(ws: Workspace, name: str) -> bool:
         return False
     grants = load_grants_module()
     with grants.locked_grants_file(ws.grants_file):
-        document = grants.load_grants(ws.grants_file)
+        document = _load_or_empty_grants(grants, ws.grants_file)
+        if document is None:
+            raise PreviewError(
+                f"{ws.grants_file} is malformed; fix it in the minds app's sharing settings first"
+            )
         if name not in document.services:
             return False
         del document.services[name]
@@ -217,17 +259,36 @@ def unshare_preview(ws: Workspace, name: str) -> bool:
 def _registered(registry: Path, name: str) -> bool:
     if not registry.is_file():
         return False
-    return any(app.get("name") == name for app in tomllib.loads(registry.read_text()).get("apps", []))
+    return any(
+        app.get("name") == name
+        for app in tomllib.loads(registry.read_text()).get("apps", [])
+    )
 
 
 def teardown_preview(ws: Workspace, name: str, run: Runner = _run) -> list[str]:
-    """Remove everything one preview made; safe to re-run. Returns what it did."""
-    done: list[str] = []
+    """Remove everything one preview made; safe to re-run. Returns what it did.
+
+    Only a preview this skill made is touched: its state carries the skill's
+    marker, or its program file does. A name some other app uses is refused
+    before anything is removed. The state goes last (with the app's folder),
+    so an interrupted teardown can be re-run.
+    """
     program = program_name(name)
     conf = ws.conf_path(name)
-    if conf.exists():
-        if f"[program:{program}]" not in conf.read_text() or "live-preview-accounts-frontend" not in conf.read_text():
-            raise PreviewError(f"{conf} was not made by this skill; not removing it")
+    conf_is_ours = (
+        conf.exists()
+        and f"[program:{program}]" in conf.read_text()
+        and SKILL_MARKER in conf.read_text()
+    )
+    if conf.exists() and not conf_is_ours:
+        raise PreviewError(f"{conf} was not made by this skill; not removing it")
+    if not (is_owned(ws, name) or conf_is_ours):
+        leftovers = ws.app_dir(name).exists() or _registered(ws.apps_registry, name)
+        if leftovers:
+            raise PreviewError(f"{name!r} was not made by this skill; not removing it")
+        return []
+    done: list[str] = []
+    if conf_is_ours:
         run(["supervisorctl", "stop", program])
         conf.unlink()
         run(["supervisorctl", "reread"])
@@ -235,8 +296,15 @@ def teardown_preview(ws: Workspace, name: str, run: Runner = _run) -> list[str]:
         done.append(f"stopped and removed program {program}")
     if _registered(ws.apps_registry, name):
         result = run(
-            ["env", f"MINDS_APPS_FILE={ws.apps_registry}", "python3",
-             str(DEFAULT_ROOT / "system" / "scripts" / "forward_port.py"), "--remove", "--name", name]
+            [
+                "env",
+                f"MINDS_APPS_FILE={ws.apps_registry}",
+                "python3",
+                str(DEFAULT_ROOT / "system" / "scripts" / "forward_port.py"),
+                "--remove",
+                "--name",
+                name,
+            ]
         )
         if result.returncode != 0:
             raise PreviewError(f"unregistering {name} failed: {result.stderr}")
@@ -264,4 +332,3 @@ def markdown_table(pages: list[str], base_url: str) -> str:
         )
     lines += ["", f"Side-by-side overview of every page: {base}/"]
     return "\n".join(lines)
-
