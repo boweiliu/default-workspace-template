@@ -5,10 +5,15 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from conftest import FIXTURES
-
 from accounts_preview_common import FRONTEND_PATH, PreviewError
-from accounts_preview_pages import discover_pages, import_graph, page_modules, read_change
+from accounts_preview_pages import (
+    discover_pages,
+    import_graph,
+    page_modules,
+    read_change,
+)
+
+from conftest import FIXTURES
 
 SOURCES = json.loads((FIXTURES / "frontend_sources.json").read_text())["sources"]
 SPA_ROUTES = [
@@ -29,7 +34,12 @@ def test_page_modules_reads_the_route_table_and_the_fallback() -> None:
         "src/ManagePage.ts": ["/manage"],
         "src/DownloadsPage.ts": ["/downloads"],
         "src/InvitePage.ts": ["/invite"],
-        "src/UtilityPages.ts": ["/auth/reset-password", "/auth/verify-email", "/check-inbox", "/app-stopped-waiting"],
+        "src/UtilityPages.ts": [
+            "/auth/reset-password",
+            "/auth/verify-email",
+            "/check-inbox",
+            "/app-stopped-waiting",
+        ],
         "src/AuthPage.ts": ["/login", "/signup"],
     }
 
@@ -48,12 +58,25 @@ def test_import_graph_resolves_relative_imports_and_the_stylesheet() -> None:
         (["src/ManagePage.ts"], ["/manage"]),
         (["src/flow.ts"], ["/login", "/signup"]),
         (["src/plans.ts"], ["/login", "/signup", "/downloads"]),
-        (["src/UtilityPages.ts"], ["/app-stopped-waiting", "/auth/reset-password", "/auth/verify-email", "/check-inbox"]),
+        (
+            ["src/UtilityPages.ts"],
+            [
+                "/app-stopped-waiting",
+                "/auth/reset-password",
+                "/auth/verify-email",
+                "/check-inbox",
+            ],
+        ),
         (["public/privacy-policy.html"], ["/privacy-policy"]),
-        (["src/DownloadsPage.ts", "public/terms-of-service.html"], ["/downloads", "/terms-of-service"]),
+        (
+            ["src/DownloadsPage.ts", "public/terms-of-service.html"],
+            ["/downloads", "/terms-of-service"],
+        ),
     ],
 )
-def test_a_change_maps_to_exactly_the_pages_that_import_it(changed: list[str], expected: list[str]) -> None:
+def test_a_change_maps_to_exactly_the_pages_that_import_it(
+    changed: list[str], expected: list[str]
+) -> None:
     assert discover_pages(changed, SOURCES)[0] == expected
 
 
@@ -94,7 +117,12 @@ def test_a_deleted_module_is_skipped_since_its_importers_changed_too() -> None:
 
 
 def test_a_frontend_without_the_route_table_fails_loudly() -> None:
-    broken = dict(SOURCES, **{"src/index.ts": 'import m from "mithril";\nm.mount(document.body, {view: () => "x"});\n'})
+    broken = dict(
+        SOURCES,
+        **{
+            "src/index.ts": 'import m from "mithril";\nm.mount(document.body, {view: () => "x"});\n'
+        },
+    )
     with pytest.raises(PreviewError, match="PAGE_BY_PATH"):
         discover_pages(["src/api.ts"], broken)
 
@@ -106,10 +134,26 @@ def _commit(repo: Path, files: dict[str, str], message: str) -> str:
         path.write_text(text)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", message],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            message,
+        ],
         check=True,
     )
-    return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
 
 
 def test_read_change_takes_the_merge_base_diff_from_git(tmp_path: Path) -> None:
@@ -118,10 +162,24 @@ def test_read_change_takes_the_merge_base_diff_from_git(tmp_path: Path) -> None:
     base_files = {f"{FRONTEND_PATH}/{path}": text for path, text in SOURCES.items()}
     _commit(repo, base_files, "base")
     subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "feature"], check=True)
-    after = _commit(repo, {f"{FRONTEND_PATH}/src/DownloadsPage.ts": SOURCES["src/DownloadsPage.ts"] + "// tweak\n"}, "tweak")
+    after = _commit(
+        repo,
+        {
+            f"{FRONTEND_PATH}/src/DownloadsPage.ts": SOURCES["src/DownloadsPage.ts"]
+            + "// tweak\n"
+        },
+        "tweak",
+    )
     subprocess.run(["git", "-C", str(repo), "checkout", "-q", "main"], check=True)
     # main moves on after the branch point; the merge-base diff must not pick this up.
-    main_tip = _commit(repo, {f"{FRONTEND_PATH}/src/ManagePage.ts": SOURCES["src/ManagePage.ts"] + "// later\n"}, "later")
+    main_tip = _commit(
+        repo,
+        {
+            f"{FRONTEND_PATH}/src/ManagePage.ts": SOURCES["src/ManagePage.ts"]
+            + "// later\n"
+        },
+        "later",
+    )
     changed, sources = read_change(repo, main_tip, after)
     assert changed == ["src/DownloadsPage.ts"]
     assert discover_pages(changed, sources)[0] == ["/downloads"]

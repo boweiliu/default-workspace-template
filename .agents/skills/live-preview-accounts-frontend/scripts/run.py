@@ -23,13 +23,20 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).absolute().parent))
 
-from accounts_preview_checks import REVIEW_MODEL, review_preview, verify_preview  # noqa: E402
+from accounts_preview_checks import (  # noqa: E402
+    REVIEW_MODEL,
+    review_preview,
+    verify_preview,
+)
 from accounts_preview_common import (  # noqa: E402
     DEFAULT_ROOT,
     DOC_PAGES,
     PAGE_CATALOG,
     PreviewError,
     Workspace,
+    claim_name,
+    page_dir_name,
+    require_owned,
     resolve_commit,
     validate_name,
 )
@@ -40,7 +47,11 @@ from accounts_preview_hosting import (  # noqa: E402
     share_preview,
     teardown_preview,
 )
-from accounts_preview_pages import discover_pages, read_change, route_sort_key  # noqa: E402
+from accounts_preview_pages import (  # noqa: E402
+    discover_pages,
+    read_change,
+    route_sort_key,
+)
 from accounts_preview_site import (  # noqa: E402
     build_side,
     fetch_origin,
@@ -57,7 +68,9 @@ def _say(message: str) -> None:
 
 def _require(state: dict[str, Any], key: str, step: str) -> Any:
     if key not in state:
-        raise PreviewError(f"preview {state.get('name')!r} has no {key} yet -- run the {step} step first")
+        raise PreviewError(
+            f"preview {state.get('name')!r} has no {key} yet -- run the {step} step first"
+        )
     return state[key]
 
 
@@ -65,10 +78,11 @@ def parse_pages(value: str) -> list[str]:
     pages = [part.strip() for part in value.split(",") if part.strip()]
     known = set(PAGE_CATALOG) | set(DOC_PAGES)
     for page in pages:
-        if not page.startswith("/"):
-            raise PreviewError(f"page {page!r} must be a path like /login")
+        page_dir_name(page)
         if page not in known:
-            _say(f"note: {page} is not a page this skill knows; it is captured signed out under its path")
+            _say(
+                f"note: {page} is not a page this skill knows; it is captured signed out under its path"
+            )
     return sorted(dict.fromkeys(pages), key=route_sort_key)
 
 
@@ -77,7 +91,9 @@ def step_fetch(ws: Workspace) -> None:
     _say(f"fetched origin in {ws.mngr_repo}")
 
 
-def step_pages(ws: Workspace, name: str, before: str, after: str, pages: str | None) -> dict[str, Any]:
+def step_pages(
+    ws: Workspace, name: str, before: str, after: str, pages: str | None
+) -> dict[str, Any]:
     validate_name(name)
     before_commit = resolve_commit(ws.mngr_repo, before)
     after_commit = resolve_commit(ws.mngr_repo, after)
@@ -86,10 +102,22 @@ def step_pages(ws: Workspace, name: str, before: str, after: str, pages: str | N
     else:
         changed, sources = read_change(ws.mngr_repo, before_commit, after_commit)
         if not changed:
-            raise PreviewError(f"{before}...{after} changes nothing under the accounts frontend")
+            raise PreviewError(
+                f"{before}...{after} changes nothing under the accounts frontend"
+            )
         routes, reasons = discover_pages(changed, sources)
+    for route in routes:
+        page_dir_name(route)
+    if not routes:
+        raise PreviewError(
+            f"no previewable page found in {before}...{after}; pass --pages /login,... to choose"
+        )
+    claim_name(ws, name)
     ws.update_state(
         name,
+        rendered_at=None,
+        report=None,
+        review=None,
         before_ref=before,
         after_ref=after,
         before_commit=before_commit,
@@ -100,18 +128,23 @@ def step_pages(ws: Workspace, name: str, before: str, after: str, pages: str | N
     return {"pages": routes, "reasons": reasons}
 
 
-def step_build(ws: Workspace, name: str, side: str, ref: str | None, deploy_id: str | None) -> dict[str, Any]:
+def step_build(
+    ws: Workspace, name: str, side: str, ref: str | None, deploy_id: str | None
+) -> dict[str, Any]:
+    require_owned(ws, name)
     state = ws.load_state(name)
     ref = ref or _require(state, f"{side}_ref", "pages")
     if side == "before" and deploy_id is None:
         deploy_id = prod_deploy_id()
     _say(f"building {side} from {ref} ...")
     provenance = build_side(ws, name, side, ref, deploy_id)
+    ws.update_state(name, rendered_at=None, report=None, review=None)
     _say(f"built {side}: {provenance['commit'][:10]} ({provenance['commit_subject']})")
     return provenance
 
 
 def step_render(ws: Workspace, name: str) -> dict[str, Any]:
+    require_owned(ws, name)
     pages = _require(ws.load_state(name), "pages", "pages")
     manifest = render_site(ws, name, pages)
     ws.update_state(name, rendered_at=manifest["rendered_at"], report=None, review=None)
@@ -120,47 +153,73 @@ def step_render(ws: Workspace, name: str) -> dict[str, Any]:
 
 
 def step_host(ws: Workspace, name: str) -> dict[str, Any]:
-    result = host_preview(ws, name, ws.load_state(name))
-    ws.update_state(name, port=result["port"])
-    _say(("started" if result["created"] else "already running:") + f" {name} on port {result['port']}")
+    require_owned(ws, name)
+    result = host_preview(ws, name)
+    _say(
+        ("started" if result["created"] else "already running:")
+        + f" {name} on port {result['port']}"
+    )
     return result
 
 
-def step_verify(ws: Workspace, name: str, preview_url: str | None, allow_prod_mismatch: bool) -> dict[str, Any]:
+def step_verify(
+    ws: Workspace, name: str, preview_url: str | None, allow_prod_mismatch: bool
+) -> dict[str, Any]:
+    require_owned(ws, name)
     state = ws.load_state(name)
     pages = _require(state, "pages", "pages")
+    if not state.get("rendered_at"):
+        raise PreviewError(
+            f"preview {name!r} has no up-to-date render -- run the render step first"
+        )
     local_url = preview_url or f"http://127.0.0.1:{_require(state, 'port', 'host')}"
     report = verify_preview(ws, name, pages, local_url, allow_prod_mismatch)
-    ws.update_state(name, report={k: report[k] for k in ("checked_at", "passed", "failures", "warnings")}, review=None)
+    ws.update_state(
+        name,
+        report={k: report[k] for k in ("checked_at", "passed", "failures", "warnings")},
+        review=None,
+    )
     write_index(ws, name, pages, report, None)
     return report
 
 
 def step_review(ws: Workspace, name: str, intent: str, model: str) -> dict[str, Any]:
+    require_owned(ws, name)
     state = ws.load_state(name)
     report_path = ws.site_dir(name) / "_raw" / "verify" / "report.json"
     if not report_path.is_file():
-        raise PreviewError(f"preview {name!r} has not been verified yet -- run the verify step first")
+        raise PreviewError(
+            f"preview {name!r} has not been verified yet -- run the verify step first"
+        )
     report = json.loads(report_path.read_text())
     review = review_preview(ws, name, report, intent, model)
-    ws.update_state(name, review={k: review[k] for k in ("reviewed_at", "intent", "passed", "cost_usd")})
+    ws.update_state(
+        name,
+        review={k: review[k] for k in ("reviewed_at", "intent", "passed", "cost_usd")},
+    )
     write_index(ws, name, state["pages"], report, review)
     return review
 
 
 def step_share(ws: Workspace, name: str, email_domain: str) -> dict[str, Any]:
+    require_owned(ws, name)
     state = ws.load_state(name)
     report, review = state.get("report"), state.get("review")
     if not (report and report.get("passed")):
-        raise PreviewError(f"preview {name!r} has not passed the verify step; not sharing it")
+        raise PreviewError(
+            f"preview {name!r} has not passed the verify step; not sharing it"
+        )
     if not (review and review.get("passed")):
-        raise PreviewError(f"preview {name!r} has not passed the review step; not sharing it")
+        raise PreviewError(
+            f"preview {name!r} has not passed the review step; not sharing it"
+        )
     result = share_preview(ws, name, email_domain)
     ws.update_state(name, shared_with=result["email_domain"], url=result["url"])
     return result
 
 
 def step_table(ws: Workspace, name: str, base_url: str | None) -> str:
+    require_owned(ws, name)
     pages = _require(ws.load_state(name), "pages", "pages")
     return markdown_table(pages, base_url or public_base_url(ws, name))
 
@@ -169,17 +228,27 @@ def _print_json(value: Any) -> None:
     sys.stdout.write(json.dumps(value, indent=2) + "\n")
 
 
-def _check_outcome(report: dict[str, Any], review: dict[str, Any] | None, ws: Workspace, name: str) -> None:
+def _check_outcome(
+    report: dict[str, Any], review: dict[str, Any] | None, ws: Workspace, name: str
+) -> None:
     if not report["passed"]:
         raise PreviewError(
-            "verify failed -- not sharing:\n  " + "\n  ".join(report["failures"])
+            "verify failed -- not sharing:\n  "
+            + "\n  ".join(report["failures"])
             + f"\nSide-by-side sheets: {ws.site_dir(name) / '_raw' / 'verify'}"
         )
     if review is not None and not review["passed"]:
-        failing = [item for item in review["verdicts"] if str(item.get("verdict")).lower() != "pass"]
+        failing = [
+            item
+            for item in review["verdicts"]
+            if str(item.get("verdict")).lower() != "pass"
+        ]
         raise PreviewError(
             "the visual review did not pass -- not sharing:\n  "
-            + "\n  ".join(f"{item.get('page')}: {item.get('unintended_changes') or 'intended change not visible'}" for item in failing)
+            + "\n  ".join(
+                f"{item.get('page')}: {item.get('unintended_changes') or 'intended change not visible'}"
+                for item in failing
+            )
             + f"\nSide-by-side sheets: {ws.site_dir(name) / '_raw' / 'verify'}"
         )
 
@@ -199,7 +268,9 @@ def step_all(ws: Workspace, args: argparse.Namespace) -> str:
     step_host(ws, args.name)
     report = step_verify(ws, args.name, None, args.allow_prod_mismatch)
     _check_outcome(report, None, ws, args.name)
-    _say("verify passed; reviewing the side-by-side sheets against the intended change ...")
+    _say(
+        "verify passed; reviewing the side-by-side sheets against the intended change ..."
+    )
     review = step_review(ws, args.name, args.intent, args.model)
     _check_outcome(report, review, ws, args.name)
     _say(f"review passed (${review['cost_usd']:.3f})")
@@ -209,32 +280,62 @@ def step_all(ws: Workspace, args: argparse.Namespace) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="workspace root (default: this checkout)")
-    parser.add_argument("--mngr-repo", type=Path, help="mngr-internal clone (default: <root>/.external_worktrees/mngr)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="workspace root (default: this checkout)",
+    )
+    parser.add_argument(
+        "--mngr-repo",
+        type=Path,
+        help="mngr-internal clone (default: <root>/.external_worktrees/mngr)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def named(command: str, help_text: str) -> argparse.ArgumentParser:
         sub_parser = sub.add_parser(command, help=help_text)
-        sub_parser.add_argument("--name", required=True, help="preview app name, e.g. studio-wordmark-preview")
+        sub_parser.add_argument(
+            "--name",
+            required=True,
+            help="preview app name, e.g. studio-wordmark-preview",
+        )
         return sub_parser
 
     sub.add_parser("fetch", help="fetch origin in the mngr clone")
-    pages = named("pages", "record the refs and work out which pages the change touches")
-    pages.add_argument("--after", required=True, help="the change's ref, e.g. origin/<pr-branch>")
+    pages = named(
+        "pages", "record the refs and work out which pages the change touches"
+    )
+    pages.add_argument(
+        "--after", required=True, help="the change's ref, e.g. origin/<pr-branch>"
+    )
     pages.add_argument("--before", default="origin/main")
-    pages.add_argument("--pages", help="comma-separated paths, instead of discovering them")
+    pages.add_argument(
+        "--pages", help="comma-separated paths, instead of discovering them"
+    )
     build = named("build", "build one side from real source in a throwaway worktree")
     build.add_argument("--side", required=True, choices=["before", "after"])
     build.add_argument("--ref", help="default: the ref the pages step recorded")
-    build.add_argument("--deploy-id", help="default: prod's for the before side, none for the after side")
+    build.add_argument(
+        "--deploy-id",
+        help="default: prod's for the before side, none for the after side",
+    )
     named("render", "capture every page of both sides as static HTML")
     named("host", "start the preview app (first run) or confirm it is running")
     verify = named("verify", "check the hosted preview against prod and between sides")
     verify.add_argument("--preview-url", help="default: the preview app's local port")
-    verify.add_argument("--allow-prod-mismatch", action="store_true", help="report prod differences as notes")
+    verify.add_argument(
+        "--allow-prod-mismatch",
+        action="store_true",
+        help="report prod differences as notes",
+    )
     review = named("review", "one Claude call over the side-by-side sheets")
-    review.add_argument("--intent", required=True, help="one sentence: what the change should look like")
+    review.add_argument(
+        "--intent", required=True, help="one sentence: what the change should look like"
+    )
     review.add_argument("--model", default=REVIEW_MODEL)
     share = named("share", "grant an email domain access to this preview app only")
     share.add_argument("--email-domain", default="imbue.com")
@@ -270,7 +371,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "host":
             _print_json(step_host(ws, args.name))
         elif args.command == "verify":
-            report = step_verify(ws, args.name, args.preview_url, args.allow_prod_mismatch)
+            report = step_verify(
+                ws, args.name, args.preview_url, args.allow_prod_mismatch
+            )
             _print_json({k: report[k] for k in ("passed", "failures", "warnings")})
             return 0 if report["passed"] else 1
         elif args.command == "review":

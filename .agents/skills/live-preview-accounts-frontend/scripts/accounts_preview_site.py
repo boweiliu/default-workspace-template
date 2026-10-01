@@ -23,8 +23,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Route, sync_playwright
-
 from accounts_preview_common import (
     DOC_PAGES,
     FRONTEND_PATH,
@@ -40,6 +38,7 @@ from accounts_preview_common import (
     resolve_commit,
     utc_now,
 )
+from playwright.sync_api import Route, sync_playwright
 
 FORTRESS = "/opt/fortress/tilion-fortress/tilion"
 API_STUBS = SKILL_DIR / "assets" / "api_stubs.json"
@@ -52,19 +51,27 @@ _WORKTREE_LOCK = threading.Lock()
 
 def launch_browser(playwright: Any) -> Any:
     if not Path(FORTRESS).exists():
-        raise PreviewError(f"the Fortress browser is not installed at {FORTRESS} (see AGENTS.md)")
+        raise PreviewError(
+            f"the Fortress browser is not installed at {FORTRESS} (see AGENTS.md)"
+        )
     return playwright.chromium.launch(executable_path=FORTRESS)
 
 
 def fetch_origin(ws: Workspace) -> None:
     """Fetch ``origin`` in the mngr clone, through the latchkey gateway header when one is configured."""
     password = os.environ.get("LATCHKEY_GATEWAY_PASSWORD")
-    extra = (f"http.extraHeader=X-Latchkey-Gateway-Password: {password}",) if password else ()
+    extra = (
+        (f"http.extraHeader=X-Latchkey-Gateway-Password: {password}",)
+        if password
+        else ()
+    )
     git(ws.mngr_repo, "fetch", "--quiet", "origin", extra_config=extra)
 
 
 def http_get(url: str, timeout: float = 20) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, headers={"User-Agent": "live-preview-accounts-frontend"})
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "live-preview-accounts-frontend"}
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
@@ -85,7 +92,9 @@ def prod_deploy_id() -> str:
 
 def _github_url(remote: str) -> str | None:
     """``https://github.com/org/repo`` from a remote, including one routed through the latchkey gateway."""
-    match = re.search(r"(https://github\.com/[^/\s]+/[^/\s]+?)(?:\.git)?/?$", remote.strip())
+    match = re.search(
+        r"(https://github\.com/[^/\s]+/[^/\s]+?)(?:\.git)?/?$", remote.strip()
+    )
     return match.group(1) if match else None
 
 
@@ -93,28 +102,51 @@ def _run_logged(command: list[str], cwd: Path, log: Path, env: dict[str, str]) -
     with open(log, "a") as handle:
         handle.write(f"$ {' '.join(command)}\n")
         handle.flush()
-        proc = subprocess.run(command, cwd=cwd, stdout=handle, stderr=subprocess.STDOUT, env=env, check=False)
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            env=env,
+            check=False,
+        )
     if proc.returncode != 0:
         lines = log.read_text().splitlines()
         tail = "\n".join(lines[-25:])
-        raise PreviewError(f"{' '.join(command)} failed (exit {proc.returncode}); last output:\n{tail}")
+        raise PreviewError(
+            f"{' '.join(command)} failed (exit {proc.returncode}); last output:\n{tail}"
+        )
 
 
-def build_side(ws: Workspace, name: str, side: str, ref: str, deploy_id: str | None) -> dict[str, Any]:
+def build_side(
+    ws: Workspace, name: str, side: str, ref: str, deploy_id: str | None
+) -> dict[str, Any]:
     """Build the frontend at ``ref`` into ``data/.apps/<name>/builds/<side>/``; returns its provenance."""
     if side not in SIDES:
         raise PreviewError(f"side must be one of {SIDES}")
     commit = resolve_commit(ws.mngr_repo, ref)
     token = secrets.token_hex(4)
-    worktree = ws.scratch / "worktrees" / f"{name}-{side}-{token}"
+    worktrees = ws.scratch / "worktrees"
+    worktree = worktrees / f"{name}-{side}-{token}"
     final = ws.build_dir(name, side)
     staging = final.with_name(f".{side}.staging-{token}")
-    staging.mkdir(parents=True)
-    log = staging / "build.log"
-    worktree.parent.mkdir(parents=True, exist_ok=True)
     with _WORKTREE_LOCK:
-        git(ws.mngr_repo, "worktree", "add", "--detach", "--quiet", str(worktree), commit)
+        _sweep_leftovers(
+            ws, worktrees, f"{name}-{side}-", final.parent, f".{side}.staging-"
+        )
+        worktrees.mkdir(parents=True, exist_ok=True)
+        git(
+            ws.mngr_repo,
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            str(worktree),
+            commit,
+        )
     try:
+        staging.mkdir(parents=True)
+        log = staging / "build.log"
         frontend = worktree / FRONTEND_PATH
         if not (frontend / "package.json").is_file():
             raise PreviewError(f"{FRONTEND_PATH} does not exist at {ref}")
@@ -130,13 +162,23 @@ def build_side(ws: Workspace, name: str, side: str, ref: str, deploy_id: str | N
         raise
     finally:
         with _WORKTREE_LOCK:
-            git(ws.mngr_repo, "worktree", "remove", "--force", str(worktree), check=False)
+            git(
+                ws.mngr_repo,
+                "worktree",
+                "remove",
+                "--force",
+                str(worktree),
+                check=False,
+            )
+            shutil.rmtree(worktree, ignore_errors=True)
             git(ws.mngr_repo, "worktree", "prune", check=False)
-        shutil.rmtree(worktree, ignore_errors=True)
-        _remove_if_empty(worktree.parent, ws.scratch)
+        _remove_if_empty(worktrees, ws.scratch)
     remote = git(ws.mngr_repo, "remote", "get-url", "origin", check=False).strip()
     github = _github_url(remote)
-    subject, committed_at = git(ws.mngr_repo, "log", "-1", "--format=%s%n%cI", commit).splitlines()[:2]
+    subject, committed_at = (
+        git(ws.mngr_repo, "log", "-1", "--format=%s%n%cI", commit).splitlines()
+        + ["", ""]
+    )[:2]
     provenance = {
         "side": side,
         "ref": ref,
@@ -152,6 +194,31 @@ def build_side(ws: Workspace, name: str, side: str, ref: str, deploy_id: str | N
     (staging / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     _swap_in(staging, final)
     return provenance
+
+
+def _sweep_leftovers(
+    ws: Workspace,
+    worktrees: Path,
+    worktree_prefix: str,
+    builds: Path,
+    staging_prefix: str,
+) -> None:
+    """Remove what a killed earlier build of the same side left behind (its finally never ran)."""
+    if worktrees.is_dir():
+        for leftover in worktrees.glob(f"{worktree_prefix}*"):
+            git(
+                ws.mngr_repo,
+                "worktree",
+                "remove",
+                "--force",
+                str(leftover),
+                check=False,
+            )
+            shutil.rmtree(leftover, ignore_errors=True)
+        git(ws.mngr_repo, "worktree", "prune", check=False)
+    if builds.is_dir():
+        for leftover in builds.glob(f"{staging_prefix}*"):
+            shutil.rmtree(leftover, ignore_errors=True)
 
 
 def _remove_if_empty(*directories: Path) -> None:
@@ -174,7 +241,9 @@ def _swap_in(staging: Path, final: Path) -> None:
 
 def load_stubs() -> dict[str, dict[str, Any]]:
     stubs = json.loads(API_STUBS.read_text())
-    return {state: answers for state, answers in stubs.items() if not state.startswith("_")}
+    return {
+        state: answers for state, answers in stubs.items() if not state.startswith("_")
+    }
 
 
 # Runs in the captured page: point links at captured pages within the same side,
@@ -192,8 +261,34 @@ _SERIALIZE_JS = """([side, captured]) => {
 }"""
 
 
+# Runs in the captured page: resolve once #app shows text and its markup has
+# stopped changing (unchanged across three samples 200 ms apart), or false
+# after 15 s. "networkidle" alone is not enough: under load the bundle can
+# still be on its first, text-less spinner render when the network goes quiet.
+_SETTLE_JS = """async () => {
+  const deadline = Date.now() + 15000;
+  let last = null;
+  let steady = 0;
+  while (Date.now() < deadline) {
+    const app = document.getElementById('app');
+    const markup = app ? app.innerHTML : '';
+    const hasText = app ? app.innerText.trim().length > 0 : false;
+    steady = hasText && markup === last ? steady + 1 : 0;
+    if (steady >= 2) return true;
+    last = markup;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}"""
+
+
 def capture_page(
-    browser: Any, dist: Path, path: str, stubs: dict[str, dict[str, Any]], side: str, captured: list[str]
+    browser: Any,
+    dist: Path,
+    path: str,
+    stubs: dict[str, dict[str, Any]],
+    side: str,
+    captured: list[str],
 ) -> dict[str, Any]:
     """Render one SPA page from ``dist`` and return its static HTML plus what happened while rendering."""
     answers = stubs[page_state(path)]
@@ -209,7 +304,9 @@ def capture_page(
             return
         request_path = url[len(CAPTURE_ORIGIN) :].split("?", 1)[0].split("#", 1)[0]
         if request_path.startswith("/accounts/assets/"):
-            asset = (dist / "assets" / request_path.removeprefix("/accounts/assets/")).resolve()
+            asset = (
+                dist / "assets" / request_path.removeprefix("/accounts/assets/")
+            ).resolve()
             if asset.is_relative_to((dist / "assets").resolve()) and asset.is_file():
                 route.fulfill(path=str(asset))
                 return
@@ -223,7 +320,9 @@ def capture_page(
             return
         if request_path.startswith("/accounts/"):
             unanswered.append(key)
-            route.fulfill(status=500, json={"detail": "preview stub has no answer for this call"})
+            route.fulfill(
+                status=500, json={"detail": "preview stub has no answer for this call"}
+            )
             return
         route.fulfill(path=str(dist / "index.html"), content_type="text/html")
 
@@ -233,22 +332,69 @@ def capture_page(
         page = context.new_page()
         page.on("pageerror", lambda error: page_errors.append(str(error)))
         page.goto(CAPTURE_ORIGIN + path, wait_until="networkidle", timeout=30000)
-        page.wait_for_function("document.getElementById('app')?.children.length > 0", timeout=10000)
-        page.wait_for_timeout(300)
-        final_path = page.url[len(CAPTURE_ORIGIN) :] if page.url.startswith(CAPTURE_ORIGIN) else page.url
+        if not page.evaluate(_SETTLE_JS):
+            page_errors.append("the page never settled into a rendered view with text")
+        final_path = (
+            page.url[len(CAPTURE_ORIGIN) :]
+            if page.url.startswith(CAPTURE_ORIGIN)
+            else page.url
+        )
         static_html = page.evaluate(_SERIALIZE_JS, [side, captured])
     finally:
         context.close()
-    return {"html": static_html, "final_path": final_path, "unanswered": unanswered, "page_errors": page_errors}
+    return {
+        "html": static_html,
+        "final_path": final_path,
+        "unanswered": unanswered,
+        "page_errors": page_errors,
+    }
 
 
-def render_site(ws: Workspace, name: str, pages: list[str]) -> dict[str, Any]:
+def _capture_sides(
+    ws: Workspace,
+    name: str,
+    spa_pages: list[str],
+    captured: list[str],
+    stubs: dict[str, dict[str, Any]],
+    staging: Path,
+    browser: Any,
+    manifest: dict[str, Any],
+    problems: list[str],
+) -> None:
+    """Capture every SPA page of both sides into ``staging``, noting anything that went wrong in ``problems``."""
+    for side in SIDES:
+        dist = ws.build_dir(name, side) / "dist"
+        side_manifest: dict[str, Any] = {}
+        for path in spa_pages:
+            result = capture_page(browser, dist, path, stubs, side, captured)
+            target = staging / side / page_dir_name(path) / "index.html"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(result["html"])
+            side_manifest[path] = {
+                key: value for key, value in result.items() if key != "html"
+            }
+            landed = result["final_path"].split("?", 1)[0].split("#", 1)[0]
+            if landed != path:
+                problems.append(
+                    f"{side} {path}: the page sent the browser to {result['final_path']} -- it needs a "
+                    "different API state (see PAGE_CATALOG in accounts_preview_common.py)"
+                )
+            for call in result["unanswered"]:
+                problems.append(f"{side} {path}: unanswered request {call}")
+            for error in result["page_errors"]:
+                problems.append(f"{side} {path}: script error {error}")
+        manifest["sides"][side] = side_manifest
+
+
+def render_site(
+    ws: Workspace, name: str, pages: list[str], browser: Any = None
+) -> dict[str, Any]:
     """Write ``data/.apps/<name>/site/`` from both sides' builds; returns the render manifest."""
     provenance = load_provenance(ws, name)
     final = ws.site_dir(name)
     staging = final.with_name(f".site.staging-{secrets.token_hex(4)}")
     assets = staging / "accounts" / "assets"
-    assets.mkdir(parents=True)
+    staging.mkdir(parents=True)
     stubs = load_stubs()
     spa_pages = [path for path in pages if path not in DOC_PAGES]
     captured = sorted(set(pages) | set(DOC_PAGES))
@@ -257,8 +403,7 @@ def render_site(ws: Workspace, name: str, pages: list[str]) -> dict[str, Any]:
     try:
         for side in SIDES:
             dist = ws.build_dir(name, side) / "dist"
-            for asset in (dist / "assets").iterdir():
-                shutil.copy2(asset, assets / asset.name)
+            shutil.copytree(dist / "assets", assets, dirs_exist_ok=True)
             for doc_path in DOC_PAGES:
                 source = dist / f"{doc_path.strip('/')}.html"
                 if source.is_file():
@@ -267,30 +412,44 @@ def render_site(ws: Workspace, name: str, pages: list[str]) -> dict[str, Any]:
                     shutil.copy2(source, target)
             raw = staging / "_raw" / side
             shutil.copytree(dist, raw / "dist")
-            shutil.copy2(ws.build_dir(name, side) / "provenance.json", raw / "provenance.json")
-        with sync_playwright() as playwright:
-            browser = launch_browser(playwright)
-            try:
-                for side in SIDES:
-                    dist = ws.build_dir(name, side) / "dist"
-                    side_manifest: dict[str, Any] = {}
-                    for path in spa_pages:
-                        result = capture_page(browser, dist, path, stubs, side, captured)
-                        target = staging / side / page_dir_name(path) / "index.html"
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text(result["html"])
-                        side_manifest[path] = {key: value for key, value in result.items() if key != "html"}
-                        for call in result["unanswered"]:
-                            problems.append(f"{side} {path}: unanswered request {call}")
-                        for error in result["page_errors"]:
-                            problems.append(f"{side} {path}: script error {error}")
-                    manifest["sides"][side] = side_manifest
-            finally:
-                browser.close()
+            shutil.copy2(
+                ws.build_dir(name, side) / "provenance.json", raw / "provenance.json"
+            )
+        if browser is None:
+            with sync_playwright() as playwright:
+                own = launch_browser(playwright)
+                try:
+                    _capture_sides(
+                        ws,
+                        name,
+                        spa_pages,
+                        captured,
+                        stubs,
+                        staging,
+                        own,
+                        manifest,
+                        problems,
+                    )
+                finally:
+                    own.close()
+        else:
+            _capture_sides(
+                ws,
+                name,
+                spa_pages,
+                captured,
+                stubs,
+                staging,
+                browser,
+                manifest,
+                problems,
+            )
         if problems:
             raise PreviewError("rendering hit problems:\n  " + "\n  ".join(problems))
         shutil.copy2(API_STUBS, staging / "_raw" / "api_stubs.json")
-        (staging / "_raw" / "render.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        (staging / "_raw" / "render.json").write_text(
+            json.dumps(manifest, indent=2) + "\n"
+        )
         (staging / "index.html").write_text(render_index(name, pages, provenance, None))
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -304,16 +463,30 @@ def load_provenance(ws: Workspace, name: str) -> dict[str, dict[str, Any]]:
     for side in SIDES:
         build = ws.build_dir(name, side)
         if not (build / "dist" / "index.html").is_file():
-            raise PreviewError(f"no {side} build for {name!r} -- run the build step first")
+            raise PreviewError(
+                f"no {side} build for {name!r} -- run the build step first"
+            )
         provenance[side] = json.loads((build / "provenance.json").read_text())
     return provenance
 
 
-def write_index(ws: Workspace, name: str, pages: list[str], report: dict[str, Any] | None, review: dict[str, Any] | None) -> None:
+def write_index(
+    ws: Workspace,
+    name: str,
+    pages: list[str],
+    report: dict[str, Any] | None,
+    review: dict[str, Any] | None,
+) -> None:
     """Rewrite the served index page in place, e.g. once the checks have run."""
     index = ws.site_dir(name) / "index.html"
     temp = index.with_name(f".index.html.{secrets.token_hex(4)}")
-    temp.write_text(render_index(name, pages, load_provenance(ws, name), report, review))
+    rendered = {
+        side: json.loads(
+            (ws.site_dir(name) / "_raw" / side / "provenance.json").read_text()
+        )
+        for side in SIDES
+    }
+    temp.write_text(render_index(name, pages, rendered, report, review))
     os.replace(temp, index)
 
 
@@ -360,16 +533,21 @@ def render_index(
             status = f'<p class="status pass">All checks passed ({html.escape(report["checked_at"])}).</p>'
         if warnings:
             items = "".join(f"<li>{html.escape(item)}</li>" for item in warnings)
-            status += f'<div class="status warn"><strong>Notes</strong><ul>{items}</ul></div>'
+            status += (
+                f'<div class="status warn"><strong>Notes</strong><ul>{items}</ul></div>'
+            )
         figures = []
         for path in pages:
             entry = report.get("pages", {}).get(path)
             if entry and entry.get("sheet"):
                 figures.append(
-                    f'<figure><figcaption>{html.escape(page_label(path))}</figcaption>'
+                    f"<figure><figcaption>{html.escape(page_label(path))}</figcaption>"
                     f'<a href="/_raw/verify/{entry["sheet"]}"><img loading="lazy" src="/_raw/verify/{entry["sheet"]}" alt=""></a></figure>'
                 )
-        sheets = "<h2>Side by side</h2><p class=muted>Left to right: prod, before, after.</p>" + "".join(figures)
+        sheets = (
+            "<h2>Side by side</h2><p class=muted>Left to right: prod, before, after.</p>"
+            + "".join(figures)
+        )
     if review is not None:
         verdict = "passed" if review.get("passed") else "did not pass"
         status += f'<p class="muted">Visual review against the intended change {verdict}: &ldquo;{html.escape(review.get("intent", ""))}&rdquo;.</p>'
@@ -413,7 +591,7 @@ def render_index(
 <a href="/_raw/after/provenance.json">after build</a> &middot;
 <a href="/_raw/before/dist/">before bundle</a> &middot; <a href="/_raw/after/dist/">after bundle</a> &middot;
 <a href="/_raw/api_stubs.json">API answers used</a> &middot; <a href="/_raw/render.json">render log</a>
-{' &middot; <a href="/_raw/verify/report.json">check report</a>' if report is not None else ''}</footer>
+{' &middot; <a href="/_raw/verify/report.json">check report</a>' if report is not None else ""}</footer>
 </body>
 </html>
 """

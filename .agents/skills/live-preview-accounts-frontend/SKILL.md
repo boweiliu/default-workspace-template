@@ -30,7 +30,9 @@ frontend is a sibling skill (`live-preview-<site>`), not a flag on this one.
   share and table steps refuse.
 - Pick the preview's name: kebab-case, at most 32 characters, named for the
   change and ending in `-preview` (`studio-wordmark-preview`). It becomes the
-  app's name, its URL label, and its share scope.
+  app's name, its URL label, and its share scope. A name another app already
+  uses (registered, with a `data/.apps/` folder, or with a program file) is
+  refused; a preview this skill made can be re-run under its own name.
 - Write one sentence of intent: what the after pages should show, and what
   must not change ("the header wordmark reads 'studio' instead of 'minds';
   nothing else changes"). The review step judges the screenshots against it.
@@ -108,7 +110,8 @@ sheets are.
 - Paste the table into the PR description.
 - **When the PR merges or closes**, run `teardown --name <name>`: stops and
   removes the program, unregisters the app, drops its share scope, deletes
-  `data/.apps/<name>/`. Commit the removed program file. Nothing tears a
+  `data/.apps/<name>/`. It only touches a preview this skill made, and refuses
+  any other app's name. Commit the removed program file. Nothing tears a
   preview down automatically, because its links may still be in an open PR.
 
 To refresh after new commits on the branch, re-run from `fetch`: builds,
@@ -139,6 +142,9 @@ and URL.
   `assets/api_stubs.json`; one with no answer stops the render and names the
   call. Add its signed-out answer (match what prod returns) and, if needed,
   a signed-in one.
+- **A page that sends the browser elsewhere fails the render** (e.g. a new
+  view that needs a signed-in visitor). Give it the right state in
+  `PAGE_CATALOG`.
 - **A new route** is discovered from `index.ts` and captured signed out under
   its path as its label. Add it to `PAGE_CATALOG` in
   `scripts/accounts_preview_common.py` to give it a label or a signed-in state.

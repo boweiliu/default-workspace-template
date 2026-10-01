@@ -18,15 +18,25 @@ import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from accounts_preview_common import DOC_PAGES, FALLBACK_ROUTES, FRONTEND_PATH, PreviewError, git
+from accounts_preview_common import (
+    DOC_PAGES,
+    FALLBACK_ROUTES,
+    FRONTEND_PATH,
+    PreviewError,
+    git,
+)
 
 _ENTRY = "src/index.ts"
 
 # `import x from "./y"`, `import { a, b } from "./y"`, `export ... from "./y"`,
 # `import "./y.css"` -- relative specifiers only; packages ("mithril") are not ours.
-_IMPORT_FROM = re.compile(r"""(?:^|\s|;)(?:import|export)\s[^;]*?\sfrom\s*["'](\.{1,2}/[^"']+)["']""", re.S)
+_IMPORT_FROM = re.compile(
+    r"""(?:^|\s|;)(?:import|export)\s[^;]*?\sfrom\s*["'](\.{1,2}/[^"']+)["']""", re.S
+)
 _BARE_IMPORT = re.compile(r"""(?:^|\s|;)import\s*["'](\.{1,2}/[^"']+)["']""")
-_NAMED_IMPORT = re.compile(r"""import\s*\{([^}]*)\}\s*from\s*["'](\.{1,2}/[^"']+)["']""", re.S)
+_NAMED_IMPORT = re.compile(
+    r"""import\s*\{([^}]*)\}\s*from\s*["'](\.{1,2}/[^"']+)["']""", re.S
+)
 _PAGE_TABLE = re.compile(r"PAGE_BY_PATH[^{;]*\{(.*?)\};", re.S)
 _PAGE_ENTRY = re.compile(r"""["'](/[^"']*)["']\s*:\s*(\w+)""")
 _FALLBACK = re.compile(r"PAGE_BY_PATH\[[^\]]*\]\s*\?\?\s*(\w+)")
@@ -74,16 +84,22 @@ def page_modules(sources: Mapping[str, str]) -> dict[str, list[str]]:
                 module_by_component[component] = resolved
     table = _PAGE_TABLE.search(entry)
     if table is None:
-        raise PreviewError("could not find PAGE_BY_PATH in index.ts -- the frontend's routing changed; pass --pages")
+        raise PreviewError(
+            "could not find PAGE_BY_PATH in index.ts -- the frontend's routing changed; pass --pages"
+        )
     routes_by_module: dict[str, list[str]] = {}
     for route, component in _PAGE_ENTRY.findall(table.group(1)):
         module = module_by_component.get(component)
         if module is None:
-            raise PreviewError(f"index.ts routes {route} to {component}, whose import was not found; pass --pages")
+            raise PreviewError(
+                f"index.ts routes {route} to {component}, whose import was not found; pass --pages"
+            )
         routes_by_module.setdefault(module, []).append(route)
     fallback = _FALLBACK.search(entry)
     if fallback is not None and fallback.group(1) in module_by_component:
-        routes_by_module.setdefault(module_by_component[fallback.group(1)], []).extend(FALLBACK_ROUTES)
+        routes_by_module.setdefault(module_by_component[fallback.group(1)], []).extend(
+            FALLBACK_ROUTES
+        )
     return routes_by_module
 
 
@@ -104,7 +120,9 @@ def _importers_closure(graph: Mapping[str, set[str]], start: str) -> set[str]:
     return seen
 
 
-def discover_pages(changed: Iterable[str], sources: Mapping[str, str]) -> tuple[list[str], dict[str, list[str]]]:
+def discover_pages(
+    changed: Iterable[str], sources: Mapping[str, str]
+) -> tuple[list[str], dict[str, list[str]]]:
     """The routes a change touches, and why: ``(routes, reasons_by_changed_file)``.
 
     ``changed`` and the keys of ``sources`` are paths relative to the frontend
@@ -114,7 +132,9 @@ def discover_pages(changed: Iterable[str], sources: Mapping[str, str]) -> tuple[
     """
     graph = import_graph(sources)
     routes_by_module = page_modules(sources)
-    every_route = sorted({route for routes in routes_by_module.values() for route in routes})
+    every_route = sorted(
+        {route for routes in routes_by_module.values() for route in routes}
+    )
     touched: set[str] = set()
     reasons: dict[str, list[str]] = {}
     for path in sorted(set(changed)):
@@ -126,7 +146,13 @@ def discover_pages(changed: Iterable[str], sources: Mapping[str, str]) -> tuple[
             continue
         elif path.startswith("src/") and path.endswith((".ts", ".tsx", ".css")):
             closure = _importers_closure(graph, path)
-            hit = sorted({route for module in closure for route in routes_by_module.get(module, [])})
+            hit = sorted(
+                {
+                    route
+                    for module in closure
+                    for route in routes_by_module.get(module, [])
+                }
+            )
             if not hit:
                 hit = every_route
         else:
@@ -148,17 +174,27 @@ def route_sort_key(route: str) -> tuple[int, str]:
     return (1000, route)
 
 
-def read_change(mngr_repo: Path, before_commit: str, after_commit: str) -> tuple[list[str], dict[str, str]]:
+def read_change(
+    mngr_repo: Path, before_commit: str, after_commit: str
+) -> tuple[list[str], dict[str, str]]:
     """The frontend files changed in ``before...after`` and the after ref's ``src/`` sources, from git."""
     prefix = f"{FRONTEND_PATH}/"
     changed = [
         line[len(prefix) :]
         for line in git(
-            mngr_repo, "diff", "--name-only", "--no-renames", f"{before_commit}...{after_commit}", "--", prefix
+            mngr_repo,
+            "diff",
+            "--name-only",
+            "--no-renames",
+            f"{before_commit}...{after_commit}",
+            "--",
+            prefix,
         ).splitlines()
         if line.startswith(prefix)
     ]
-    listed = git(mngr_repo, "ls-tree", "-r", "--name-only", after_commit, "--", f"{prefix}src/").splitlines()
+    listed = git(
+        mngr_repo, "ls-tree", "-r", "--name-only", after_commit, "--", f"{prefix}src/"
+    ).splitlines()
     sources: dict[str, str] = {}
     for full in listed:
         relative = full[len(prefix) :]
