@@ -1,0 +1,21 @@
+{
+  "_about": "The API answers a page sees while it is captured. signed_out mirrors what accounts.imbue.com returns to a signed-out visitor (checked 2026-09-30), except turnstile_site_key, blanked so no third-party widget loads. signed_in is a sample verified account, used for the views that only exist signed in.",
+  "signed_out": {
+    "GET /accounts/api/config": {"status": 200, "body": {"turnstile_site_key": "", "google_enabled": true, "waitlist_enabled": true, "signup_code": null}},
+    "GET /accounts/api/me": {"status": 401, "body": {"signed_in": false}},
+    "GET /accounts/api/profile": {"status": 401, "body": {"detail": "Not signed in"}},
+    "GET /accounts/api/downloads": {"status": 401, "body": {"detail": "Not signed in"}},
+    "POST /accounts/auth/session/refresh": {"status": 401, "body": {"message": "unauthorised"}}
+  },
+  "signed_in": {
+    "GET /accounts/api/config": {"status": 200, "body": {"turnstile_site_key": "", "google_enabled": true, "waitlist_enabled": true, "signup_code": null}},
+    "GET /accounts/api/me": {"status": 200, "body": {"signed_in": true, "user_id": "preview-user", "email": "preview@example.com", "email_verified": true, "display_name": null, "profile_picture_url": null}},
+    "GET /accounts/api/profile": {"status": 200, "body": {"user_id": "preview-user", "email": "preview@example.com", "display_name": null, "profile_picture_url": null}},
+    "GET /accounts/api/downloads": {"status": 200, "body": {"platforms": [
+      {"platform": "mac-arm64", "label": "macOS (Apple silicon)", "url": "#"},
+      {"platform": "linux-deb", "label": "Linux (.deb)", "url": "#"},
+      {"platform": "linux-appimage", "label": "Linux (AppImage)", "url": "#"}
+    ]}},
+    "POST /accounts/auth/session/refresh": {"status": 200, "body": {}}
+  }
+}
