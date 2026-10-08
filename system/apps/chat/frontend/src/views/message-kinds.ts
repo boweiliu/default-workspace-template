@@ -3,9 +3,7 @@
  * transcript is displayed, and the single source of truth a NEW HARNESS reads to
  * know what it must produce.
  *
- * ---------------------------------------------------------------------------
  * Why this file exists
- * ---------------------------------------------------------------------------
  * SCOPE: this catalogues ONLY the `user_message` event channel -- the transcript
  * slot that is OVERLOADED (a genuine human turn AND framework/system injections
  * all share it), and so needs disambiguating. Assistant-side surfaces
@@ -30,12 +28,11 @@
  *      task notification are all the SAME display (a collapsed system chip) and
  *      so are all `UserMessageKind.SystemChip`, differing only by their chip label.
  *   2. `KIND_SPEC` records, per kind, exactly how it renders: which rail, whether
- *      it opens a new turn, and a prose description of the net visual. Read it to
- *      answer "what will my message look like?" without tracing render code.
+ *      it opens a new timeline section, whether it counts as a turn, and a prose
+ *      description of the net visual. Read it to answer "what will my message look
+ *      like?" without tracing render code.
  *
- * ---------------------------------------------------------------------------
  * Adding a harness (Codex, etc.)
- * ---------------------------------------------------------------------------
  * The `UserMessageKind`s below are harness-AGNOSTIC -- they are display buckets, not
  * Claude-specific markers. A new harness does NOT add kinds; it appends detectors
  * that map ITS framework markers to these existing kinds onto the ONE shared list in
@@ -79,7 +76,7 @@ export enum UserMessageKind {
   /** A skill expansion whose body is relocated into its `Tool: Skill` block. */
   SkillExpansion = "skill-expansion",
   /**
-   * A message with no visual at all: the seeded `/welcome`, and -- via the
+   * A message with no visual at all: an older chat's `/welcome`, and -- via the
    * general `isMeta` rule in classifyUserMessage -- every framework-injected,
    * model-only message that no explicit detector surfaces (the resume-
    * continuation marker, the image coordinate note, MCP-resource dumps, hook
@@ -94,6 +91,12 @@ export enum UserMessageKind {
    * catalogue is complete; `classifyUserMessage` never returns it.
    */
   PermissionResolution = "permission-resolution",
+  /**
+   * A secret-card notice (stored / declined / superseded): the same shape as a
+   * permission verdict, for the secret card -- detected by `secretResolutionOf` and
+   * handled by the same dedicated branch in turn-grouping.ts.
+   */
+  SecretResolution = "secret-resolution",
   /**
    * A subtle inline status message (e.g. "Context was compacted").
    */
@@ -110,12 +113,18 @@ export interface KindSpec {
   /** Which rail / channel the message (or its relocated content) appears on. */
   rail: Rail;
   /**
-   * Whether this message OPENS A NEW TURN SECTION (a boundary) or folds into the
-   * current one. Independent of `rail` and of appearance: a `SystemChip` is on
-   * the user rail yet is NOT a boundary (it tucks into the running turn as a
-   * chip), exactly like a Stop hook.
+   * Whether this message OPENS A NEW SECTION of the progress timeline (a boundary)
+   * or produces no row there at all. Independent of `rail`, of appearance, and of
+   * `isTurn`: a `SystemChip` is not a turn the user took, yet the timeline breaks
+   * at it, so the work the agent resumes after it renders below it.
    */
   boundary: boolean;
+  /**
+   * Whether this message is a turn of the conversation -- an exchange the user can see: a
+   * message they sent, or a status line between turns -- rather than something injected into
+   * the agent's running work.
+   */
+  isTurn: boolean;
   /** Exact, human-readable description of the net visual -- the contract. */
   netVisual: string;
 }
@@ -124,6 +133,7 @@ export const KIND_SPEC: Record<UserMessageKind, KindSpec> = {
   [UserMessageKind.UserPrompt]: {
     rail: Rail.User,
     boundary: true,
+    isTurn: true,
     netVisual:
       "Right-aligned rounded accent bubble opening a new turn section; the text " +
       "renders as light markdown. This is the baseline every other kind is " +
@@ -131,10 +141,13 @@ export const KIND_SPEC: Record<UserMessageKind, KindSpec> = {
   },
   [UserMessageKind.SystemChip]: {
     rail: Rail.User,
-    boundary: false,
+    boundary: true,
+    isTurn: false,
     netVisual:
-      "Right-aligned COLLAPSED chip ('▸ <label>') tucked INTO the current " +
-      "turn -- it does NOT start a new turn. Click to expand the raw body. Same " +
+      "Right-aligned COLLAPSED chip ('▸ <label>') at the point it arrived. It is " +
+      "not a turn of its own, but the timeline breaks at it: what the agent said " +
+      "before stays above it, and the work it resumes (any open step carried " +
+      "over) renders below it. Click to expand the raw body. Same " +
       "chrome as Stop-hook feedback (`.message-system-collapsed` wrapping a " +
       "`.tool-call-block`). The chip label distinguishes the source " +
       "(e.g. 'Stop hook feedback', 'Browser fleet', 'Background task').",
@@ -142,6 +155,7 @@ export const KIND_SPEC: Record<UserMessageKind, KindSpec> = {
   [UserMessageKind.SkillExpansion]: {
     rail: Rail.Assistant,
     boundary: false,
+    isTurn: false,
     netVisual:
       "No row of its own on the user rail. Its SKILL.md body is relocated into " +
       "the preceding assistant-side 'Tool: Skill' tool-call block, where it shows " +
@@ -150,31 +164,45 @@ export const KIND_SPEC: Record<UserMessageKind, KindSpec> = {
   [UserMessageKind.Hidden]: {
     rail: Rail.None,
     boundary: false,
-    netVisual: "No DOM at all -- fully invisible (e.g. the seeded '/welcome').",
+    isTurn: false,
+    netVisual: "No DOM at all -- fully invisible (e.g. an older chat's '/welcome').",
   },
   [UserMessageKind.PermissionResolution]: {
     rail: Rail.None,
     boundary: true,
+    isTurn: false,
     netVisual:
       "No row of its own. The extracted verdict (granted/denied/error) is written " +
       "onto the EARLIER permission-request card, and a fresh turn section opens " +
       "with no user bubble. Handled by parsePermissionResolution + turn-grouping, " +
       "not classifyUserMessage.",
   },
+  [UserMessageKind.SecretResolution]: {
+    rail: Rail.None,
+    boundary: true,
+    isTurn: false,
+    netVisual:
+      "No row. Its verdict (stored / declined / superseded) is written onto the EARLIER " +
+      "secret card, and the message opens a new turn section with no user bubble. " +
+      "Handled by secretResolutionOf + turn-grouping, never by classifyUserMessage.",
+  },
   [UserMessageKind.StatusMessage]: {
     rail: Rail.User,
-    boundary: true,
+    boundary: false,
+    isTurn: false,
     netVisual:
       "A subtle centered status pill (e.g. 'Context was compacted') rendered as " +
-      "its own row between turns or at the start/end of a turn.",
+      "its own row between turns or inline during a turn.",
   },
   [UserMessageKind.Notice]: {
     rail: Rail.Assistant,
-    boundary: false,
+    boundary: true,
+    isTurn: false,
     netVisual:
-      "A left-aligned single line tucked INTO the current turn: a tick, the lead " +
-      "in medium weight ('Background task completed:'), then the summary in plain " +
-      "secondary text. Nothing to expand -- the summary is the whole of it.",
+      "A left-aligned single line at the point it arrived, breaking the timeline " +
+      "like a SystemChip: a tick, the lead in medium weight ('Background task " +
+      "completed:'), then the summary in plain secondary text. Nothing to expand " +
+      "-- the summary is the whole of it.",
   },
 };
 
@@ -185,8 +213,8 @@ export const KIND_SPEC: Record<UserMessageKind, KindSpec> = {
  * bare user bubble. mngr itself is untouched (it is an independent product and has
  * no business knowing about this display concern).
  *
- * The wrapping side is `system/scripts/message_chat.py --system`
- * (`SYSTEM_MESSAGE_TAG`), which posts through the chat app's send route; the
+ * The wrapping side is `system/scripts/message_chat.py --browser-fleet`
+ * (`BROWSER_FLEET_TAG`), which posts through the chat app's send route; the
  * backend's copy is `BROWSER_FLEET_TAG` in `harnesses/message_display.py`. Keep the
  * tag string in sync. The tag adds no newlines, so a wrapped message types into the
  * agent's pane identically to the same text sent unwrapped.

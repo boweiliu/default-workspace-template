@@ -132,8 +132,10 @@ under `system/apps/<your-package>/` so they get an isolated window and origin.
   already used by an existing program (`system_interface`, `browser`, etc.
   are reserved by the scaffolder, which also refuses a name any
   `system/supervisord.conf.d/*.conf` already declares).
-- **Draw the app's icon** -- an `.svg` glyph specific to what *this*
-  app does, in the house style (see the CLI reference below);
+- **Draw the app's icon** -- a 216 by 216 two-layer tile specific to what
+  *this* app does, built to the rules in `docs/system/app-icons.md` (a
+  flat background under one fill-only glyph inside a centred 144 box, in
+  a colour pair from the palette that doc carries);
   `forward_port.py` refuses a brand-new registration without one. The
   scaffold copies it beside the app's manifest (`app.toml`), which names
   it.
@@ -199,7 +201,19 @@ What gets generated:
 - `system/apps/<package>/app.toml` -- the app's manifest: its registered
   `name`, `display_name`, `icon`,
   `priority = "user"` (shed before any built-in under memory pressure),
-  and `program` (its supervisord program). `forward_port.py --manifest`
+  `program` (its supervisord program), and `stop_when_no_windows = true` (the
+  shell stops the app a minute after its last window closes and starts it
+  again on the next request; `false` keeps it running for the life of the
+  workspace). Leave it `true` for an app that only answers requests: the stop
+  frees the whole process while nobody looks at it, its data on disk is
+  untouched, and the next request wakes it. Set it to `false` when the app
+  does work between requests that a stop would lose or interrupt: a
+  background thread or scheduler that refreshes data, a poller or file
+  watcher, a websocket or subscription to an outside service, a job that
+  must finish after the user closes the window, or an API another agent
+  drives with no window open. A stopped app runs nothing until its next
+  request, and the wake serves that request, not the work that was in
+  flight. `forward_port.py --manifest`
   reads it on every start; the scaffold checks it with `uv run app-manifest
   validate-manifest system/apps/<package>/app.toml` (run that yourself after
   editing it). Anything you build for this app outside `system/apps/<package>/`
@@ -221,13 +235,25 @@ What gets generated:
   `<PACKAGE_UPPER>_PORT` env var) bound in `run_simple`. Both overrides
   are what let a future edit boot a throwaway instance on a spare port
   against a data copy (see `update-app`). The scaffolded index page also
-  carries the **location beacon** one-liner -- a script that posts
-  `{type: "shell:location", path: location.pathname + location.search}`
-  to `window.parent` on page load. Keep that line on every page the app
-  serves: it is what lets the workspace shell reopen the app's window at
-  the place it was showing (the shell validates the sender's origin and
-  stores the path on the window's record). An app that drops it simply
-  always reopens at its origin.
+  carries the **shell page script** (`SHELL_PAGE_SCRIPT` in the runner) -- a
+  module script that connects the page to the workspace shell framing it,
+  reports where the page is on the handshake (so the shell reopens this
+  app's window at the place it was showing), and installs the **element
+  context menu**: the right-click menu whose last rows ("Copy reference",
+  "Explain...", "Modify...") hand the clicked element to a chat as a
+  `REF-<id>.json` attachment an agent can resolve
+  (`.agents/shared/references/element-references.md`,
+  `docs/system/blueprint/element-reference-menu/`). Keep the script on
+  every page the app serves. An app that drops it always reopens at its
+  origin and gets the browser's own menu. The runner serves the two modules
+  the script imports from its own origin at `/_static/app_contract.js` and
+  `/_static/context_menu.js` (a module import is a fetch without cookies,
+  which the forwarder refuses across origins); keep that route too.
+  A reference names an element by what its markup carries -- its `id`, its
+  `data-*` attributes, its classes, a selector -- so give a list
+  row the `id` or a `data-*` attribute of the record it shows, and an
+  interactive control a stable `id` or a first class that names it, and a
+  reference resolves to one thing.
 - `system/apps/<package>/test_<package>_ratchets.py` -- standard ratchets at
   zero.
 - `system/apps/<package>/README.md` -- one-line description.
@@ -243,7 +269,7 @@ regenerates it, but it is derived, so it stays out of a creation's footprint):
 
   ```ini
   [program:<name>]
-  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/<package>/app.toml --url http://localhost:<port> && <name>"
+  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/<package>/app.toml --url http://localhost:<port> && exec <name>"
   directory=/home/user/workspace
   autostart=true
   autorestart=true
@@ -257,14 +283,39 @@ regenerates it, but it is derived, so it stays out of a creation's footprint):
   FATAL rather than restarting a broken app several times a second for the life
   of the workspace. Built-in services deliberately retry forever instead.
 
-  The command ends in the app's own name, not `uv run <name>`; supervisord
-  resolves that name on PATH. The copy it finds is the console script
+  The command ends in `exec` of the app's own name, not `uv run <name>`, so
+  the app is the process supervisord tagged rather than a child of a wrapper;
+  supervisord resolves that name on PATH. The copy it finds is the console script
   `uv sync --all-packages` writes into the workspace venv -- `uv tool install
   -e` puts the tool's own entry point under your HOME, which supervisord's
   children do not have on PATH. So always sync with `--all-packages`: a
   root-closure-scoped `uv sync` prunes the member (a scaffolded app is not a
   root dependency), deletes that script, and the next restart is a spawn error
   with nothing to recover it.
+
+  An app that needs a credential (an API key the user supplied through the
+  `connect-external-service` skill's secret card) declares it in `app.toml` and
+  runs under the wrapper. `--secrets-file <name>` makes the scaffold write the
+  wrapped program command; the `[[secrets]]` block you add to the manifest by
+  hand either way, since only you know the variables. The block names the file,
+  its variables, and a one-line note (`publish-template` reads it, and refuses
+  to assemble a program that runs under a file no block declares), and the
+  program command wraps the entry point so the file's variables reach the
+  process and nothing else does:
+
+  ```toml
+  [[secrets]]
+  file = "example"
+  variables = ["EXAMPLE_API_KEY"]
+  note = "An Example API key from the account's settings page"
+  ```
+
+  ```ini
+  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/<package>/app.toml --url http://localhost:<port> && exec python3 system/scripts/with_secrets.py data/.secrets/example.env -- <name>"
+  ```
+
+  A preview (`update-app`'s `preview_app.py`) runs the app under the same
+  wrapper, once per `[[secrets]]` block, reading the live `data/.secrets/`.
 
   The Flask app serves at `/` and needs no prefix env var: your app
   owns its origin, so root-absolute URLs (`href="/api"`), WebSockets
@@ -407,7 +458,11 @@ Two cases, two patterns:
   `update-app`), so keep every read/write going through `DATA_DIR`
   -- a hardcoded `data/.apps/<name>/` silently bypasses the override and
   re-exposes the live data. Do NOT use `Path(__file__)`-based paths for
-  state.
+  state. A store the app can rebuild (downloads, extracted archives,
+  clones, caches) gets its own directory under `DATA_DIR` with an
+  empty `.nobackup` file in it, so the hourly backup skips it; see "Keep
+  rebuildable data out of the backup" in
+  `.agents/shared/worker/references/harden-creation.md`.
 - **Static assets shipped alongside the .py file** (templates,
   default configs, bundled JSON): `Path(__file__).parent / "assets/..."`
   is the right pattern.
@@ -439,8 +494,16 @@ launcher -- skip the surfacing step only for services with no UI
 (pure JSON APIs, webhook receivers, etc.).
 
 ```bash
-python3 system/scripts/layout.py open <name>
+python3 system/scripts/layout.py open <name> --beside
 ```
+
+`--beside` lays it beside the chat that asked for it instead of on top of the
+conversation, taking half the backdrop at the chat's own height. The chat is
+nudged sideways only if there is no room beside it, and then by the least that
+makes room; it is resized only if it is over half the backdrop wide. Most of the
+time nothing about it changes. Drop the flag
+only for an app the user wanted running rather than shown; with no chat on that
+desktop it is already a no-op.
 
 With no `--desktop`, the op edits the desktop the target client is looking
 at, which is where the user expects the new window. (Pass `--desktop <name>`
@@ -541,7 +604,7 @@ shed before any built-in service under memory pressure (see
 
 ```ini
 [program:<name>]
-command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/<name>/app.toml --url http://localhost:<port> && <existing_start_command>"
+command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/<name>/app.toml --url http://localhost:<port> && exec <existing_start_command>"
 directory=/home/user/workspace
 autostart=true
 autorestart=true
@@ -555,7 +618,7 @@ Two valid shapes:
 
   ```ini
   [program:docs-viewer]
-  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/docs-viewer/app.toml --url http://localhost:8090 && jupyter notebook --port 8090 --ip 127.0.0.1 --no-browser"
+  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/docs-viewer/app.toml --url http://localhost:8090 && exec jupyter notebook --port 8090 --ip 127.0.0.1 --no-browser"
   directory=/home/user/workspace
   autostart=true
   autorestart=true
@@ -588,7 +651,7 @@ reread && supervisorctl update` to start the new program.
 
 The `forward_port.py` call MUST come first in the command -- the port
 must be registered before the app starts listening, otherwise the
-app-watcher races with the backend coming up.
+shell's announcement of the registration races with the backend coming up.
 
 For the full program schema and logging knobs, see the shared
 [`.agents/shared/references/service-processes.md`](../../shared/references/service-processes.md).
@@ -645,29 +708,43 @@ Flags:
   warns on re-registration (the stored icon is kept), so a corrupted
   icon cannot crash-loop a running app.
 
-  **Draw the icon in the workspace's house style**: monochrome line
-  art on a transparent background, exactly like the built-in glyphs.
-  The frame to author in is
+  **Draw the icon to the rules in `docs/system/app-icons.md`**: a 216 by
+  216 tile of exactly two layers -- a flat background, and one glyph in a
+  second colour that fits a 144 by 144 box centred in it. The tile is
+  drawn small but authored large, so the hand-drawn detail the look asks
+  for has a grid to sit on. The frame to author in is
 
   ```svg
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="..."/>
+  <svg xmlns="http://www.w3.org/2000/svg" width="216" height="216" viewBox="0 0 216 216" fill="none">
+  <rect width="216" height="216" rx="69.12" fill="BACKGROUND"/>
+  <path d="..." fill="FOREGROUND"/>
   </svg>
   ```
 
-  -- strokes only, no `fill` on the shapes, no hardcoded colors.
-  `currentColor` is what lets the workspace ink the glyph to match the
-  text beside it, and a transparent background is what keeps it from
-  reading as a sticker in a row of line icons. Only use color if the
-  user explicitly asks for a colored icon.
+  -- fills only, never strokes; no shadow (every surface that draws an
+  icon casts its own); the 32 percent corner radius the shell's
+  `--desk-icon-radius` also uses; and a root `fill="none"`, so the shell
+  does not ink the tile with `currentColor` the way it inks a line
+  glyph. The colours are a pair from the palette in that doc, and the
+  glyph is one iconic *object* for what the app is *for* -- an
+  envelope, a clipboard, a bell -- drawn true to that object's own
+  proportions and then inked: the whole mark about a degree off level,
+  the width of every run breathing a fifth either side of its nominal,
+  the line itself drifting only a unit or two, ends round and lifting,
+  with its interior detail cut through to the background colour at one
+  nominal weight the whole set shares. Drawn in one pass and never revised. That doc carries the
+  full look, and says how an icon that already exists is changed
+  without losing its hand-placed points.
 - `--no-icon`: skip the icon requirement for a brand-new entry. Uses
   the generic letter monogram. Use this only when the user explicitly
   declines an icon, or for short-lived preview windows.
 - `--program`: name of the supervisord program that runs the app --
   the program-name-equals-service-name convention both paths follow, so
   pass the app's own name. Its presence on the registry entry is what
-  lets the workspace offer Stop/Start for the app (supervisord RPC);
+  lets the shell act on the app's process over supervisord's RPC: Quit it
+  from its window menu, stop it once no window shows it, hold its port
+  while it is stopped, and start it again on the next request (the
+  `/api/apps/<name>/stop` and `/start` routes remain for agents);
   omitting it clears any previously-stored value, so every registration
   call is authoritative. Never pass it for unsupervised instances
   (previews, `serve_isolated_instance.py` test servers) -- those own

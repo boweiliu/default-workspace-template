@@ -1,6 +1,6 @@
 # Window-bound resources and new-window shortcuts
 
-Status: agreed design (2026-09-20), implemented on `mngr/desktop-ui-phase-6`.
+Status: agreed design (2026-09-20), implemented on `mngr/desktop-ui-phase-6`; amended by [stop-when-no-windows.md](stop-when-no-windows.md) (the close hint goes only to a running app, and an app's process is the shell's to stop once no window shows it).
 Audience: implementers of `system/apps/terminal`, `system/apps/browser`, `system/apps/chat`, `system/libs/app_manifest`, the shell (`system/apps/system_interface`), `system/scripts/layout.py`, and the `manage-desktop` and `agentic-browser-fleet` skills.
 
 This spec amends the desktop interface ([plan](../blueprint/desktop-interface/plan-desktop-interface.md), [contracts](../blueprint/desktop-interface/contracts.md), [concepts](../blueprint/desktop-interface/concepts.md)) in two places that the first live test showed do not feel like a desktop:
@@ -17,7 +17,7 @@ Facts this design builds on, as of `mngr/desktop-ui-phase-6` with the cleanup fi
 
 - A **window** is `{app, path, title}` on one desktop, shared by every client ([plan 3.3](../blueprint/desktop-interface/plan-desktop-interface.md)).
   A close removes the window for everyone and does nothing else: "the shell has no notion of stopping or deleting what the window showed" (plan 4.5; concepts decision 9 took "close means stop" from neither prototype).
-- A **shortcut** runs a launch path in `focus` or `new` mode; the desktop is seeded from each manifest's `default_shortcut`.
+- A **shortcut** runs a launch path in `focus` or `new` mode; the desktop is seeded from each app's default shortcut: its manifest's `default_shortcut`, else, for an app a program runs, its first launch path taking no text (its first when every one takes text).
   Chat seeds `{new, mode = new}`; terminal, files, and browser seed `{new, mode = focus}`.
   `ShortcutIcon.ts` labels a `new` shortcut with the launch path's label (then "New Terminal") and a `focus` shortcut with the app's display name ("Terminal"), so today's desktop reads "New Chat, Terminal, File Viewer, Browser", and flipping a mode from the context menu renames the icon.
 - The **terminal** (`system/apps/terminal`) allocates `terminal-<N>` at `/new`, remembers it in `data/.apps/terminal/instances.json`, and recreates remembered sessions at startup.
@@ -63,7 +63,7 @@ Recorded here so the implementation need not re-argue them.
 |---|---|---|---|
 | `chat` | `{launch = "root", mode = "new"}` | `root` ("Chat", `/`), then `new` ("New Chat", `/new`, params `account_id`, `message`) | Chat |
 | `terminal` | `{launch = "new", mode = "new"}` | `new` ("Terminal", `/new`, param `workdir`) | Terminal |
-| `files` | `{launch = "new", mode = "new"}` | `new` ("File Viewer", `/`, param `path`) | File Viewer |
+| `files` | `{launch = "new", mode = "new"}` | `new` ("File Viewer", `/home/user/workspace/`, param `path`) | File Viewer |
 | `browser` | `{launch = "new", mode = "focus"}` | `new` ("Browser", `/new`, param `url`) | Browser |
 
 The chat gains a second launch path, `root`, listed first so the launcher's rows show "Chat" before "New Chat".
@@ -87,7 +87,8 @@ The `focus` browser shortcut raises this client's most recent browser window on 
 
 ### 3.4 Existing desktops
 
-Shortcuts are seeded once, when a desktop is created, so an existing desktop keeps its stored shortcuts (the chat's at `(chat, new)` in `new` mode, the others in `focus` mode).
+Shortcuts are seeded when a desktop is created; afterwards a desktop gains only the default shortcut of an app never offered before, and a workspace from before the offered record counts every app with a shortcut on a desktop as offered ([plan 3.2](../blueprint/desktop-interface/plan-desktop-interface.md)).
+So an existing desktop keeps its stored shortcuts (the chat's at `(chat, new)` in `new` mode, the others in `focus` mode).
 There is no automatic migration in this release, as for every other desktop-file change (plan section 15).
 A user flips a shortcut from its context menu ("Change shortcut to ...") or makes a new desktop; an agent runs `layout.py shortcut remove chat --launch new` and `layout.py shortcut set chat --launch root --mode new --cell <column,row>`.
 The changelog entry says so.
@@ -190,8 +191,9 @@ Closing a file viewer window destroys nothing.
 The manifest gains an optional `window_closed_path` (a launch-path-shaped value: rooted, no query string).
 `forward_port.py` copies it onto the registry row and `RegistryRow` reads it; a row without it means the app wants no hint.
 
-Whenever a window of an app closes, for any reason (the close control, the window and taskbar menus, the minds close chord, `layout.py close`, a desktop's deletion), the shell POSTs `{"path", "window_id", "desktop_id"}` to the app's registered URL plus its `window_closed_path`, from a daemon thread, with a 2 second timeout, after the close has been written and broadcast.
+Whenever a window of an app closes, for any reason (the close control, the window and taskbar menus, the Imbue Studio close chord, `layout.py close`, a desktop's deletion), the shell POSTs `{"path", "window_id", "desktop_id"}` to the app's registered URL plus its `window_closed_path`, from a daemon thread, with a 2 second timeout, after the close has been written and broadcast.
 A failed post is a debug log; the shell never waits for, retries, or acts on the answer, and the close is complete whether or not the app is up.
+The post goes only to an app that is running: a stopped app's port is the shell's own parker, which would wake the app to tell it a window closed ([stop-when-no-windows.md](stop-when-no-windows.md), decision 9); the app's next start sweeps the shell's windows anyway.
 The app's handler marks the resource the body's `path` names window-seen (the post is proof a window showed it), runs a sweep, and answers 204; what is shown now is read from the shell's desktops, never inferred from the body.
 The terminal and the browser declare `window_closed_path = "/api/window-closed"`; the chat and the files app declare none.
 
@@ -214,7 +216,7 @@ And one relaxation of the targeting rule, for `open` only:
 
 ### 5.2 The fleet CLI and skill
 
-`_open_viewer_window` passes `--minimized`, so the browser appears in the taskbar rather than over what the user is doing, and the fall-back hint goes away (an open with no client now succeeds).
+`_open_viewer_window` passes `--minimized` for `new`, `acquire`, and an agent's first command, so the browser appears in the taskbar rather than over what the user is doing, and the fall-back hint goes away (an open with no client now succeeds). `handoff` opens it without `--minimized`, which restores and raises the window, since the user has to act in it.
 The skill's opening section says: the fleet has one browser; `new` gives it to you (starting it if it was stopped) and opens its window for the user; the browser lives as long as a window shows it, so do not close the user's window and do not expect a browser nobody has a window on to outlive a sweep; `close` deletes the profile and is rarely what you want.
 The `2/2 browsers open` prose goes.
 

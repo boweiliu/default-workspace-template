@@ -1,6 +1,8 @@
 from collections.abc import Mapping
+from collections.abc import Sequence
 from typing import Any
 from typing import Final
+from typing import Literal
 
 from app_manifest.manifest import DefaultShortcut
 from app_manifest.manifest import EntryMode
@@ -30,6 +32,7 @@ from imbue.system_interface.shell.primitives import IfPresent
 from imbue.system_interface.shell.primitives import LaunchTargetKind
 from imbue.system_interface.shell.primitives import SaveId
 from imbue.system_interface.shell.primitives import ShortcutTargetKind
+from imbue.system_interface.shell.primitives import ShowOutcome
 from imbue.system_interface.shell.primitives import UserId
 from imbue.system_interface.shell.primitives import WallpaperKind
 from imbue.system_interface.shell.primitives import WallpaperName
@@ -67,6 +70,17 @@ class ClientRecord(FrozenModel):
     entries: dict[str, EntryPresentation] = Field(
         default_factory=dict, description="The client's presentation of each pinned entry, by app name"
     )
+    shown_history: tuple[str, ...] = Field(
+        default=(),
+        description="What the client has shown on the phone layout, most recent last: window ids and 'home', "
+        "each at most once",
+    )
+
+
+class ClientShownRequest(FrozenModel):
+    """The body of ``POST /api/clients/<client_id>/shown``: the window the client now shows, or None for home."""
+
+    window_id: WindowId | None = Field(description="The window shown, or None for the home grid")
 
 
 class UserRecord(FrozenModel):
@@ -87,6 +101,19 @@ class AppInventoryEntry(FrozenModel):
 
     row: RegistryRow = Field(description="The registry row, validated on read")
     is_running: bool = Field(description="Derived from supervisord or a TCP probe, never stored")
+
+
+@pure
+def stoppable_program_of(entry: AppInventoryEntry, entries: Sequence[AppInventoryEntry]) -> str | None:
+    """The supervised program the workspace may stop, start, park, and wake for this app, or None: an app with no
+    program, a critical app, and any row inside a critical app's program are never acted on (desktop contracts.md
+    section 5.1)."""
+    program = entry.row.program or ""
+    if not program or entry.row.critical:
+        return None
+    if any(other.row.critical and other.row.program == program for other in entries):
+        return None
+    return program
 
 
 @pure
@@ -121,10 +148,14 @@ def app_wire_json(entry: AppInventoryEntry) -> dict[str, Any]:
         "internal": row.internal,
         "program": row.program or "",
         "critical": row.critical,
+        "stop_when_no_windows": row.stop_when_no_windows,
         "launch_paths": [launch_path_wire_json(launch_path) for launch_path in effective_launch_paths(row)],
         "default_shortcut": default_shortcut_wire_json(row.default_shortcut),
         "launcher_rank": row.launcher_rank,
         "pin": pin_wire_json(row.pin),
+        "message_handlers": [
+            {"type": str(handler.type), "path": str(handler.path)} for handler in row.message_handlers
+        ],
         "is_running": entry.is_running,
     }
 
@@ -142,6 +173,14 @@ class ClientStateReport(FrozenModel):
     client_id: ClientId = Field(description="The reporting client")
     active_desktop: DesktopId = Field(description="The desktop the client is on now")
     previous_desktop: str = Field(default="", description="The desktop it was on before, empty on connect")
+
+
+class PopOutStateReport(FrozenModel):
+    """The inbound ``client_state`` WebSocket message of a pop-out's page (desktop contracts.md section 6): the
+    client it belongs to, and no desktop, since the client's active desktop is its main window's."""
+
+    client_id: ClientId = Field(description="The client the pop-out belongs to")
+    is_pop_out: Literal[True] = Field(description="Marks the report as a pop-out's")
 
 
 class ClientActivityReport(FrozenModel):
@@ -170,7 +209,9 @@ class ClientReportOutcome(FrozenModel):
 
 
 # The launch path every app that declares none has, at its root, synthesized by the shell (desktop
-# contracts.md section 2). ``label`` is ``Open <display name>`` per app, filled in by ``effective_launch_paths``.
+# contracts.md section 2). Its ``label`` is the app's display name, filled in by
+# ``effective_launch_paths``: the row stands in a list beside rows an app labelled for itself, where
+# a verb reads as a different KIND of row rather than as the same row with a word in front of it.
 OPEN_LAUNCH_PATH_VALUE: Final[LaunchPathValue] = LaunchPathValue("/")
 
 
@@ -181,9 +222,7 @@ def effective_launch_paths(row: RegistryRow) -> tuple[RegistryLaunchPath, ...]:
         return row.launch_paths
     display = str(row.display_name) if row.display_name is not None else str(row.name)
     return (
-        RegistryLaunchPath(
-            id=OPEN_LAUNCH_PATH_ID, label=NonEmptyStr(f"Open {display}"), path=OPEN_LAUNCH_PATH_VALUE, params=()
-        ),
+        RegistryLaunchPath(id=OPEN_LAUNCH_PATH_ID, label=NonEmptyStr(display), path=OPEN_LAUNCH_PATH_VALUE, params=()),
     )
 
 
@@ -291,6 +330,15 @@ class DesktopsDocument(FrozenModel):
     desktops: tuple[Desktop, ...] = Field(description="Every desktop, in creation order; the first is the fallback")
 
 
+class DefaultShortcutsOfferedDocument(FrozenModel):
+    """The whole of ``default_shortcuts_offered.json``: the apps whose default shortcut the shell has offered."""
+
+    version: int = Field(description="The file format version")
+    apps: tuple[AppName, ...] = Field(
+        description="Every app whose default shortcut the shell has put on a desktop or found there, sorted"
+    )
+
+
 class WindowPlacement(FrozenModel):
     """Where one client keeps one window: its frame, state, and whether it is minimized."""
 
@@ -298,6 +346,13 @@ class WindowPlacement(FrozenModel):
     frame: Frame = Field(description="The frame, kept through every state so restore has somewhere to go")
     state: WindowState = Field(description="Normal, snapped to a half, or maximized")
     is_minimized: bool = Field(description="Whether the window is out of sight; orthogonal to the state")
+    is_detached: bool = Field(
+        default=False,
+        description=(
+            "Whether the window is pulled out into a desktop window of the embedding chrome's own (the "
+            "pull-out-window spec): a ghost at its frame here, its page shown there; orthogonal to the state"
+        ),
+    )
 
 
 class DesktopLayout(FrozenModel):
@@ -328,6 +383,9 @@ class WindowOpenRequest(FrozenModel):
     client_id: ClientId = Field(description="The requesting client, whose placement is written at once")
     if_present: IfPresent = Field(
         default=IfPresent.FOCUS, description="Focus a window already at the path, or open another"
+    )
+    minimized: bool = Field(
+        default=False, description="Whether a window this open creates is placed minimized for the client"
     )
 
 
@@ -382,6 +440,31 @@ class WindowLocationReport(FrozenModel):
     )
     path: WindowPath = Field(description="Where the page is now")
     title: WindowTitle = Field(description="What the page calls itself now")
+
+
+class ClientDesktopView(FrozenModel):
+    """One desktop as one client sees it: the desktop, the client's layout of it, and its windows at the paths the
+    client sees (an independent window at the client's own path)."""
+
+    desktop: Desktop = Field(description="The shared record")
+    layout: DesktopLayout = Field(description="The client's layout of the desktop, pinned windows placed")
+    seen_windows: tuple[Window, ...] = Field(description="The desktop's windows as the client sees them")
+
+
+class ShowChoice(FrozenModel):
+    """What a ``show`` op settled on: how it shows the path, on which desktop, and the window (none for an open)."""
+
+    outcome: ShowOutcome = Field(description="Raised, navigated, pinned, or opened")
+    desktop_id: DesktopId = Field(description="The desktop the path is shown on")
+    window: Window | None = Field(
+        description="The window raised or navigated, as the client sees it; None to open one"
+    )
+
+    @model_validator(mode="after")
+    def _check_a_window_exactly_unless_opening(self) -> "ShowChoice":
+        if (self.window is None) != (self.outcome is ShowOutcome.OPENED):
+            raise InvalidShellValueError(f"a show names a window unless it opens one, not {self.outcome.value}")
+        return self
 
 
 class WindowOpenOutcome(FrozenModel):

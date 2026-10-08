@@ -99,7 +99,7 @@ things in), but one suffices if the emergency scenarios (E15) are run last.
   chat previews open on it. Note the shell's, chat's, and terminal's supervisord pids.
 - **S0.4 Clean state.** No `data/.state/update-apply/last-good.json`, no `marker.json`,
   no `emergency.json`, nothing under `data/.state/isolated-instances/`. `git status`
-  clean. No `editing critical apps` lease in `tk ready`.
+  clean. No `editing critical app <name>` lease in `tk ready`.
 - **S0.5 A built worktree.** Provision one as the reference says (the slug `tp1`):
 
   ```bash
@@ -119,7 +119,7 @@ things in), but one suffices if the emergency scenarios (E15) are run last.
 | oom_priority | `cd system/services/oom_priority && uv run pytest` | `agent-observer` band ordering |
 | chat | `cd system/apps/chat && uv run pytest` | `test_chat_system.py` runs a real `mngr observe`; confirm it did not skip |
 | shell backend | `cd system/apps/system_interface && uv run pytest` | routes, notice watch, preview refusals |
-| shell e2e (release) | `cd system/apps/system_interface && uv run pytest -m release imbue/system_interface/test_e2e.py -k "rollback_point or preview"` | release tests do not run in CI |
+| shell e2e (browser) | `cd system/apps/system_interface && uv run pytest --no-cov -m browser imbue/system_interface/test_e2e.py -k "rollback_point or preview"` | a plain `uv run pytest` skips the browser tests |
 | shell frontend | `cd system && npm test` | UpdateNotice, UpdateNoticeBanner, Sidebar, tabMenu, previewShell vitest |
 | terminal | `cd system/apps/terminal && uv run pytest` | `--no-register` boot on two custom ports |
 | vendored mngr | `cd system/vendor/mngr && uv run pytest libs/mngr/imbue/mngr/api/observe_test.py libs/mngr/imbue/mngr/hosts/host_test.py libs/mngr/imbue/mngr/hosts/test_host.py libs/mngr_notifications/imbue/mngr_notifications/cli_test.py` | follower, `initial_branch`, notify's probe |
@@ -253,8 +253,10 @@ All from the repo root with `uv run python3`, `--worktree data/.tasks/critical-l
     live `data/.apps/chat` mtime is unchanged after a send;
   - an account switch attempted from the preview page is refused with the "cannot change
     account from a preview" message;
-  - `/proc/<agent pid>/oom_score_adj` of a running chat's agent is unchanged after the
-    preview's sweep interval (the refusing `set_adj`);
+  - `/proc/<agent pid>/oom_score_adj` of a running chat's agent that the send did not
+    address is unchanged after a send from the preview and a minute's wait (the
+    preview's prioritizer is inert: no writer, no sweep; the addressed agent's score may
+    move, since the live chat sees its turn start and re-tags it);
   - **a message sent from the preview reaches the real agent** (the transcript in the
     live chat tab shows it). If it raises a permission card, note where it surfaced
     (open question in the plan).
@@ -466,7 +468,7 @@ shell's, chat's, and terminal's supervisord pids and `git rev-parse HEAD`.
 These compose the component checks in the order `references/critical-app.md` prescribes.
 Run them after sections A to F pass, in a clean workspace state (S0.4).
 
-- **X1 Chat change, full loop.** Lease (`tk create "editing critical apps"`), worktree,
+- **X1 Chat change, full loop.** Lease (`tk create "editing critical app chat"`), worktree,
   composer edit, C1 boot, open, C11 refresh round, commit, D2's teardown and worker launch
   on the branch, worker `done` (or a stand-in that commits a test and reports), optional
   final preview from the worker's `work_dir`, E1 freshness, E2 apply with the worker's

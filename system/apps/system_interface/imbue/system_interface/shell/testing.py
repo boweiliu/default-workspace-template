@@ -13,14 +13,20 @@ from typing import Final
 
 from app_manifest.manifest import LocationScope
 from app_manifest.primitives import AppName
+from app_manifest.registry import RegistryRow
+from app_manifest.registry import read_registry
 from flask import Flask
 from flask import request
 
 from imbue.system_interface.server import create_application
 from imbue.system_interface.shell.data_types import Desktop
+from imbue.system_interface.shell.data_types import DesktopsDocument
 from imbue.system_interface.shell.data_types import Window
 from imbue.system_interface.shell.data_types import WindowPlacement
+from imbue.system_interface.shell.desktop_document import DESKTOPS_FILE_VERSION
 from imbue.system_interface.shell.desktop_document import cascade_frame
+from imbue.system_interface.shell.desktops import DEFAULT_SHORTCUTS_OFFERED_FILENAME
+from imbue.system_interface.shell.desktops import DESKTOPS_FILENAME
 from imbue.system_interface.shell.identity import IDENTITY_HEADER
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.inventory import AppInventory
@@ -69,6 +75,9 @@ def registry_row_toml(
     # The ``[pin]`` table as ``(path, style, scope, default_mode)``.
     pin: tuple[str, str, str, str] | None = None,
     window_closed_path: str | None = None,
+    stop_when_no_windows: bool = False,
+    # Each message handler as ``(type, path)``.
+    message_handlers: Sequence[tuple[str, str]] = (),
 ) -> str:
     """One ``[[apps]]`` row as ``forward_port.py`` writes it, with the manifest-derived keys the shell reads.
     ``default_shortcut`` is ``(launch, mode)``."""
@@ -80,6 +89,7 @@ def registry_row_toml(
         f'display_name = "{display_name if display_name is not None else name.capitalize()}"',
         f"critical = {'true' if is_critical else 'false'}",
         f"internal = {'true' if is_internal else 'false'}",
+        f"stop_when_no_windows = {'true' if stop_when_no_windows else 'false'}",
     ]
     if program is not None:
         lines.append(f'program = "{program}"')
@@ -94,6 +104,9 @@ def registry_row_toml(
         )
     if window_closed_path is not None:
         lines.append(f'window_closed_path = "{window_closed_path}"')
+    if message_handlers:
+        handlers = ", ".join(f'{{ type = "{kind}", path = "{path}" }}' for kind, path in message_handlers)
+        lines.append(f"message_handlers = [{handlers}]")
     for launch_id, launch_label, launch_path in launch_paths:
         lines.append("[[apps.launch_paths]]")
         lines.append(f'id = "{launch_id}"')
@@ -142,18 +155,123 @@ def write_two_app_registry(tmp_path: Path, *extra_rows: str) -> Path:
     )
 
 
+# The apps the built-in rows seed a desktop with, in launcher order: without the chat, and with it.
+BUILTIN_SHORTCUT_APPS_BEFORE_CHAT: Final[tuple[str, ...]] = ("getting-started", "files", "browser", "terminal")
+BUILTIN_SHORTCUT_APPS_WITH_CHAT: Final[tuple[str, ...]] = ("chat", *BUILTIN_SHORTCUT_APPS_BEFORE_CHAT)
+
+
+def builtin_rows_toml_before_chat() -> tuple[str, ...]:
+    """The rows of the built-in apps that register before the chat, shaped as their manifests make them: the shell
+    (internal), Getting Started, the file viewer, the browser, and the terminal."""
+    return (
+        registry_row_toml("system_interface", "http://localhost:8000", is_internal=True, is_critical=True),
+        registry_row_toml(
+            "getting-started",
+            "http://localhost:7400",
+            display_name="Getting Started",
+            launcher_rank=15,
+            default_shortcut=("open", "focus"),
+        ),
+        registry_row_toml(
+            "files",
+            TEST_FILES_URL,
+            display_name="File Viewer",
+            launcher_rank=20,
+            default_shortcut=("new", "new"),
+            launch_paths=[("new", "File Viewer", "/home/user/workspace/")],
+        ),
+        registry_row_toml(
+            "browser",
+            "http://localhost:7500",
+            launcher_rank=30,
+            default_shortcut=("new", "focus"),
+            launch_paths=[("new", "Browser", "/new")],
+            launch_methods={"new": "POST"},
+        ),
+        registry_row_toml(
+            "terminal",
+            TEST_TERMINAL_URL,
+            is_critical=True,
+            launcher_rank=40,
+            default_shortcut=("new", "new"),
+            launch_paths=[("new", "Terminal", "/new")],
+            launch_methods={"new": "POST"},
+        ),
+    )
+
+
+def builtin_chat_row_toml() -> str:
+    """The chat's row, shaped as its manifest makes it: ranked first, its default shortcut the chat list, pinned."""
+    return registry_row_toml(
+        "chat",
+        "http://localhost:7800",
+        is_critical=True,
+        launcher_rank=10,
+        default_shortcut=("root", "new"),
+        launch_paths=[("root", "Chat", "/"), ("new", "New Chat", "/api/chats/intake")],
+        launch_methods={"new": "POST"},
+        pin=("/", "avatar", "independent", "floating"),
+    )
+
+
+def builtin_registry_rows(directory: Path) -> tuple[list[RegistryRow], list[RegistryRow]]:
+    """The built-in apps' rows, read from registries written under ``directory``: without the chat, and with it
+    registered last."""
+    before_chat = read_registry(write_registry(directory / "before_chat.toml", *builtin_rows_toml_before_chat()))
+    with_chat = read_registry(
+        write_registry(directory / "with_chat.toml", *builtin_rows_toml_before_chat(), builtin_chat_row_toml())
+    )
+    return before_chat, with_chat
+
+
+def shortcut_apps_on(desktop: Desktop) -> tuple[str, ...]:
+    return tuple(str(shortcut.target.app) for shortcut in desktop.shortcuts)
+
+
+def write_desktops_file(state_directory: Path, *desktops: Desktop) -> None:
+    write_json_atomic(
+        state_directory / DESKTOPS_FILENAME,
+        DesktopsDocument(version=DESKTOPS_FILE_VERSION, desktops=desktops).model_dump(mode="json"),
+    )
+
+
+def read_default_shortcuts_offered(state_directory: Path) -> dict[str, Any]:
+    return json.loads((state_directory / DEFAULT_SHORTCUTS_OFFERED_FILENAME).read_text())
+
+
+# The ``desktops.json`` a released shell reads: its version, and its keys at the top and per desktop.
+_RELEASED_DESKTOPS_FILE_VERSION: Final[int] = 1
+_RELEASED_DESKTOPS_FILE_KEYS: Final[frozenset[str]] = frozenset({"version", "desktops"})
+_RELEASED_DESKTOP_KEYS: Final[frozenset[str]] = frozenset(
+    {"id", "name", "color", "glyph", "wallpaper", "shortcuts", "windows"}
+)
+
+
+def read_desktops_file_in_its_released_shape(state_directory: Path) -> tuple[Desktop, ...]:
+    """The desktops ``desktops.json`` holds, after checking it is the version and has exactly the keys a released
+    shell reads."""
+    raw = json.loads((state_directory / DESKTOPS_FILENAME).read_text())
+    assert set(raw) == _RELEASED_DESKTOPS_FILE_KEYS and raw["version"] == _RELEASED_DESKTOPS_FILE_VERSION
+    for desktop in raw["desktops"]:
+        assert set(desktop) == _RELEASED_DESKTOP_KEYS
+    return DesktopsDocument.model_validate(raw).desktops
+
+
 def shell_application(
     tmp_path: Path,
     inventory: AppInventory,
     broadcaster: WebSocketBroadcaster,
     is_preview: bool = False,
+    wallpaper_files_directory: Path | None = None,
     launch_poster: LaunchPoster | None = None,
 ) -> Flask:
     """The shell app over ``inventory``, its state under ``tmp_path/state`` and the update notice's workspace at
     ``tmp_path/repo``, sharing the inventory's broadcaster as in production.
 
     Its bundle directory is ``tmp_path / "static"``, empty until a test fills it, so no route answer depends
-    on whether the frontend has been built in the checkout.
+    on whether the frontend has been built in the checkout. ``wallpaper_files_directory`` is where the
+    workspace's own wallpapers are read from, absolute by default; a relative one names a place under
+    ``tmp_path/repo``, as the shipped default names one under the workspace root.
     """
     state = build_test_state(
         broadcaster=broadcaster,
@@ -162,6 +280,7 @@ def shell_application(
         is_preview=is_preview,
         repo_root=tmp_path / "repo",
         static_directory=tmp_path / "static",
+        wallpaper_files_directory=wallpaper_files_directory,
         launch_poster=launch_poster,
     )
     return create_application(state)
@@ -207,6 +326,18 @@ def recording_app(received: list[dict[str, Any]]) -> Flask:
     return app
 
 
+def message_handling_app(received: list[dict[str, Any]], path: str, status: int) -> Flask:
+    """An app that appends every JSON body posted to ``path`` to ``received`` and answers ``status``."""
+    app = Flask("message-handling")
+
+    def take() -> tuple[str, int]:
+        received.append(request.get_json(force=True))
+        return "{}", status
+
+    app.add_url_rule(path, view_func=take, methods=["POST"], endpoint="take")
+    return app
+
+
 def identity_headers(identity: RequestIdentity) -> dict[str, str]:
     """The ``X-Imbue-Identity`` header a share gateway stamps on a request, as a test client sends it."""
     return {IDENTITY_HEADER: identity.model_dump_json()}
@@ -243,10 +374,15 @@ def window_record(
 
 
 def placement_record(
-    window_id: WindowId, is_minimized: bool = False, state: WindowState = WindowState.NORMAL
+    window_id: WindowId,
+    is_minimized: bool = False,
+    state: WindowState = WindowState.NORMAL,
+    is_detached: bool = False,
 ) -> WindowPlacement:
-    """A placement at the first cascade frame; shown and normal unless told otherwise."""
-    return WindowPlacement(window_id=window_id, frame=cascade_frame(0), state=state, is_minimized=is_minimized)
+    """A placement at the first cascade frame; shown, normal, and on the desktop unless told otherwise."""
+    return WindowPlacement(
+        window_id=window_id, frame=cascade_frame(0), state=state, is_minimized=is_minimized, is_detached=is_detached
+    )
 
 
 def desktop_with_windows(*windows: Window) -> Desktop:

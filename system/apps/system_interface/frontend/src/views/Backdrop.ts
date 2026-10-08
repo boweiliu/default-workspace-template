@@ -1,27 +1,26 @@
 /**
- * The backdrop (concepts.md section 2.4): the active desktop's wallpaper, its shortcut grid
+ * The backdrop (concepts.md section 2.4): over the active desktop's wallpaper, its shortcut grid
  * fitted to the current backdrop at render time, its windows in stacking order (each over the
- * live page the pages layer positions for it), the floating pinned entries above them, the snap
- * preview, and the ghost of a dragged shortcut. Every pixel comes from the store's geometry;
- * nothing here measures the DOM or listens for gestures.
+ * live page the pages layer positions for it), the floating pinned entries above them, and the snap
+ * preview. A shortcut being dragged needs no layer of its own: the icon carries its own lift, and the
+ * store's placement carries the room made for it. Every pixel comes from the store's geometry; nothing
+ * here measures the DOM or listens for gestures.
  */
 
 import m from "mithril";
-import { wallpaperImageUrl } from "../model/api";
-import { cellRect, placeShortcuts } from "../geometry/grid";
-import type { PixelPoint, PixelRect } from "../geometry/frames";
-import type { AppRecord, Desktop, DesktopShortcut, Placement } from "../model/records";
+import { cellRect } from "../geometry/grid";
+import type { PixelPoint } from "../geometry/frames";
+import type { Desktop, DesktopShortcut, Placement } from "../model/records";
 import { shortcutKey } from "../model/records";
-import { appByName, effectiveWindowTitle, renderedState } from "../reducers/desktopState";
+import { appByName, effectiveWindowTitle, isAppShownStopped } from "../reducers/desktopState";
 import type { TaskbarEntry } from "../reducers/desktopState";
 import type { DesktopStore } from "../store/DesktopStore";
+import { DetachedWindowGhost } from "./DetachedWindowGhost";
 import { FloatingEntries } from "./FloatingEntries";
-import { rectStyle } from "./pixelStyle";
-import { ICON_MARKUP_SIZE, ShortcutIcon } from "./ShortcutIcon";
+import { ShortcutIcon } from "./ShortcutIcon";
 import { SnapPreview } from "./SnapPreview";
 import { Window } from "./Window";
 import type { WindowControl } from "./TitleBar";
-import { appGlyph } from "./glyphs";
 
 export interface BackdropAttrs {
   readonly store: DesktopStore;
@@ -33,14 +32,21 @@ export interface BackdropAttrs {
   /** The pinned entries this client draws floating above the windows. */
   readonly floatingEntries: readonly TaskbarEntry[];
   readonly openEntryMenuWindowId: string | null;
+  /** Spread onto a window's maximize control: resting on it opens that window's size menu. */
+  readonly sizeMenuTrigger: (windowId: string) => m.Attributes;
   readonly onEntryClick: (windowId: string) => void;
-  readonly onEntryContextMenu: (windowId: string, x: number, y: number) => void;
+  readonly onEntryContextMenu: (windowId: string, x: number, y: number, target: Element) => void;
   /** Whether a menu or the launcher is open: every window is shielded, so the press that closes it reaches the shell. */
   readonly isOverlayOpen: boolean;
   readonly onSelectShortcut: (key: string | null) => void;
   readonly onRunShortcut: (shortcut: DesktopShortcut) => void;
-  readonly onShortcutContextMenu: (shortcut: DesktopShortcut, point: PixelPoint) => void;
+  readonly onShortcutContextMenu: (shortcut: DesktopShortcut, point: PixelPoint, target: Element) => void;
   readonly onWindowControl: (windowId: string, control: WindowControl, event: MouseEvent) => void;
+  /** A pulled-out window's ghost was asked to show its own desktop window, to hide itself, or to bring the
+   *  window back. */
+  readonly onShowDetachedWindow: (windowId: string) => void;
+  readonly onHideWindowGhost: (windowId: string) => void;
+  readonly onBringBackWindow: (windowId: string) => void;
   /** The element the live pages are appended to, created once and never re-rendered. */
   readonly onPagesHostCreated: (host: HTMLElement) => void;
 }
@@ -53,22 +59,21 @@ export function Backdrop(): m.Component<BackdropAttrs> {
       const state = store.getState();
       const metrics = store.getMetrics();
       const gesture = store.getGesture();
-      const dimensions = store.gridDimensions();
-      const placed = placeShortcuts(desktop.shortcuts, dimensions);
-      const liftedKey = gesture?.kind === "shortcut" ? shortcutKey(gesture.app, gesture.launch) : null;
+      // The placement already carries the drag: the held shortcut sits in the cell under the pointer (its
+      // lift translates it there from the cell it came from) and the shortcut that was there has stepped aside.
+      const placed = store.placedShortcuts();
+      const held = gesture !== null && gesture.kind === "shortcut" ? gesture : null;
+      const heldKey = held === null ? null : shortcutKey(held.app, held.launch);
       const windowsById = new Map(desktop.windows.map((window) => [window.id, window]));
       const snapRect = store.snapPreviewRect();
-      const wallpaperStyle =
-        desktop.wallpaper === null ? {} : { backgroundImage: `url("${wallpaperImageUrl(desktop.wallpaper)}")` };
 
       return m(
         "div",
         {
           "data-desktop-id": desktop.id,
-          class:
-            "backdrop relative isolate h-full w-full overflow-hidden select-none bg-(--desk-backdrop) bg-cover " +
-            "bg-center bg-(image:--desk-default-wallpaper)",
-          style: wallpaperStyle,
+          // The wallpaper is the app layout's, painted across the whole viewport so the taskbar has
+          // something to blur; this layer stays clear of it.
+          class: "backdrop relative isolate h-full w-full overflow-hidden select-none",
         },
         [
           m(
@@ -82,26 +87,32 @@ export function Backdrop(): m.Component<BackdropAttrs> {
             },
             placed.map(({ shortcut, cell }) => {
               const key = shortcutKey(shortcut.target.app, shortcut.target.launch);
+              const app = appByName(state, shortcut.target.app);
+              // The one in the hand is drawn in the cell it came from and translated out of it, so the icon
+              // stays exactly where it was grabbed whatever cell the room being made has put it in.
+              const lifted = heldKey === key ? held : null;
               return m(ShortcutIcon, {
                 key,
                 shortcut,
                 cell,
-                rect: cellRect(cell, metrics),
-                app: appByName(state, shortcut.target.app),
+                rect: cellRect(lifted === null ? cell : lifted.originCell, metrics),
+                app,
+                isStopped: isAppShownStopped(state, app),
                 isAppsLoaded: state.isAppsLoaded,
                 isSelected: attrs.selectedShortcutKey === key,
-                isLifted: liftedKey === key,
+                lift: lifted === null ? null : lifted.lift,
+                isSliding: held !== null,
                 isRunOnClick: state.modes.isTouch,
                 onSelect: () => attrs.onSelectShortcut(key),
                 onRun: () => attrs.onRunShortcut(shortcut),
-                onContextMenu: (x, y) => attrs.onShortcutContextMenu(shortcut, { x, y }),
+                onContextMenu: (x, y, target) => attrs.onShortcutContextMenu(shortcut, { x, y }, target),
               });
             }),
           ),
           // The pages' host: a sibling of the windows with no stacking context of its own, so a page
           // at 2i+1 and its chrome at 2i+2 interleave in the backdrop's context.
           m("div", {
-            class: "live-pages pointer-events-none absolute inset-0 [&>*]:pointer-events-auto",
+            class: "live-pages pointer-events-none absolute inset-0 outline-none [&>*]:pointer-events-auto",
             oncreate: (created: m.VnodeDOM) => attrs.onPagesHostCreated(created.dom as HTMLElement),
             onbeforeupdate: () => false,
           }),
@@ -110,11 +121,29 @@ export function Backdrop(): m.Component<BackdropAttrs> {
             // Inert down to the parts that take a press (title bar, resize edges, shield, placeholders): each
             // window's chrome sits over its own page in the stacking order, and the page must get the rest.
             { class: "windows absolute inset-0 pointer-events-none" },
-            // A keyed list tolerates no holes: a minimized or unknown window contributes nothing.
-            placements.flatMap((placement, index) => {
+            // A keyed list tolerates no holes: a minimized or unknown window contributes nothing (a pulled-out
+            // window's hidden ghost included).
+            placements.flatMap((placement, index): m.Children[] => {
               const window = windowsById.get(placement.window_id);
               if (placement.is_minimized || window === undefined) return [];
               const app = appByName(state, window.app);
+              // A pulled-out window leaves its ghost at its frame, where a return lands, whatever state it was
+              // pulled out in (detach keeps the state); its page is in the chrome's own window.
+              if (placement.is_detached) {
+                return [
+                  m(DetachedWindowGhost, {
+                    key: window.id,
+                    window,
+                    app,
+                    title: effectiveWindowTitle(state, window, app),
+                    rect: store.renderedRect({ ...placement, state: "NORMAL" }),
+                    stackIndex: index,
+                    onShow: () => attrs.onShowDetachedWindow(window.id),
+                    onHide: () => attrs.onHideWindowGhost(window.id),
+                    onBringBack: () => attrs.onBringBackWindow(window.id),
+                  }),
+                ];
+              }
               return [
                 m(Window, {
                   key: window.id,
@@ -122,17 +151,14 @@ export function Backdrop(): m.Component<BackdropAttrs> {
                   app,
                   title: effectiveWindowTitle(state, window, app),
                   rect: store.windowRect(window.id),
-                  state: renderedState(placement, state.modes),
+                  state: placement.state,
                   stackIndex: index,
                   isFocused: window.id === focusedWindowId,
-                  isCompact: state.modes.isCompact,
                   isTouch: state.modes.isTouch,
                   isMenuOpen: attrs.openMenuWindowId === window.id,
+                  sizeMenuTrigger: attrs.sizeMenuTrigger(window.id),
                   isShielded: window.id !== focusedWindowId || attrs.isOverlayOpen,
-                  onStartApp:
-                    app !== undefined && !app.is_running && store.canStopApp(app)
-                      ? () => void store.setAppLifecycle(app.name, "start")
-                      : null,
+                  isStopped: isAppShownStopped(state, app),
                   onRaise: () => store.raiseWindow(window.id),
                   onControl: (control, event) => attrs.onWindowControl(window.id, control, event),
                   onToggleMaximize: () => store.toggleMaximized(window.id),
@@ -149,33 +175,8 @@ export function Backdrop(): m.Component<BackdropAttrs> {
             onContextMenu: attrs.onEntryContextMenu,
           }),
           m(SnapPreview, { rect: snapRect }),
-          gesture?.kind === "shortcut"
-            ? shortcutGhost(gesture.iconPosition, cellRect(gesture.targetCell, metrics), appByName(state, gesture.app))
-            : null,
         ],
       );
     },
   };
-}
-
-/** The lifted shortcut's icon under the pointer, and the outline of the cell it would drop into. */
-function shortcutGhost(position: PixelPoint, target: PixelRect, app: AppRecord | undefined): m.Children {
-  return [
-    m("div", {
-      "data-drop-cell": "",
-      class: "pointer-events-none absolute z-(--z-sticky) rounded-lg border-2 border-dashed border-accent",
-      style: rectStyle(target),
-    }),
-    m(
-      "div",
-      {
-        "data-shortcut-ghost": "",
-        class:
-          "pointer-events-none absolute z-(--z-sticky) flex h-(--desk-icon-size) w-(--desk-icon-size) items-center " +
-          "justify-center rounded-xl bg-surface opacity-80 shadow-overlay [&>svg]:size-full",
-        style: { left: `${position.x}px`, top: `${position.y}px` },
-      },
-      m.trust(appGlyph(app, ICON_MARKUP_SIZE)),
-    ),
-  ];
 }

@@ -38,6 +38,8 @@ export const MODEL_SUBMENU_MAX_HEIGHT =
 export const TRIGGER =
   "flex h-[30px] items-center gap-1 rounded-lg px-2 type-helper whitespace-nowrap " +
   "text-faint transition-colors hover:bg-fill-hover hover:text-secondary cursor-pointer";
+/** The trigger's shape with nothing to open: a chat with no agent yet names its account. */
+export const PROVISIONAL_CHIP = "flex h-[30px] items-center rounded-lg px-2 type-helper whitespace-nowrap text-faint";
 /** The separators between the chip's parts, a step quieter than the values. */
 export const TRIGGER_DOT = "text-faint/60";
 
@@ -91,6 +93,23 @@ export const SLIDER =
   "[&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none " +
   "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-surface " +
   "[&::-webkit-slider-thumb]:shadow-[0_0_0_1px_rgba(0,0,0,0.15),0_1px_2px_rgba(0,0,0,0.25)]";
+
+// The phone layout
+/** The button at the composer's left that opens the card in the phone layout: as tall as the
+ *  composer's one-line box, and lit while its card is up. */
+export const SETTINGS_BUTTON =
+  "flex h-11 w-10 shrink-0 items-center justify-center rounded-xl text-secondary transition-colors " +
+  "hover:bg-fill-hover hover:text-primary aria-expanded:bg-fill-hover aria-expanded:text-primary cursor-pointer";
+/** The effort segments' row: the label over the segments, since the levels side by side need
+ *  the card's whole width. */
+export const EFFORT_SEGMENTS_ROW = "flex flex-col items-stretch gap-2 px-3 pt-1 pb-2";
+/** The segments' well, on which the chosen one sits raised. */
+export const EFFORT_SEGMENTS = "flex gap-1 rounded-lg border border-default bg-surface-secondary p-[3px]";
+const EFFORT_SEGMENT_SHAPE =
+  `flex h-[34px] min-w-0 flex-1 items-center justify-center rounded-md ${MENU_ROW_FOCUS} ` +
+  "disabled:cursor-not-allowed disabled:opacity-50";
+export const EFFORT_SEGMENT = `${EFFORT_SEGMENT_SHAPE} text-secondary hover:bg-fill-hover cursor-pointer`;
+export const EFFORT_SEGMENT_ON = `${EFFORT_SEGMENT_SHAPE} bg-surface font-semibold text-primary shadow-raised`;
 
 // The switch
 /** The switch comes in two sizes, and a size is a track plus its throw, handed out together:

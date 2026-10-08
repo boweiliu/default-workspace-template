@@ -35,7 +35,7 @@ Windows are positioned boxes that a separate live-page layer mirrors; they are n
 | System tray | -- | The taskbar's right end, a row of tray widgets | Taskbar | status area |
 | Tray widget | -- | One self-contained thing in the tray; V1 ships Desktops | Taskbar | applet, indicator |
 | Theme | design system tokens | The token table every component reads: colours, type, radii, metrics | Build-time file in V1 | skin |
-| Compact mode, touch mode | device kind `mobile` | Two render policies, from viewport width and from pointer type | Derived at render time | mobile mode |
+| Phone layout, touch mode | device kind `mobile` | Two render policies, from the viewport's size and from pointer type | Derived at render time | mobile mode |
 
 The sections below define each one.
 
@@ -65,8 +65,8 @@ It has no status, no listing of what is inside an app, and no verbs on the app's
 
 ### 2.3 Placement and layout
 
-A placement is how one client keeps one window: the **frame** (a rectangle in fractions of the backdrop), the **state** (`NORMAL`, `SNAPPED_LEFT`, `SNAPPED_RIGHT`, or `MAXIMIZED`), and whether it is **minimized**.
-The frame is kept through every state, so restore always has somewhere to go, and minimized is orthogonal to the state.
+A placement is how one client keeps one window: the **frame** (a rectangle in fractions of the backdrop), the **state** (`NORMAL`, `SNAPPED_LEFT`, `SNAPPED_RIGHT`, or `MAXIMIZED`), whether it is **minimized**, and whether it is **detached** (pulled out into a desktop window of the embedding chrome's own, the desktop keeping a ghost at its frame; contracts section 4.2 and mngr's `specs/pull-out-window/spec.md`).
+The frame is kept through every state, so restore always has somewhere to go, and minimized and detached are orthogonal to the state.
 A layout is one client's placements for one desktop, in stacking order, last on top.
 Raising, minimizing, maximizing, snapping, moving, and resizing are per client and never leave the client.
 
@@ -91,7 +91,7 @@ A shortcut's target is a tagged union with one V1 variant, a launch path, so a w
 
 ### 2.6 Launch path
 
-An app declares in its manifest the paths that start something, with optional parameters: a GET launch path is a page the shell opens with the parameters as its query (`File Viewer` at `/` with `path`); a POST launch path is one the shell posts the parameters to, and the app answers the page to open (`Terminal` at `/new`, `New Chat` at `/api/chats/intake`), so a page that creates something is never a page a reload could run again (the post-launch-paths plan).
+An app declares in its manifest the paths that start something, with optional parameters: a GET launch path is a page the shell opens with the parameters as its query (`File Viewer` at `/home/user/workspace/` with `path`); a POST launch path is one the shell posts the parameters to, and the app answers the page to open (`Terminal` at `/new`, `New Chat` at `/api/chats/intake`), so a page that creates something is never a page a reload could run again (the post-launch-paths plan).
 A shortcut, a launcher tile, an agent's open, and a page's own request all run a launch path: a window opens at a GET launch path's page, or at the page a POST launch path answers.
 An app that declares none has one, `Open <display name>` at `/`.
 A launch path may name one of its parameters as its `text_param` or its `draft_param`: the launcher then offers it as a free-text row that sends (or drafts) whatever was typed into the field (launcher-and-getting-started plan section 3.1; the post-launch-paths plan section 3.1).
@@ -102,17 +102,17 @@ A page that ends up somewhere else reports its real path, and the window follows
 Left to right: the app icon, the title, the window menu (three dots, directly after the title), then at the right edge minimize, maximize (restore when maximized), close.
 No status indicator.
 The title bar is the drag handle; double-click toggles maximize; dragging to the left or right edge snaps to that half, and to the top edge maximizes.
-The window menu offers Refresh, Share, Stop and Start the app, and Close.
+The window menu offers Refresh, Open in its own window (where the embedding chrome can pull windows out), Share, Quit the app (which closes every window of it and stops it; `docs/system/specs/stop-when-no-windows.md`), and Close.
 Close removes the window from the desktop for everyone; there is no separate "remove from desktop".
 A pinned window keeps its close control and its menus' Close, and each minimizes it: it is never closed, only minimized.
 
 ### 2.8 Taskbar, launcher, system tray, tray widgets
 
 The taskbar is the bar along the bottom of the viewport.
-Left to right: the **launcher field**; one **taskbar entry** per window of the active desktop, in the order the windows were opened, minimized ones marked; then the **system tray**.
-An entry shows the app icon and the title (icon only in compact mode).
+Left to right: the **launcher field**; one **taskbar entry** per window of the active desktop, in the order the windows were opened, minimized and pulled-out ones marked; then the **system tray**.
+An entry shows the app icon and the title.
 A pinned window's entry is always there, and a client may draw it in the bar in a style (the app's icon, or the workspace's avatar) or floating above the windows (pinned-taskbar-entries plan section 4.2).
-Clicking an entry restores a minimized window and raises it, minimizes the top window, or raises any other window.
+Clicking an entry restores a minimized window and raises it, shows a pulled-out window's own desktop window (or, when its ghost is hidden, the ghost), minimizes the top window, or raises any other window.
 
 The launcher is the text field and the menu it opens above the field: one row per launch path of every app, window rows (every desktop's windows, while typing), and at the foot the free-text rows, which send the typed text to whichever app declares a launch path with a `text_param` (the chat's new chat, and its send to an existing chat).
 One row is always highlighted; Enter runs it, Ctrl+Enter (Cmd+Enter on macOS) runs the secondary free-text row, and typing filters the rows.
@@ -135,12 +135,12 @@ Every component styles itself from tokens and semantic utilities only.
 The metrics behaviour needs are read once from the computed tokens by one function, so no number lives in two places.
 V1 ships one theme; switching themes is deferred.
 
-### 2.11 Compact mode and touch mode
+### 2.11 The phone layout and touch mode
 
 Two independent render policies, each from a live media query, neither stored.
-Compact mode (viewport width under the compact breakpoint): windows render maximized whatever their placement says, the taskbar shows icons only and a collapsed launcher field, the grid uses the compact cell size, and window drag, resize, and snapping are off.
+The phone layout (a phone-sized viewport, either way round): a bar, a home grid, and one window at a time instead of the desktop, over the same windows and desktops (`plan-phone-interface.md`).
 Touch mode (coarse pointer): larger hit targets, long-press instead of right-click, no hover-revealed controls, no resize handles.
-A phone is both; a narrow desktop window is compact only; a touch laptop is touch only.
+A phone is both; a desktop window as small as a phone is phone only; a touch laptop or a tablet is touch only.
 Nothing branches on a stored device kind, and the client record no longer carries one.
 
 ## 3. How they relate
@@ -179,7 +179,7 @@ flowchart TB
 
 | Fact or verb | Owner |
 |---|---|
-| Which apps exist, their display name, icon, launch paths; whether an app runs; Stop and Start | Manifest and registry; the shell via supervisord (unchanged) |
+| Which apps exist, their display name, icon, launch paths; whether an app runs; Stop, Start, and Quit | Manifest and registry; the shell via supervisord (unchanged) |
 | What is inside an app: its chats, sessions, folders, their names and status | The app, in its own pages (new) |
 | Desktops: name, colour, glyph, wallpaper, shortcuts and cells, windows | Shell, shared |
 | Open and close a window; a window's path and title | Shell, shared; the page reports path and title |
@@ -223,7 +223,7 @@ Recorded here so the spec need not re-argue them.
 7. The launcher is a text field and the menu it opens, never a window.
 8. The shell has no instance layer; apps own their things, and the chat app lists its chats inside its own page with an inner frame per selected chat, keeping its single-chat page for direct launches.
 9. A window's close removes it for everyone; minimize is the per-client way to get it out of sight. Whether the app keeps what the window showed is the app's rule (decision 16).
-10. Compact and touch are render policies from media queries, and mobile is in scope for V1.
+10. The phone layout and touch are render policies from media queries, and mobile is in scope for V1.
 11. The `{tab}` placeholder, tab ids on the wire, and the rebind route go.
 12. Agent verbs are window and desktop verbs only; `split` and `move` become `place`.
 13. Every desktop is shared; there is no sharing mode. A visiting user gets a desktop of their own on arrival instead.

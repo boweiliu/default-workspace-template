@@ -23,6 +23,7 @@ from imbue.chat.accounts import commit_account
 from imbue.chat.accounts import delete_account
 from imbue.chat.accounts import mint_account_dir
 from imbue.chat.accounts import read_index
+from imbue.chat.accounts import set_mru
 from imbue.chat.activity_state import ActivityState
 from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.agent_discovery import SendFailedError
@@ -57,13 +58,16 @@ from imbue.chat.chat_seed import seed_event_id
 from imbue.chat.chat_settings import ChatSettings
 from imbue.chat.chat_settings import ChatSettingsStore
 from imbue.chat.chat_settings import FastModeMode
+from imbue.chat.create_defaults import create_defaults_path
 from imbue.chat.harnesses.codex.activity import CodexActivityTracker
 from imbue.chat.harnesses.codex.model import codex_models_to_options
 from imbue.chat.harnesses.codex.model import get_codex_model_options_path
 from imbue.chat.harnesses.codex.model import write_codex_model_options
+from imbue.chat.harnesses.events import DisplayKind
 from imbue.chat.harnesses.events import SPECIAL_EVENT_TYPE
 from imbue.chat.harnesses.events import SpecialEventKind
 from imbue.chat.harnesses.harness_type import HarnessType
+from imbue.chat.harnesses.message_display import BACKGROUND_TASK_REPORT_TAG
 from imbue.chat.harnesses.message_display import SEED_CONTEXT_TAG
 from imbue.chat.harnesses.mock_transcript_reader_test import ListTranscriptReader
 from imbue.chat.harnesses.registry import get_model_state_path
@@ -76,6 +80,7 @@ from imbue.chat.models import AgentNameConflictError
 from imbue.chat.models import AgentRenameError
 from imbue.chat.models import AgentStateItem
 from imbue.chat.models import AgentStopError
+from imbue.chat.models import ChatAccountBinding
 from imbue.chat.models import ChatConvergingError
 from imbue.chat.models import HandoffError
 from imbue.chat.models import HandoffFailedStep
@@ -96,6 +101,7 @@ from imbue.chat.primitives import ChatStatus
 from imbue.chat.testing import CONTINUE_CHAT_TEMPLATE_PATH
 from imbue.chat.testing import RecordingMngrMessenger
 from imbue.chat.testing import RecordingShell
+from imbue.chat.testing import build_test_state
 from imbue.chat.testing import drain_is_connecting_pushes
 from imbue.chat.testing import is_chat_connecting
 from imbue.chat.testing import make_chat_agent_entry
@@ -103,6 +109,7 @@ from imbue.chat.testing import make_chat_handoff_record
 from imbue.chat.testing import make_chat_rebind_record
 from imbue.chat.testing import make_two_member_chat_record
 from imbue.chat.testing import observer_holding_the_lock
+from imbue.chat.testing import read_create_defaults_type
 from imbue.chat.testing import seed_agent_state
 from imbue.chat.testing import seed_failed_chat
 from imbue.chat.testing import wait_until_true
@@ -388,37 +395,47 @@ def test_create_chat_refuses_a_message_beside_a_minted_id(agent_manager: AgentMa
     agent_manager.stop()
 
 
-def test_a_chat_created_with_a_message_starts_on_it_rather_than_on_welcome(
+def test_a_chat_created_with_a_message_starts_on_it(
     agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
 ) -> None:
-    """A chat created with its own first message carries it; ``/welcome`` is only for a chat
-    that starts with nothing to say (``launch_role_templates``)."""
+    """A chat created with its own first message carries it on its provisional record."""
     q = broadcaster.register()
 
-    seeded = agent_manager.create_chat("seeded-chat", message="Teach me about Mind")
+    seeded = agent_manager.create_chat("seeded-chat", message="Teach me about Imbue Studio")
     agent_manager.stop()
 
     raw = q.get_nowait()
     assert raw is not None
     proto_msg = json.loads(raw)
     assert proto_msg["chat_id"] == seeded.chat_id
-    assert proto_msg["message"] == "Teach me about Mind"
+    assert proto_msg["message"] == "Teach me about Imbue Studio"
 
 
-@pytest.mark.parametrize(
-    ("message", "is_fast", "expected"),
-    [
-        ("", True, ("welcome", "fast")),
-        ("", False, ("welcome",)),
-        ("Teach me about Mind", True, ("fast",)),
-        ("Teach me about Mind", False, ()),
-    ],
-)
-def test_launch_role_templates_follow_the_message_and_the_chats_fast_mode(
-    message: str, is_fast: bool, expected: tuple[str, ...]
+@pytest.mark.parametrize(("is_fast", "expected"), [(True, ("fast",)), (False, ())])
+def test_launch_role_templates_follow_the_chats_fast_mode(is_fast: bool, expected: tuple[str, ...]) -> None:
+    """A chat starts fast when its fast mode calls for it; nothing else rides the templates."""
+    assert launch_role_templates(is_fast) == expected
+
+
+def test_a_chat_created_with_nothing_to_say_is_created_without_a_first_message(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Every chat that starts silent is greeted; a chat starts fast when its fast mode calls for it."""
-    assert launch_role_templates(message, is_fast) == expected
+    """No greeting rides a silent create: the chat waits for the user's first message."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_WORK_DIR", str(tmp_path))
+    mngr_binary, argv_log = write_recording_mngr_binary(tmp_path)
+    manager = AgentManager.build(broadcaster, mngr_binary=mngr_binary, chat_files_root=tmp_path / "chats")
+    try:
+        created = manager.create_chat("")
+        wait_until_true(
+            lambda: manager.get_provisional_chat(created.chat_id) is None, 10, "the provisional chat's completion"
+        )
+    finally:
+        manager.stop()
+
+    (argv_line,) = argv_log.read_text().splitlines()
+    assert "--message" not in argv_line
+    assert "--template welcome" not in argv_line
 
 
 def test_a_new_chat_takes_the_workspaces_default_fast_mode_and_keeps_it_in_its_folder(
@@ -509,7 +526,7 @@ def _seed_manager(
 def test_seed_chat_opens_a_provisional_chat_awaiting_its_first_send_on_the_seeded_turns(
     broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:
-    """The Mind app's conversation becomes the chat's first segment: the record names the seed
+    """The Imbue Studio app's conversation becomes the chat's first segment: the record names the seed
     as its only member, the seed file holds the turns, and the chat is listed awaiting the user."""
     manager, store = _seed_manager(broadcaster, tmp_path)
     q = broadcaster.register()
@@ -548,7 +565,7 @@ def test_a_seeded_chat_is_launched_by_its_first_send_as_the_seeds_successor(
 ) -> None:
     """The user's first message launches the chat's first real agent: a fresh id under the
     chat's, joining the record as its second member, with the membership labels a handoff's
-    successor carries, the message it was sent, and no ``/welcome``."""
+    successor carries, and the message it was sent."""
     monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
     monkeypatch.setenv("MNGR_AGENT_WORK_DIR", str(tmp_path))
     mngr_binary, argv_log = write_recording_mngr_binary(tmp_path)
@@ -577,7 +594,7 @@ def test_a_seeded_chat_is_launched_by_its_first_send_as_the_seeds_successor(
     templates = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--template"]
     assert templates == ["chat", "fast"]
     assert f"chat_id={seeded.chat_id}" in argv and "chat_seq=2" in argv
-    assert "Let's" in argv_line and "/welcome" not in argv_line
+    assert "Let's" in argv_line
 
 
 def test_a_seeded_chats_launch_carries_the_conversation_the_chat_opened_on(
@@ -1623,8 +1640,8 @@ def test_codex_chat_create_argv_accepted_by_live_cli() -> None:
 
 
 def test_chat_create_argv_carries_a_seeded_first_message_only_when_given() -> None:
-    """The seeded message rides the create as ``--message`` (delivered once the harness is ready,
-    like ``/welcome``); a plain chat's argv carries no ``--message`` at all."""
+    """The seeded message rides the create as ``--message`` (delivered once the harness is ready);
+    a plain chat's argv carries no ``--message`` at all."""
     seeded = _chat_create_argv(initial_message="/use-template https://github.com/example/a-template")
     assert_mngr_argv_valid(seeded)
     assert seeded[seeded.index("--message") + 1] == "/use-template https://github.com/example/a-template"
@@ -1675,7 +1692,7 @@ def test_chat_create_argv_carries_no_launch_settings() -> None:
 
 
 def test_chat_create_argv_carries_a_callers_labels_and_the_version_check_waiver() -> None:
-    """A create from outside the workspace (the Minds app's assist and update chats, through
+    """A create from outside the workspace (the Imbue Studio app's assist and update chats, through
     ``message_chat.py --create``) rides its labels and the claude version-check waiver on the
     same argv the app's own creates use."""
     argv = _chat_create_argv(
@@ -1688,15 +1705,15 @@ def test_chat_create_argv_carries_a_callers_labels_and_the_version_check_waiver(
 
 
 def test_chat_create_argv_stacks_extra_role_templates_after_chat() -> None:
-    """The launch templates (`welcome`, `fast`) stack via extra_role_templates; the
-    resulting argv must resolve against the live CLI."""
+    """The launch template (`fast`) stacks via extra_role_templates; the resulting argv must
+    resolve against the live CLI."""
     argv = _chat_create_argv(
         harness=HarnessType.CODEX,
-        extra_role_templates=("welcome", "fast"),
+        extra_role_templates=("fast",),
     )
     assert_mngr_argv_valid(argv)
     templates = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--template"]
-    assert templates == ["chat", "welcome", "fast"]
+    assert templates == ["chat", "fast"]
 
 
 # the chat's originating project (the mngr ``project`` label)
@@ -1863,7 +1880,7 @@ def test_rename_chat_refuses_the_primary_agent(
     broadcaster: WebSocketBroadcaster,
     false_binary: str,
 ) -> None:
-    """The services agent's name belongs to the minds app, not to a chat."""
+    """The services agent's name belongs to the Imbue Studio app, not to a chat."""
     manager = AgentManager.build(broadcaster, mngr_binary=false_binary)
     try:
         with manager._lock:
@@ -1887,6 +1904,131 @@ def test_rename_chat_rejects_a_name_with_no_usable_characters(
             manager.rename_chat("agent-7", "!!!")
     finally:
         manager.stop()
+
+
+def test_rename_placeholder_named_chat_renames_a_chat_still_called_chat_n(
+    broadcaster: WebSocketBroadcaster,
+    true_binary: str,
+) -> None:
+    manager = AgentManager.build(broadcaster, mngr_binary=true_binary)
+    try:
+        _tracked_chat(manager, "agent-7", "Chat-2", display_name="Chat 2")
+
+        is_renamed = manager.rename_placeholder_named_chat(ChatId("agent-7"), "Rome trip: plan five days")
+
+        assert is_renamed
+        renamed = manager.get_agent_by_id("agent-7")
+        assert renamed is not None
+        assert renamed.name == "Rome-trip-plan-five-days"
+        assert renamed.labels["display_name"] == "Rome trip: plan five days"
+    finally:
+        manager.stop()
+
+
+def test_rename_placeholder_named_chat_leaves_a_chosen_name_alone_without_running_mngr(
+    broadcaster: WebSocketBroadcaster,
+    false_binary: str,
+) -> None:
+    """The always-failing stand-in binary proves no rename was attempted: running it would have raised."""
+    manager = AgentManager.build(broadcaster, mngr_binary=false_binary)
+    try:
+        _tracked_chat(manager, "agent-7", "Planning-notes", display_name="Planning notes")
+
+        assert not manager.rename_placeholder_named_chat(ChatId("agent-7"), "Rome trip: plan five days")
+        assert not manager.rename_placeholder_named_chat(ChatId("agent-nowhere"), "Rome trip: plan five days")
+    finally:
+        manager.stop()
+
+
+def test_a_seeded_chat_still_wearing_its_seed_title_is_renamed_like_a_minted_one(
+    broadcaster: WebSocketBroadcaster,
+    true_binary: str,
+) -> None:
+    """The Mind app seeds its "Welcome" chat; until someone names it, its seed title is a placeholder too."""
+    manager = AgentManager.build(broadcaster, mngr_binary=true_binary)
+    try:
+        chat_id = ChatId("agent-" + "5" * 32)
+        agent_id = "agent-" + "6" * 32
+        seed = make_chat_agent_entry(1, str(chat_id), is_archived=True, harness=HarnessType.SEED)
+        record = ChatRecord(
+            chat_id=chat_id, agents=(seed, make_chat_agent_entry(2, agent_id, is_archived=False)), seed_title="Welcome"
+        )
+        with manager._lock:
+            manager._chat_record_by_id[chat_id] = record
+        _tracked_chat(manager, agent_id, "Welcome", display_name="Welcome")
+        assert manager.has_placeholder_name(chat_id)
+
+        is_renamed = manager.rename_placeholder_named_chat(chat_id, "Sales report: summarize last quarter")
+
+        assert is_renamed
+        renamed = manager.get_agent_by_id(agent_id)
+        assert renamed is not None
+        assert renamed.labels["display_name"] == "Sales report: summarize last quarter"
+        assert not manager.has_placeholder_name(chat_id)
+    finally:
+        manager.stop()
+
+
+def test_an_automatic_title_is_shown_over_a_chat_being_created_until_it_is_cleared(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
+) -> None:
+    minted = agent_manager.mint_awaiting_chat("acct-1")
+    q = broadcaster.register()
+
+    agent_manager.show_automatic_title(minted.chat_id, "Rome trip: plan five days")
+
+    broadcast = json.loads(q.get_nowait() or "")
+    assert broadcast["type"] == "provisional_chat_created"
+    assert broadcast["name"] == "Rome trip: plan five days"
+    assert [chat.name for chat in agent_manager.get_provisional_chats_as_shown()] == ["Rome trip: plan five days"]
+    # Shown, not given: the chat still wears its minted name, so the rename that follows may replace it
+    assert agent_manager.has_placeholder_name(minted.chat_id)
+
+    agent_manager.clear_automatic_title(minted.chat_id)
+
+    assert [chat.name for chat in agent_manager.get_provisional_chats_as_shown()] == [minted.name]
+
+
+def test_renaming_a_chat_drops_the_automatic_title_shown_over_it(
+    broadcaster: WebSocketBroadcaster,
+    true_binary: str,
+) -> None:
+    manager = AgentManager.build(broadcaster, mngr_binary=true_binary)
+    try:
+        _tracked_chat(manager, "agent-7", "Chat-2", display_name="Chat 2")
+        manager.show_automatic_title(ChatId("agent-7"), "Rome trip: plan five days")
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Rome trip: plan five days"]
+
+        manager.rename_chat("agent-7", "Planning notes")
+
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Planning notes"]
+    finally:
+        manager.stop()
+
+
+def test_resolve_chat_account_binding_names_the_account_a_chat_is_created_on_and_the_one_it_runs_on(
+    agent_manager: AgentManager,
+) -> None:
+    account_id, _ = mint_account_dir()
+    commit_account(account_id, "anthropic", "Anthropic")
+    creating = agent_manager.mint_awaiting_chat(account_id)
+    _tracked_chat(agent_manager, "agent-7", "Chat-2", display_name="Chat 2")
+    with agent_manager._lock:
+        tracked = agent_manager._agents["agent-7"]
+        agent_manager._agents["agent-7"] = tracked.model_copy_update(
+            to_update(tracked.field_ref().labels, {**tracked.labels, "account": account_id})
+        )
+
+    expected = ChatAccountBinding(harness=HarnessType.CLAUDE, account_dir=account_dir(account_id))
+    assert agent_manager.resolve_chat_account_binding(creating.chat_id) == expected
+    assert agent_manager.resolve_chat_account_binding(ChatId("agent-7")) == expected
+    assert agent_manager.resolve_chat_account_binding(agent_manager.mint_awaiting_chat("").chat_id) is None
+    assert agent_manager.resolve_chat_account_binding(ChatId("agent-nowhere")) is None
+
+    delete_account(account_id)
+
+    assert agent_manager.resolve_chat_account_binding(creating.chat_id) is None
+    assert agent_manager.resolve_chat_account_binding(ChatId("agent-7")) is None
 
 
 def _finished_rename(returncode: int, stderr: str, is_timed_out: bool = False) -> FinishedProcess:
@@ -2251,12 +2393,15 @@ def test_observer_dying_mid_run_keeps_the_last_list_and_reports_degraded(
 
 
 def test_secondary_manager_never_writes_chat_memory_scores(broadcaster: WebSocketBroadcaster) -> None:
-    """A second chat beside the live one is handed no capability to re-tag chats' scores."""
-    manager = AgentManager.build(broadcaster, is_secondary=True)
+    """A second chat beside the live one gets a prioritizer with no writer, and the live one gets the real one."""
+    secondary = AgentManager.build(broadcaster, is_secondary=True)
+    live = AgentManager.build(broadcaster)
     try:
-        assert manager._oom_prioritizer._set_adj(os.getpid(), 0) is False
+        assert secondary._oom_prioritizer._set_adj is None
+        assert live._oom_prioritizer._set_adj is bands.set_oom_score_adj
     finally:
-        manager.stop()
+        secondary.stop()
+        live.stop()
 
 
 # Activity-state integration
@@ -2561,6 +2706,17 @@ def test_stop_activity_tracking_clears_caches(agent_manager: AgentManager, tmp_p
         assert "agent-1" not in agent_manager._activity_tracker_by_agent
 
 
+def _plain_queued_wire(snapshot: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The wire shape of queued entries whose content gets no render decision."""
+    return [{**entry, "display": None, "display_label": None, "display_body": None} for entry in snapshot]
+
+
+_QUEUED_BACKGROUND_TASK_REPORT = (
+    f"<{BACKGROUND_TASK_REPORT_TAG}>\n<summary>Wait for the worker (finished)</summary>\n"
+    f"Exit code: 0\n</{BACKGROUND_TASK_REPORT_TAG}>"
+)
+
+
 def test_update_queued_messages_caches_broadcasts_and_serializes(
     agent_manager: AgentManager, broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:
@@ -2585,8 +2741,69 @@ def test_update_queued_messages_caches_broadcasts_and_serializes(
         assert latest is not None
         agents = [chat["active_agent"] for chat in latest["chats"]]
         assert isinstance(agents, list)
-        assert agents[0]["queued_messages"] == snapshot
-        assert [q.model_dump() for q in agent_manager.get_chat_snapshots()[0].active_agent.queued_messages] == snapshot
+        assert agents[0]["queued_messages"] == _plain_queued_wire(snapshot)
+        assert [
+            q.model_dump() for q in agent_manager.get_chat_snapshots()[0].active_agent.queued_messages
+        ] == _plain_queued_wire(snapshot)
+    finally:
+        agent_manager.stop()
+
+
+def test_a_queued_background_task_report_carries_its_notice_decision(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """Waiting in the queue, a report already carries the decision its transcript turn will get,
+    so the page can show its one-line notice rather than the raw report."""
+    (tmp_path / "agents" / "agent-1").mkdir(parents=True)
+    _seed_agent(agent_manager, "agent-1")
+    agent_manager._ensure_activity_tracking("agent-1")
+
+    listener = broadcaster.register()
+    try:
+        agent_manager.update_queued_messages(
+            "agent-1",
+            [{"queued_id": "q1", "content": _QUEUED_BACKGROUND_TASK_REPORT, "timestamp": "2026-08-07T00:00:01.000Z"}],
+        )
+
+        latest = _last_chats_updated(_drain(listener))
+        assert latest is not None
+        [queued] = latest["chats"][0]["active_agent"]["queued_messages"]
+        assert queued["content"] == _QUEUED_BACKGROUND_TASK_REPORT
+        assert queued["display"] == DisplayKind.NOTICE.value
+        assert queued["display_label"] == "Background task"
+        assert queued["display_body"] == "Wait for the worker (finished)"
+    finally:
+        agent_manager.stop()
+
+
+def test_a_queued_report_keeps_its_notice_decision_through_an_idle_sweep_that_keeps_the_queue(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """agy's idle handler hands its queue back unchanged (it sends off-thread), so the swept
+    snapshot must carry the same decision the arriving one did."""
+    (tmp_path / "agents" / "agent-1").mkdir(parents=True)
+    _seed_agent(agent_manager, "agent-1")
+    agent_manager._ensure_activity_tracking("agent-1")
+    snapshot = [
+        {"queued_id": "q1", "content": _QUEUED_BACKGROUND_TASK_REPORT, "timestamp": "2026-08-07T00:00:01.000Z"}
+    ]
+    idle_calls: list[bool] = []
+
+    def _keep_queue_handler() -> list[dict[str, Any]]:
+        idle_calls.append(True)
+        return snapshot
+
+    agent_manager.register_queue_idle_handler("agent-1", _keep_queue_handler)
+    listener = broadcaster.register()
+    try:
+        agent_manager.update_queued_messages("agent-1", snapshot)
+
+        assert idle_calls == [True]
+        latest = _last_chats_updated(_drain(listener))
+        assert latest is not None
+        [queued] = latest["chats"][0]["active_agent"]["queued_messages"]
+        assert queued["display"] == DisplayKind.NOTICE.value
+        assert queued["display_body"] == "Wait for the worker (finished)"
     finally:
         agent_manager.stop()
 
@@ -2668,6 +2885,41 @@ def test_working_to_idle_drains_the_queue_via_the_registered_handler(
             assert agent_manager._activity_state_by_agent["agent-1"] == ActivityState.IDLE
             assert agent_manager._agents["agent-1"].queued_messages == ()
         assert idle_calls == [True]
+    finally:
+        agent_manager.stop()
+
+
+def test_idle_to_working_folds_the_busy_handlers_snapshot(agent_manager: AgentManager, tmp_path: Path) -> None:
+    """An IDLE->working transition with something queued invokes the watcher's busy handler, so
+    what an idle reading marked as being sent goes back to plain queued for the turn."""
+    state_dir = tmp_path / "agents" / "agent-1"
+    state_dir.mkdir(parents=True)
+    _seed_agent(agent_manager, "agent-1")
+    agent_manager._ensure_activity_tracking("agent-1")
+
+    sending = [{"queued_id": "q2", "content": "second", "timestamp": "t", "is_sending": True}]
+    busy_calls: list[bool] = []
+
+    def _busy_handler() -> list[dict[str, Any]] | None:
+        busy_calls.append(True)
+        return [{**sending[0], "is_sending": False}]
+
+    agent_manager.register_queue_idle_handler("agent-1", lambda: sending)
+    agent_manager.register_queue_busy_handler("agent-1", _busy_handler)
+    try:
+        # The snapshot a dequeue pushes arrives while the agent still reads IDLE: the idle
+        # backstop marks what is left.
+        agent_manager.update_queued_messages("agent-1", [{**sending[0], "is_sending": False}])
+        with agent_manager._lock:
+            assert [message.is_sending for message in agent_manager._agents["agent-1"].queued_messages] == [True]
+        assert busy_calls == []
+
+        # The dequeued prompt is folded in: the agent reads THINKING and the mark is undone.
+        agent_manager.update_session_events("agent-1", [{"type": "user_message", "content": "first"}])
+        with agent_manager._lock:
+            assert agent_manager._activity_state_by_agent["agent-1"] == ActivityState.THINKING
+            assert [message.is_sending for message in agent_manager._agents["agent-1"].queued_messages] == [False]
+        assert busy_calls == [True]
     finally:
         agent_manager.stop()
 
@@ -2815,7 +3067,7 @@ def test_queued_snapshot_arriving_mid_turn_is_kept(
         assert latest is not None
         agents = [chat["active_agent"] for chat in latest["chats"]]
         assert isinstance(agents, list)
-        assert agents[0]["queued_messages"] == snapshot
+        assert agents[0]["queued_messages"] == _plain_queued_wire(snapshot)
     finally:
         agent_manager.stop()
 
@@ -2839,7 +3091,7 @@ def test_unknown_lifecycle_codex_keeps_its_queued_snapshot(
 
         latest = _last_chats_updated(_drain(listener))
         assert latest is not None
-        assert latest["chats"][0]["active_agent"]["queued_messages"] == snapshot
+        assert latest["chats"][0]["active_agent"]["queued_messages"] == _plain_queued_wire(snapshot)
         assert latest["chats"][0]["active_agent"]["activity_state"] == ActivityState.IDLE.value
         with agent_manager._lock:
             assert len(agent_manager._agents["agent-1"].queued_messages) == 1
@@ -2869,7 +3121,7 @@ def test_running_mid_turn_codex_snapshot_passes_through_unchanged(
 
         latest = _last_chats_updated(_drain(listener))
         assert latest is not None
-        assert latest["chats"][0]["active_agent"]["queued_messages"] == snapshot
+        assert latest["chats"][0]["active_agent"]["queued_messages"] == _plain_queued_wire(snapshot)
         assert latest["chats"][0]["active_agent"]["activity_state"] == ActivityState.THINKING.value
         with agent_manager._lock:
             assert len(agent_manager._agents["agent-1"].queued_messages) == 1
@@ -2878,23 +3130,26 @@ def test_running_mid_turn_codex_snapshot_passes_through_unchanged(
 
 
 def test_stop_activity_tracking_clears_queued_caches(agent_manager: AgentManager, tmp_path: Path) -> None:
-    """Stopping tracking drops the queued snapshot and idle handler alongside activity state."""
+    """Stopping tracking drops the queued snapshot and both queue handlers alongside activity state."""
     state_dir = tmp_path / "agents" / "agent-1"
     state_dir.mkdir(parents=True)
     _seed_agent(agent_manager, "agent-1")
     agent_manager._ensure_activity_tracking("agent-1")
     agent_manager.register_queue_idle_handler("agent-1", lambda: [])
+    agent_manager.register_queue_busy_handler("agent-1", lambda: None)
     agent_manager.update_queued_messages("agent-1", [{"queued_id": "q1", "content": "hi", "timestamp": "t"}])
 
     with agent_manager._lock:
         assert "agent-1" in agent_manager._queued_messages_by_agent
         assert "agent-1" in agent_manager._queue_idle_handler_by_agent
+        assert "agent-1" in agent_manager._queue_busy_handler_by_agent
 
     agent_manager._stop_activity_tracking("agent-1")
 
     with agent_manager._lock:
         assert "agent-1" not in agent_manager._queued_messages_by_agent
         assert "agent-1" not in agent_manager._queue_idle_handler_by_agent
+        assert "agent-1" not in agent_manager._queue_busy_handler_by_agent
 
 
 def test_provider_snapshot_preserves_queued_messages_for_tracked_agent(
@@ -2919,9 +3174,9 @@ def test_provider_snapshot_preserves_queued_messages_for_tracked_agent(
         agents = [chat["active_agent"] for chat in latest["chats"]]
         assert isinstance(agents, list)
         assert agents[0]["agent_id"] == str_id
-        assert agents[0]["queued_messages"] == [
-            {"queued_id": "q1", "content": "hi", "timestamp": "t", "is_sending": False}
-        ]
+        assert agents[0]["queued_messages"] == _plain_queued_wire(
+            [{"queued_id": "q1", "content": "hi", "timestamp": "t", "is_sending": False}]
+        )
     finally:
         agent_manager.stop()
 
@@ -3451,6 +3706,35 @@ def test_lifecycle_transition_into_dead_evicts_the_watcher_once(agent_manager: A
     assert evicted == [str(agent.id), str(agent.id)]
 
 
+def test_a_stopped_chat_read_after_its_stop_is_released_at_the_next_observe_event(
+    agent_manager: AgentManager, tmp_path: Path
+) -> None:
+    """A read after the stop rebuilds the transcript the stop evicted, and no further
+    transition comes to evict it; the next observe event's release drops it."""
+    state = build_test_state(agent_manager=agent_manager)
+    agent = _agent_details("read-after-stop")
+    stopped = agent.model_copy_update(to_update(agent.field_ref().state, AgentLifecycleState.STOPPED))
+    agent_manager._handle_observe_event(make_agent_state_event(agent))
+    agent_manager._handle_observe_event(make_agent_state_event(stopped))
+    try:
+        state.get_or_create_watcher(
+            AgentInfo(
+                id=str(agent.id),
+                name=str(agent.name),
+                state="STOPPED",
+                agent_state_dir=tmp_path / "agent_state",
+                claude_config_dir=tmp_path / "claude_config",
+            )
+        )
+        assert set(state.watchers) == {str(agent.id)}
+
+        agent_manager._handle_observe_event(make_agent_state_event(stopped))
+
+        assert state.watchers == {}
+    finally:
+        state.shutdown()
+
+
 def test_note_agent_alive_flips_a_dead_state_to_waiting(agent_manager: AgentManager) -> None:
     """After this server starts an agent itself, the tracked state reflects the revival
     immediately: the observe stream only notices a revival on its five-minute full
@@ -3560,13 +3844,13 @@ def test_observe_events_feed_the_auto_open_reactor(
     manager._handle_observe_event(make_full_agent_state_event([at_start, plain]))
     reactor.flush()
 
-    assert shell.opens == [(str(at_start.id), "c1")]
+    assert [(request.path, request.client_id) for request in shell.shows] == [(f"/?chat={at_start.id}", "c1")]
     assert not reactor.ledger.is_delivered(ChatId(plain.id))
 
     appeared = _agent_details("assist-new", labels={"assist": "true", "auto_open": "true"})
     manager._handle_observe_event(make_agent_state_event(appeared))
     reactor.flush()
-    assert shell.opens[-1] == (str(appeared.id), "c1")
+    assert (shell.shows[-1].path, shell.shows[-1].client_id) == (f"/?chat={appeared.id}", "c1")
     assert reactor.ledger.is_delivered(ChatId(appeared.id))
 
     manager._handle_observe_event(make_agent_removed_event(appeared.id, appeared.name, appeared.host.id))
@@ -3975,6 +4259,33 @@ def test_a_handoff_off_an_agent_with_no_user_turn_is_a_fresh_start(
         assert [line.split(" ")[0] for line in argv_log.read_text().splitlines()] == ["stop", "rename", "create"]
         # The snapshot never listed a confirming message, since none was typed.
         assert manager.get_handoff_state(ChatId(first)) is None
+    finally:
+        manager.stop()
+
+
+def test_a_handoff_moves_the_workspaces_create_defaults_to_the_target_account(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """Workers and automations launch on the most recently used account, so a chat moved off an account
+    must not leave them on it."""
+    sent: list[tuple[str, str, str]] = []
+    manager, store, _argv_log = _handoff_manager(broadcaster, tmp_path, sent)
+    source, _ = mint_account_dir()
+    commit_account(source, "anthropic", "Anthropic")
+    target = _openai_account()
+    # The chat was created on the source account, which made it the most recently used one.
+    set_mru(source)
+    assert read_create_defaults_type(create_defaults_path()) == "claude"
+    first = f"agent-{uuid4().hex}"
+    seed_agent_state(manager, first, name="Chat-1", labels={"display_name": "Chat 1", "account": source})
+    try:
+        manager.begin_handoff(ChatId(first), target, "Carry on in Codex", "m-1", HeldSendOrigin.CLIENT)
+        _wait_until_settled(store, ChatId(first))
+
+        assert read_index().mru == target
+        assert read_create_defaults_type(create_defaults_path()) == "codex"
+        create = tomllib.loads(create_defaults_path().read_text())["commands"]["create"]
+        assert create["label__extend"] == [f"account={target}"]
     finally:
         manager.stop()
 
@@ -4620,6 +4931,7 @@ def test_a_failed_rebind_retries_on_its_lane_even_after_the_failed_target_was_si
         )
         manager.refresh_chat_records()
         delete_account(second_account)
+        set_mru(first_account)
 
         assert manager.retry_handoff(chat_id, third_account) is HandoffPhase.RESTARTING
         wait_for(lambda: manager.get_handoff_state(chat_id) is None, timeout=15.0)
@@ -4627,6 +4939,8 @@ def test_a_failed_rebind_retries_on_its_lane_even_after_the_failed_target_was_si
         snapshot = manager.get_chat_snapshot(agent_id)
         assert snapshot is not None and snapshot.active_agent.account_id == third_account
         assert sent == [(agent_id, "Carry on on the other account", "trigger-1")]
+        # The retry launched on the account it named, which made that the most recently used one.
+        assert read_index().mru == third_account
     finally:
         manager.stop()
 
@@ -4719,6 +5033,35 @@ def test_an_awaiting_chat_is_launched_by_its_first_message_under_its_own_id(
     assert f"--id {minted.chat_id}" in argv_line
     assert [argv[i + 1] for i, tok in enumerate(argv) if tok == "--template"] == ["chat", "fast"]
     assert "Let's" in argv_line and "/welcome" not in argv_line
+
+
+def test_the_empty_list_chat_is_minted_once_and_handed_back_while_it_waits(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
+) -> None:
+    q = broadcaster.register()
+
+    first = agent_manager.awaiting_chat_for_empty_list()
+    second = agent_manager.awaiting_chat_for_empty_list()
+
+    assert first.phase is ProvisionalChatPhase.AWAITING_FIRST_SEND
+    assert first.account_id == ""
+    assert second == first
+    assert json.loads(q.get_nowait() or "")["chat_id"] == first.chat_id
+    assert q.empty()
+
+
+def test_the_empty_list_chat_is_never_a_seeded_chat(broadcaster: WebSocketBroadcaster, tmp_path: Path) -> None:
+    manager, _store = _seed_manager(broadcaster, tmp_path)
+    try:
+        seeded = manager.seed_chat("Getting started", _seed_turns())
+
+        empty_list_chat = manager.awaiting_chat_for_empty_list()
+    finally:
+        manager.stop()
+
+    assert empty_list_chat.chat_id != seeded.chat_id
+    assert empty_list_chat.is_seeded is False
+    assert empty_list_chat.phase is ProvisionalChatPhase.AWAITING_FIRST_SEND
 
 
 def test_discarding_an_awaiting_chat_drops_it(agent_manager: AgentManager) -> None:

@@ -17,9 +17,13 @@ vi.hoisted(() => {
     setTimeout(() => cb(0), 0) as unknown as number) as typeof globalThis.requestAnimationFrame;
 });
 
-const agentState: { agent: ChatSnapshot | null } = { agent: null };
+const agentState: { agent: ChatSnapshot | null; provisional: { account_id: string } | undefined } = {
+  agent: null,
+  provisional: undefined,
+};
 vi.mock("../models/Chats", () => ({
-  getChatById: () => agentState.agent,
+  getChatById: () => agentState.agent ?? undefined,
+  getProvisionalChat: () => agentState.provisional,
 }));
 
 const catalogState: { catalog: unknown } = { catalog: null };
@@ -39,7 +43,7 @@ vi.mock("../models/ModelSettings", () => ({
 // The workspace's chat settings as the page has them (null before the load), and every write
 // the fast-limit row asked for.
 const { DEFAULT_CHAT_SETTINGS, chatSettingsState, settingsWrites } = vi.hoisted(() => {
-  const defaults = { fast_mode_default: "auto", fast_mode_turn_limit: 5, is_fast_mode_notice_shown: false };
+  const defaults = { fast_mode_default: "auto", fast_mode_turn_limit: 2, is_fast_mode_notice_shown: false };
   return {
     DEFAULT_CHAT_SETTINGS: defaults,
     chatSettingsState: { settings: defaults as typeof defaults | null, loads: 0 },
@@ -83,7 +87,13 @@ vi.mock("./fast-mode-limit", () => ({
 }));
 vi.mock("../models/Response", () => ({ getEventsForChat: () => [] }));
 
-const providerState: { accounts: unknown[]; defaultId: string | null } = { accounts: [], defaultId: null };
+const providerState: { accounts: unknown[]; defaultId: string | null; isLoaded: boolean } = {
+  accounts: [],
+  defaultId: null,
+  isLoaded: true,
+};
+// Every time something opened the provider chooser, with whether it asked to hear of the sign-in.
+const chooserOpens: { hasOnSignedIn: boolean }[] = [];
 // Every pin or unpin the star asked the server for, as (account id, pinned) pairs.
 const pins: [string, boolean][] = [];
 vi.mock("../models/Providers", () => ({
@@ -94,7 +104,13 @@ vi.mock("../models/Providers", () => ({
     return Promise.resolve();
   },
   accountForAgent: (id?: string) => providerState.accounts.find((a) => (a as { id: string }).id === id) ?? null,
-  openProviderChooser: () => undefined,
+  accountForFirstSend: (id: string) =>
+    providerState.accounts.find((a) => (a as { id: string }).id === id) ?? providerState.accounts[0] ?? null,
+  areAccountsLoaded: () => providerState.isLoaded,
+  isAccountSignedOut: (id?: string | null) =>
+    !!id && providerState.isLoaded && !providerState.accounts.some((a) => (a as { id: string }).id === id),
+  openProviderChooser: (intent: { onSignedIn?: unknown } = {}) =>
+    chooserOpens.push({ hasOnSignedIn: intent.onSignedIn !== undefined }),
   deleteAccount: () => Promise.resolve(),
   renameAccount: () => Promise.resolve(),
   loadAccounts: () => Promise.resolve(),
@@ -111,7 +127,8 @@ vi.mock("../shell", () => ({
 // armed card's Model row reopens it. Both recorded by account id.
 const begun: string[] = [];
 const reopened: string[] = [];
-vi.mock("./SwitchDialog", () => ({
+vi.mock("./SwitchDialog", async (importOriginal) => ({
+  takeBackSwitch: (await importOriginal<typeof import("./SwitchDialog")>()).takeBackSwitch,
   beginSwitchTo: (_chatId: string, account: { id: string }) => begun.push(account.id),
   openSwitchDialog: (_chatId: string, account: { id: string }) => reopened.push(account.id),
 }));
@@ -122,7 +139,7 @@ import { hoverTooltipText } from "@imbue/workspace-ui/src/testing/tooltip";
 
 import type { ChatSnapshot } from "../models/Chats";
 import { chatSnapshotFixture, handoffStateFixture, rebindStateFixture } from "../models/chatSnapshotFixture";
-import { getPendingAccountId, setPendingAccount, setPendingSwitch } from "../models/PendingLane";
+import { getPendingAccountId, setPendingAccount, setPendingSwitch, setSwitchSending } from "../models/PendingLane";
 import { ModelProviderMenu } from "./ModelProviderMenu";
 import * as css from "./modelProviderMenuStyles";
 
@@ -209,18 +226,75 @@ beforeEach(() => {
   chatSettingsState.settings = DEFAULT_CHAT_SETTINGS;
   chatSettingsState.loads = 0;
   providerState.defaultId = null;
+  providerState.isLoaded = true;
+  chooserOpens.length = 0;
+  agentState.provisional = undefined;
   agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "acct-1" } });
   catalogState.catalog = catalogOf();
   settingsState.choice = { identity: { model_id: "opus", effort: null, fast: false }, matched: OPUS, pending: null };
   providerState.accounts = [ACCOUNT];
   setPendingAccount("a1", null);
+  setSwitchSending("a1", false);
 });
 
 describe("the combo card", () => {
-  it("renders nothing when the agent is unknown", () => {
+  it("holds the row with a loading chip for a chat the page knows nothing about yet", () => {
     agentState.agent = null;
     render();
-    expect(ROOT().innerHTML).toBe("");
+    expect(ROOT().querySelector(".model-selector-loading")?.textContent).toBe("Loading…");
+  });
+
+  it("names the account a chat with no agent yet starts on, with no menu to open", () => {
+    agentState.agent = null;
+    agentState.provisional = { account_id: "" };
+    render();
+    expect(ROOT().querySelector(".model-selector-provisional")?.textContent).toBe("Anthropic");
+    expect(ROOT().querySelector(".model-selector-trigger")).toBeNull();
+  });
+
+  it("says a chat with no agent yet is not connected when no provider is signed in, and opens the chooser", () => {
+    agentState.agent = null;
+    agentState.provisional = { account_id: "" };
+    providerState.accounts = [];
+    render();
+    expect(screenText()).toContain("Not connected");
+    click(".model-selector-not-connected");
+    expect(chooserOpens).toEqual([{ hasOnSignedIn: false }]);
+  });
+
+  it("does not call a chat not connected before the account list has loaded", () => {
+    providerState.isLoaded = false;
+    providerState.accounts = [];
+    agentState.agent = null;
+    agentState.provisional = { account_id: "" };
+    render();
+    expect(screenText()).not.toContain("Not connected");
+    expect(ROOT().querySelector(".model-selector-loading")).not.toBeNull();
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
+    settingsState.choice = null;
+    render();
+    expect(screenText()).not.toContain("Not connected");
+    expect(ROOT().querySelector(".model-selector-loading")).not.toBeNull();
+  });
+
+  it("says a running chat with no provider signed in is not connected, and switches it onto the one signed in", () => {
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
+    settingsState.choice = null;
+    providerState.accounts = [];
+    render();
+    expect(screenText()).toContain("Not connected");
+    click(".model-selector-not-connected");
+    expect(chooserOpens).toEqual([{ hasOnSignedIn: true }]);
+  });
+
+  it("keeps a chip under a running chat that names no account while providers are signed in", () => {
+    // A chat whose agent is still connecting reads this way until its model arrives.
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
+    settingsState.choice = null;
+    render();
+    expect(ROOT().querySelector(".model-selector-trigger")?.textContent).toContain("Model");
+    click(".model-selector-trigger");
+    expect(screenText()).toContain("No account");
   });
 
   it("shows the model on the trigger, and opens the card on click", () => {
@@ -242,6 +316,22 @@ describe("the combo card", () => {
     const text = screenText();
     expect(text).toContain("Anthropic");
     expect(text).not.toContain("Model");
+  });
+
+  it("shows no chip for a chat whose account was signed out, rather than the model it last ran", () => {
+    // The composer's notice stands in its place, with the way to choose a provider.
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "acct-gone" } });
+    render();
+    expect(ROOT().querySelector(".model-selector-trigger")).toBeNull();
+    expect(screenText()).not.toContain("Opus");
+  });
+
+  it("brings the chip back for a signed-out chat once a provider is chosen for it", () => {
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "acct-gone" } });
+    setPendingAccount("a1", "acct-1");
+    render();
+    expect(ROOT().querySelector(".model-selector-trigger")?.textContent).toContain("next");
+    setPendingAccount("a1", null);
   });
 
   it("renders a read-only harness without an effort control", () => {
@@ -608,7 +698,76 @@ describe("the combo card", () => {
     });
     render();
     expect(ROOT().textContent).toContain("Opus · High");
-    expect(ROOT().textContent).toContain("next");
+    // Its message has gone: the switch is being carried out, not waiting on the next one.
+    expect(ROOT().textContent).not.toContain("next");
+  });
+
+  describe("once the armed switch's message has gone", () => {
+    const CODEX_ACCOUNT = {
+      ...ACCOUNT,
+      id: "acct-2",
+      provider: "OpenAI",
+      harness: "codex",
+      harness_label: "Codex",
+      label: "OpenAI (Codex)",
+    };
+    const ASTRA_PICK = {
+      identity: { model_id: "gpt-6-astra", effort: "high", fast: false },
+      label: "GPT-6 Astra · High",
+      option: { ...OPUS, id: "gpt-6-astra", label: "GPT-6 Astra" },
+    };
+
+    beforeEach(() => {
+      providerState.accounts = [ACCOUNT, CODEX_ACCOUNT];
+    });
+
+    it("names the pick without the next mark while the request is out", () => {
+      setPendingSwitch("a1", "acct-2", ASTRA_PICK);
+      setSwitchSending("a1", true);
+      render();
+      expect(ROOT().textContent).toContain("GPT-6 Astra · High");
+      expect(ROOT().textContent).not.toContain("next");
+    });
+
+    it("names the target, not next, while the switch runs, with rows that state it rather than offer it", () => {
+      setPendingAccount("a1", "acct-2");
+      agentState.agent = chatSnapshotFixture("a1", {
+        active_agent: { harness: "claude", account_id: "acct-1" },
+        handoff: handoffStateFixture({ phase: "summarizing", target_account_id: "acct-2" }),
+      });
+      render();
+      // No pick: the harness has not said what its default is yet, so the chip names the harness.
+      expect(ROOT().textContent).toContain("Codex");
+      expect(ROOT().textContent).not.toContain("next");
+      click(".model-selector-trigger");
+      expect(document.querySelector('[data-menu-row="providers"]')?.textContent).toContain("switching");
+      expect(document.querySelector('[data-menu-row="providers"]')?.textContent).not.toContain("next message");
+      expect(document.querySelector('[data-menu-row="model"]')?.textContent).toContain("Default model");
+      expect(document.querySelector('[data-menu-row="model"] button')).toBeNull();
+    });
+
+    it("reads the live choice, with no next mark anywhere, after the switch failed", () => {
+      setPendingAccount("a1", "acct-2");
+      agentState.agent = chatSnapshotFixture("a1", {
+        active_agent: { harness: "claude", account_id: "acct-1" },
+        handoff: handoffStateFixture({ phase: "failed", error: "boom", failed_step: "start" }),
+      });
+      render();
+      expect(ROOT().textContent).toContain("Opus");
+      expect(ROOT().textContent).not.toContain("next");
+      click(".model-selector-trigger");
+      click('[data-menu-row="providers"]');
+      expect(document.querySelector('[data-menu-part="submenu"]')?.textContent).not.toContain("next");
+
+      // Unmarked, its row is an ordinary one: pressing it begins a switch, not a silent take-back.
+      const failedRow = [...document.querySelectorAll('[data-menu-part="submenu"] button')].find((b) =>
+        (b.textContent ?? "").includes("OpenAI"),
+      );
+      if (failedRow === undefined) throw new Error("no row for the failed switch's account");
+      failedRow.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(begun).toEqual(["acct-2"]);
+      expect(getPendingAccountId("a1")).toBe("acct-2");
+    });
   });
 
   it("drops a failed switch's pick, which the chat keeps for the retry but never applied", () => {
@@ -748,16 +907,16 @@ describe("the combo card", () => {
     click('[data-menu-row="fast"]');
     const limit = document.querySelector<HTMLInputElement>(".fast-limit-input");
     if (limit === null) throw new Error("no turn-limit field under Auto");
-    expect(limit.value).toBe("5");
+    expect(limit.value).toBe("2");
 
-    limit.value = "2";
+    limit.value = "3";
     limit.dispatchEvent(new Event("input", { bubbles: true }));
     render();
     // The field keeps what is being typed across the redraws every keystroke causes.
-    expect(limit.value).toBe("2");
+    expect(limit.value).toBe("3");
     limit.dispatchEvent(new Event("change", { bubbles: true }));
     expect(settingsWrites).toEqual([
-      { fast_mode_default: "auto", fast_mode_turn_limit: 2, is_fast_mode_notice_shown: false },
+      { fast_mode_default: "auto", fast_mode_turn_limit: 3, is_fast_mode_notice_shown: false },
     ]);
 
     // An emptied field or a zero is not a limit.
@@ -824,7 +983,7 @@ describe("the combo card", () => {
     expect(toggle.disabled).toBe(false);
     click("[data-fast-mode-default]");
     expect(settingsWrites).toEqual([
-      { fast_mode_default: "on", fast_mode_turn_limit: 5, is_fast_mode_notice_shown: false },
+      { fast_mode_default: "on", fast_mode_turn_limit: 2, is_fast_mode_notice_shown: false },
     ]);
 
     // Auto is the settings' default, so its toggle is on and has nothing left to do -- but it is
@@ -877,5 +1036,151 @@ describe("the combo card", () => {
       render();
       click(".model-selector-trigger");
     }).not.toThrow();
+  });
+});
+
+describe("the phone layout's card", () => {
+  const EFFORTS = [
+    { level: "low", in_picker: true },
+    { level: "medium", in_picker: true },
+    { level: "high", in_picker: true },
+    { level: "ultra", in_picker: false },
+  ];
+  const toggles: number[] = [];
+
+  function renderPhone(isSourceViewOn = false): void {
+    m.render(
+      ROOT(),
+      m(ModelProviderMenu as never, {
+        chatId: "a1",
+        isCompact: true,
+        sourceView: { on: isSourceViewOn, onToggle: () => toggles.push(1) },
+      }),
+    );
+  }
+
+  function tap(selector: string): void {
+    const node = document.querySelector<HTMLElement>(selector);
+    if (node === null) throw new Error(`no ${selector} on screen`);
+    node.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    renderPhone();
+  }
+
+  beforeEach(() => {
+    toggles.length = 0;
+    const model = { ...OPUS, efforts: EFFORTS };
+    catalogState.catalog = catalogOf({ options: [model] });
+    settingsState.choice = {
+      identity: { model_id: "opus", effort: "medium", fast: false },
+      matched: model,
+      pending: null,
+    };
+  });
+
+  it("opens from a settings button instead of the chip", () => {
+    renderPhone();
+    expect(ROOT().querySelector(".model-selector-trigger")).toBeNull();
+    tap("[data-composer-settings]");
+    expect(document.querySelector(".model-provider-menu--compact")).not.toBeNull();
+    expect(screenText()).toContain("Provider");
+    expect(screenText()).toContain("Stop agent");
+  });
+
+  it("keeps the settings button for a chat whose account was signed out, with a Provider row to move it on", () => {
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "acct-gone" } });
+    renderPhone();
+    tap("[data-composer-settings]");
+    const providerRow = document.querySelector('[data-menu-row="providers"]')?.textContent ?? "";
+    expect(providerRow).toContain("No account");
+    expect(providerRow).toContain("Pick one to move this chat to it");
+    expect(screenText()).not.toContain("Not signed in");
+  });
+
+  it("offers the picker's effort levels as segments, and a press sets the chat's effort at once", () => {
+    renderPhone();
+    tap("[data-composer-settings]");
+    expect(document.querySelector('input[type="range"]')).toBeNull();
+    const segments = [...document.querySelectorAll<HTMLElement>("[data-effort-level]")];
+    expect(segments.map((segment) => segment.textContent)).toEqual(["Low", "Medium", "High"]);
+    expect(segments.map((segment) => segment.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+
+    tap('[data-effort-level="high"]');
+    expect(picks).toHaveLength(1);
+    expect((picks[0] as unknown[])[1]).toEqual({ model_id: "opus", effort: "high", fast: false });
+    // The chat's own level again is not a change.
+    tap('[data-effort-level="medium"]');
+    expect(picks).toHaveLength(1);
+  });
+
+  it("slides a submenu in over the card's rows, and its back row slides it out", () => {
+    // Browsers reflect `inert` as a boolean property, which mithril assigns rather than setting the attribute;
+    // jsdom has none.
+    Object.defineProperty(HTMLElement.prototype, "inert", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("inert");
+      },
+      set(this: HTMLElement, value: unknown) {
+        this.toggleAttribute("inert", Boolean(value));
+      },
+    });
+    try {
+      renderPhone();
+      tap("[data-composer-settings]");
+      const track = (): string | null =>
+        document.querySelector("[data-menu-track]")?.getAttribute("data-menu-track") ?? null;
+      const inertPanes = (): boolean[] =>
+        [...document.querySelectorAll<HTMLElement>(".sliding-menu-track > div")].map((pane) => pane.inert);
+      expect(track()).toBe("menu");
+      expect(inertPanes()).toEqual([false, true]);
+
+      tap('[data-menu-row="providers"]');
+      expect(track()).toBe("submenu");
+      expect(inertPanes()).toEqual([true, false]);
+      // A slide, not a flyout: the submenu is inside the card, and there is no second box beside it.
+      expect(document.querySelector('[data-menu-part="submenu"]')).toBeNull();
+      expect(screenText()).toContain("+ Add a provider");
+
+      tap("[data-menu-track-back]");
+      expect(track()).toBe("menu");
+      expect(inertPanes()).toEqual([false, true]);
+      expect(screenText()).not.toContain("+ Add a provider");
+    } finally {
+      delete (HTMLElement.prototype as { inert?: boolean }).inert;
+    }
+  });
+
+  it("carries the Source view switch as a row, whose press turns the card over and closes the menu", () => {
+    renderPhone();
+    tap("[data-composer-settings]");
+    const row = document.querySelector<HTMLElement>('[data-menu-row="source-view"] [role="switch"]');
+    expect(row?.getAttribute("aria-checked")).toBe("false");
+    tap('[data-menu-row="source-view"] [role="switch"]');
+    expect(toggles).toHaveLength(1);
+    expect(document.querySelector(".model-provider-menu")).toBeNull();
+  });
+
+  it("keeps the settings button for a chat with no account and no model, with Source view and Stop agent", () => {
+    agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
+    settingsState.choice = null;
+    // Whether or not some other provider is signed in.
+    for (const accounts of [[], [ACCOUNT]]) {
+      providerState.accounts = accounts;
+      renderPhone();
+      tap("[data-composer-settings]");
+      expect(screenText()).toContain("No account");
+      expect(document.querySelector('[data-menu-row="source-view"]')).not.toBeNull();
+      expect(screenText()).toContain("Stop agent");
+      tap("[data-composer-settings]");
+    }
+  });
+
+  it("leaves the desktop card as it was: the chip, the slider, and no Source view row", () => {
+    render();
+    click(".model-selector-trigger");
+    expect(document.querySelector('input[type="range"]')).not.toBeNull();
+    expect(document.querySelector("[data-effort-level]")).toBeNull();
+    expect(document.querySelector("[data-menu-track]")).toBeNull();
+    expect(document.querySelector('[data-menu-row="source-view"]')).toBeNull();
   });
 });

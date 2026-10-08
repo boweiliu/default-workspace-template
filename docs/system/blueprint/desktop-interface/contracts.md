@@ -25,15 +25,17 @@ Parsed by `app_manifest` with `extra = "forbid"`.
 | `name` | string | yes | | An app name; equals the `--name` at registration. |
 | `display_name` | string | yes | | Non-empty, at most 64 characters. |
 | `icon` | string | unless `internal` | | `.svg` beside the manifest. |
-| `critical` | bool | no | `false` | No Stop verb; snapshot-and-rollback target in the apply. |
+| `critical` | bool | no | `false` | No Quit verb; never stopped or parked by the shell; snapshot-and-rollback target in the apply. |
+| `stop_when_no_windows` | bool | no | `false` | Whether the shell may stop the app's program once no window on any desktop shows it, a minute after the last one closes (`docs/system/specs/stop-when-no-windows.md`); `critical = true` forces it `false`, and a manifest declaring both fails to load. |
 | `priority` | string | no | `"user"` | A memory band name or `user`. |
 | `program` | string | no | `name` | The supervisord program. |
 | `internal` | bool | no | `false` | Hidden from every open surface. |
 | `launch_paths` | array of tables | no | `[]` | Each `{id, label, path, method?, params?, presets?, text_param?, draft_param?}`; `path` is rooted with one slash (never `//`), at most 2048 characters, carries no query string or fragment, and holds nothing a URL would escape (RFC 3986 path characters only: alphanumerics, `-._~`, the sub-delimiters, `:@`, and `/`); `method` is `GET` (the default: the page itself, with the params as its query) or `POST` (the shell posts the params and answers with the page to open; post-launch-paths plan section 3); `params` is an optional array of `{name, label, required}` naming the parameters; `presets` is an optional table of fixed string name-value pairs sent with every launch, whose names may not repeat a param's; `text_param` optionally names one of the params as the one the launcher fills with typed text, and `draft_param` as the one it fills with text to be drafted, either of which makes the launch path a free-text row of the launcher (launcher-and-getting-started plan section 3.1); at most one of the two. The names `client_id`, `desktop_id`, and `window_path` are the shell's envelope and are refused as param or preset names. |
-| `default_shortcut` | table | no | absent | `{launch = "<id>", mode = "focus" \| "new"}`; `launch` names a declared launch path, or `open` when the app declares none. |
+| `default_shortcut` | table | no | absent | `{launch = "<id>", mode = "focus" \| "new"}`; `launch` names a declared launch path, or `open` when the app declares none, whether or not that path takes text (a `text_param` or `draft_param`). When absent, an app a program runs gets its first launch path taking no text, or its first when every one takes text, in `focus` mode (plan section 3.6). |
 | `launcher_rank` | integer | no | absent | At least 1; the app's place among the launcher's leading tiles. |
 | `pin` | table | no | absent | `{path, style = "plain" \| "avatar", scope = "linked" \| "independent", default_mode = "bar" \| "floating"}`; `path` obeys the launch path rule; a registered, non-internal app then has exactly one pinned window on every desktop (pinned-taskbar-entries plan section 7.1). |
 | `window_closed_path` | string | no | absent | A path shaped like a launch path; the shell posts every closed window of the app there (section 5.3), for an app whose resources live as long as their windows (`docs/system/specs/window-bound-resources.md`). |
+| `message_handlers` | array of tables | no | `[]` | Each `{type, path}`: `type` is a message type the app takes, `minds:` and a lowercase kebab-case name (at most 64 characters), unique within the manifest; `path` is a route under the app's origin shaped like a launch path. The shell posts every message of that type from the minds chrome there (section 5.6). |
 | `references`, `scope`, `wiring`, `handles` | | | | Unchanged. |
 | `preview` | table | no | the scaffold convention | How a throwaway instance boots for a preview (`PreviewSpec`; the workspace app model's contracts section 2 has the field-by-field rule): `command` (default: the program as its console script), `ports` (named free ports; `main` always), `env`, `args`, `copies` (repo-relative directories copied into the instance's scratch space, by key), `health_path` (default `/health`), `open_path` (default `/`), `open_path_takes_key`. `command`, `args`, and `env` values may carry `{port:<name>}`, `{copy:<key>}`, `{host}`, `{scratch}`, and `{registry}`; `open_path` may carry `{key}` exactly when `open_path_takes_key`. Absent, the table is `env = {<PACKAGE_UPPER>_PORT = "{port:main}", <PACKAGE_UPPER>_HOST = "{host}", <PACKAGE_UPPER>_DATA_DIR = "{copy:data}"}` over `copies = {data = "data/.apps/<name>"}`. |
 
@@ -42,23 +44,23 @@ An app with no `launch_paths` has one synthesized launch path, `open`, labelled 
 
 Built-in manifests:
 
-| App | `critical` | `priority` | `launcher_rank` | `default_shortcut` | `launch_paths` |
-|---|---|---|---|---|---|
-| `system_interface` | true | `system_interface` | | none | none; `internal = true` |
-| `chat` | true | `chat` | 10 | `{launch = "root", mode = "new"}` | `root` ("Chat", `/`, no params); `new` ("New Chat", POST `/api/chats/intake`, params `account_id` optional, `message` optional, presets `target = "new_chat"`, `text_param = "message"`); `send` ("Send to chat...", POST `/api/chats/intake`, param `message` optional, presets `target = "chat_selector"`, `text_param = "message"`); `draft` ("Draft into chat", POST `/api/chats/intake`, param `message` optional, presets `target = "current_chat"`, `is_draft = "true"`, `draft_param = "message"`) |
-| `getting-started` | false | `getting-started` | 5 | `{launch = "open", mode = "focus"}` | none; the shell synthesizes `open` ("Open Getting Started", `/`) |
-| `terminal` | true | `terminal` | 40 | `{launch = "new", mode = "new"}` | `new` ("Terminal", POST `/new`, params `workdir` optional) |
-| `terminal-pty` | true | `terminal` | | none | none; `internal = true`, `program = "terminal-pty"` |
-| `files` | false | `files` | 20 | `{launch = "new", mode = "new"}` | `new` ("File Viewer", `/`, params `path` optional) |
-| `browser` | false | `browser` | 30 | `{launch = "new", mode = "focus"}` | `new` ("Browser", POST `/new`, params `url` optional) |
+| App | `critical` | `stop_when_no_windows` | `priority` | `launcher_rank` | `default_shortcut` | `launch_paths` |
+|---|---|---|---|---|---|---|
+| `system_interface` | true | false | `system_interface` | | none | none; `internal = true` |
+| `chat` | true | false | `chat` | 10 | `{launch = "root", mode = "new"}` | `root` ("Chat", `/`, no params); `new` ("New Chat", POST `/api/chats/intake`, params `account_id` optional, `message` optional, presets `target = "new_chat"`, `text_param = "message"`); `send` ("Send to chat...", POST `/api/chats/intake`, param `message` optional, presets `target = "chat_selector"`, `text_param = "message"`); `draft` ("Draft into chat", POST `/api/chats/intake`, param `message` optional, presets `target = "current_chat"`, `is_draft = "true"`, `draft_param = "message"`) |
+| `getting-started` | false | true | `getting-started` | 15 | `{launch = "open", mode = "focus"}` | none; the shell synthesizes `open` ("Open Getting Started", `/`) |
+| `terminal` | true | false | `terminal` | 40 | `{launch = "new", mode = "new"}` | `new` ("Terminal", POST `/new`, params `workdir` optional) |
+| `terminal-pty` | true | false | `terminal` | | none | none; `internal = true`, `program = "terminal-pty"` |
+| `files` | false | true | `files` | 20 | `{launch = "new", mode = "new"}` | `new` ("File Viewer", `/home/user/workspace/`, params `path` optional) |
+| `browser` | false | false | `browser` | 30 | `{launch = "new", mode = "focus"}` | `new` ("Browser", POST `/new`, params `url` optional) |
 
-The chat manifest also declares `[pin] path = "/", style = "avatar", scope = "independent", default_mode = "floating"`.
+The chat manifest also declares `[pin] path = "/", style = "avatar", scope = "independent", default_mode = "floating"` and `[[message_handlers]] type = "minds:focus-chat", path = "/api/focus-chat"`.
 The critical built-ins declare their `[preview]` tables (the workspace app model's contracts section 2 tabulates them): the shell boots `system-interface --preview --state-dir {copy:state}` over a copy of `data/.state/system_interface` with `MINDS_APPS_FILE = "{registry}"`; the chat `chat-app --secondary` over a copy of `data/.apps/chat` (`CHAT_DATA_DIR`), opening on `/?chat={key}`; the terminal `terminal-app --no-register` over a copy of `data/.apps/terminal` and a `{scratch}` state dir with `MINDS_APPS_FILE = "{registry}"`, booted `--with terminal-pty`; and the pty `terminal-pty --no-register` over a `{scratch}` state dir, probed at `/`. Getting Started, though not critical, declares one too, since its entry point registers itself: `getting-started --no-register --state-dir {scratch}/state`, which registers nothing and opens no first-visit window.
 
 ## 3. The registry (`data/.state/apps.toml`)
 
 Written only by `forward_port.py`.
-Each `[[apps]]` row carries `name`, `url`, `label`, `icon`, `internal`, `program` from the registration and `display_name`, `critical`, `priority`, `default_shortcut` (inline table `{launch, mode}`), `launch_paths` (array of inline tables `{id, label, path, method?, params?, presets?, text_param?, draft_param?}` with `params` as the array of names, `method` written when the manifest gives it, and `presets` only when non-empty), `launcher_rank`, `pin` (inline table `{path, style?, scope?, default_mode?}`, each absent key reading as the manifest's default), and `window_closed_path` from the manifest.
+Each `[[apps]]` row carries `name`, `url`, `label`, `icon`, `internal`, `program` from the registration and `display_name`, `critical`, `stop_when_no_windows`, `priority`, `default_shortcut` (inline table `{launch, mode}`), `launch_paths` (array of inline tables `{id, label, path, method?, params?, presets?, text_param?, draft_param?}` with `params` as the array of names, `method` written when the manifest gives it, and `presets` only when non-empty), `launcher_rank`, `pin` (inline table `{path, style?, scope?, default_mode?}`, each absent key reading as the manifest's default), `window_closed_path`, and `message_handlers` (array of inline tables `{type, path}`) from the manifest.
 `instances`, `instances_url`, and `actions` are no longer written; a row that still carries them (an app not yet re-registered) is read with those keys ignored.
 The shell validates every row on read and skips one that fails, with a warning.
 
@@ -95,6 +97,16 @@ Under `data/.state/system_interface/`, written atomically under one process-wide
 - `windows` is in opening order; ids are unique across every desktop; `path` and `title` obey section 1; `is_pinned` (default `false`) marks the app's pinned window, and `scope` (default `linked`) is `linked` or `independent` (pinned-taskbar-entries plan section 3.2). An independent window's `path` stays its home path.
 - A file whose `version` is not 1, or that fails validation, is logged and treated as absent: the shell then creates the default desktop. The old `projects.json` is never read. A desktop that still carries the retired `sharing` key is read with the key dropped, and so is a window that still carries the retired `is_settling` key.
 
+### 4.1a `default_shortcuts_offered.json`
+
+`{"version": 1, "apps": ["browser", "chat", "files", "getting-started", "terminal"]}`: every app whose default shortcut the shell has offered (plan section 3.2), names sorted.
+
+- A desktop's creation (the default desktop's seeding, `POST /api/desktops`, a visiting user's desktop) adds the apps whose default shortcut it was made with. The reconcile that runs on every read of the desktops and after every change of the registry's rows adds each app whose default shortcut it has just offered to every desktop.
+- A listed app is not offered again, so a default shortcut the user removed stays removed, and an app that deregisters stays listed.
+- A desktop created while no other desktop stands, such as the default desktop seeded over a `desktops.json` read as absent (section 4.1), starts the file over: it then lists only the apps whose default shortcut that desktop was made with.
+- A missing file, or one whose `version` is not 1 or that fails validation (logged), reads as listing every app with a shortcut on any desktop, and the next reconcile writes it; with no `desktops.json` either, the default desktop's seeding writes it.
+- `desktops.json` carries none of it.
+
 ### 4.2 `placements/<desktop_id>/<client_id>.json`
 
 ```json
@@ -109,14 +121,16 @@ Under `data/.state/system_interface/`, written atomically under one process-wide
 
 - `placements` is back to front; last is on top.
 - `frame` values are floats in `0..1` with `x + width <= 1` and `y + height <= 1`; `state` is `NORMAL`, `SNAPPED_LEFT`, `SNAPPED_RIGHT`, or `MAXIMIZED`.
+- `is_detached` (default `false`) marks a window pulled out into a desktop window of the embedding chrome's own (mngr's `specs/pull-out-window/spec.md`): the desktop draws a ghost at its frame and its page is shown there; a file without the key reads as attached, and a writer without it drops the flag on its next save. Orthogonal to `state` and `is_minimized` (a detached placement that is also minimized is a pulled-out window whose ghost is hidden; the window stays out); a detached placement is never the focused one.
 - A placement naming a window the desktop no longer holds is dropped on read.
 - A window with no placement reads as `{frame: cascade(n), state: NORMAL, is_minimized: true}` at the start of the list (the bottom of the stack), where `n` is the count of stored placements. A pinned window with no placement is answered by the layout route as `{frame: {x: 0.46, y: 0.05, width: 0.5, height: 0.9}, state: NORMAL, is_minimized: true}` at the start of the list instead (pinned-taskbar-entries plan section 3.2), unwritten until the client saves or an op edits that client's layout.
 - The old `layouts/` directory is never read.
 
 ### 4.3 `clients.json`
 
-`{"version": 2, "clients": {"<client_id>": {"active_desktop": "<desktop_id>", "last_seen": "<RFC 3339>", "user_id": "<user_id>" | null, "entries": {"<app>": {"mode": "bar" | "floating", "style": "plain" | "avatar", "position": {"x": 0.9, "y": 0.85} | null}}}}}`.
+`{"version": 2, "clients": {"<client_id>": {"active_desktop": "<desktop_id>", "last_seen": "<RFC 3339>", "user_id": "<user_id>" | null, "entries": {"<app>": {"mode": "bar" | "floating", "style": "plain" | "avatar", "position": {"x": 0.9, "y": 0.85} | null}}, "shown_history": ["<window_id>" | "home", ...]}}}`.
 `user_id` is the signed-in visitor the client last arrived as (section 5.5), null for the owner or an anonymous client; an entry without the key reads as null. `entries` (default `{}`) is how the client shows each pinned entry.
+`shown_history` (default `[]`) is what the client's phone layout showed (`plan-phone-interface.md`), most recent last: window ids, and `"home"` for the home grid, each at most once and at most 20; a close drops the window from every client's history.
 A version-1 file (with `device_kind` and `active_view`) is read with `active_view` taken as the active desktop when a desktop of that id exists, else the first desktop, and rewritten at version 2 on the next write.
 
 ### 4.3a `users.json`
@@ -131,7 +145,7 @@ A user id matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, as the identity header c
 
 ### 4.5 `avatar_selection.json`
 
-`{"version": 1, "design": "<design id>"}`: the workspace's avatar design; absent or unreadable reads as the default (`gummy-seal`). The registered designs live at `data/.apps/system_interface/avatars/catalog.json` (`docs/system/avatar-designs.md`).
+`{"version": 1, "design": "<design id>"}`: the workspace's avatar design; absent or unreadable reads as the default (`imbue-character`). The registered designs live at `data/.apps/system_interface/avatars/catalog.json` (`docs/system/avatar-designs.md`).
 
 ### 4.6 Wallpapers
 
@@ -147,12 +161,13 @@ Every error body is `{"detail": "<message>"}`.
 
 ### 5.1 Page and app routes
 
-Unchanged: `GET /` and the SPA catch-all (with `X-Frontend-Built`), `/assets/<path>`, `/favicon.ico`, `GET /api/health`, `GET /_static/app_contract.js`, `POST /api/apps/<name>/stop`, `POST /api/apps/<name>/start` (refused for critical apps), `POST /api/client-activity`, `/api/ws`.
+Unchanged: `GET /` and the SPA catch-all (with `X-Frontend-Built`), `/assets/<path>`, `/favicon.ico`, `GET /api/health`, `GET /_static/app_contract.js`, `POST /api/apps/<name>/stop`, `POST /api/apps/<name>/start` (refused for critical apps; a stop leaves the app's port held by the shell, which starts the app again on the first request, and a start releases it first and counts against the app's wake budget (which only wakes the app did not come up from spend), answering `502` once it is spent: `docs/system/specs/stop-when-no-windows.md`, sections 5.4 and 5.5), `POST /api/client-activity`, `/api/ws`.
+Added by the stop-when-no-windows spec (section 7): `POST /api/apps/<name>/quit`, refused as a stop is (`403` in a preview, `404` unknown, `400` for a row with no program, a critical app, or a row inside a critical app's program), which closes every window of the app on every desktop through the ordinary close (a pinned window stays), stops its program at once, and answers `{"name", "is_running"}`.
 Presence (the share identity spec, `specs/share-identity-and-presence/spec.md` in the mngr repository, section 4.7): `POST /api/presence/heartbeat` takes no body and reads the requester's `X-Imbue-Identity` header (`204` and nothing recorded when it carries no `user_id`; otherwise it touches the mtime of `data/.state/presence/users/<user_id>.json`, writing the file with `{"user_id", "email", "owner", "first_seen"}` on first sight, and answers `{"identity": {"owner", "user_id", "email"}}`); a user is connected while that mtime is within 70 seconds, and the file is never removed. `GET /api/presence` answers `{"users": [present_user, ...]}`, one entry per connected user: `user_id`, `email`, `display_name`, `profile_picture_url`, `owner`, `first_seen`, `last_seen` (the mtime). `display_name` and `profile_picture_url` are the account's profile as imbue_cloud holds it (`null` when it has none or cannot be reached): fetched from `GET {SHARE_BROKER_URL}/users/<user_id>/profile` (public; answers `{"user_id", "display_name", "profile_picture_url"}`), the broker named in `data/.secrets/share.env`, with a 2 second bound, and cached -- answers and failures alike -- for 5 minutes under `data/.state/presence/profiles/<user_id>.json`. There is no leave route: a page that goes away simply stops heartbeating.
 `POST /api/client-activity` takes `{"client_id", "desktop_id", "kind": "message", "app", "key", "text"}`: the client that sent a message to an app's page, the desktop it was on (from the shell's handshake), the app, the page's marker (a chat id; `""` for a page without one), and the text; the shell appends it to the client-activity log as a `message` event (the text truncated), which is what `layout.py context` and an op's requester attribution read.
 Removed: `POST /api/apps/<name>/changed`, `POST /api/apps/<name>/instances` and every `/instances/<key>/...` relay route, `POST /api/tabs/<tab_id>/instance`, every `/api/projects/...` route, `GET` and `POST /api/layouts/<view_id>`.
 Added: `GET /api/updates/pending` (`200` with the update notice -- the rollback point the last `update_self.py apply --keep-rollback-point` kept, whose fields the workspace app model's contracts section 5 lists -- or `null` when none is kept); `POST /api/updates/pending/confirm` (runs `update_self.py confirm-last`; `204`; `409` when none is kept or while a rollback runs; `500` naming a failed script); `POST /api/updates/pending/rollback` (starts `update_self.py rollback-last` detached, its output going to `data/.state/update-apply/rollback-last.log`, and answers `202` once the script has written its first progress into the record, so a second window's press reads that progress rather than starting a second script; `409` when none is kept, one is already running, the point was already taken back, or the script refused, in its own words; `500` when the script could not be started or wrote no progress within 30s). An unknown path under `/api/` answers `404 {"detail": "No such API route: /<path>"}` rather than the app shell.
-A preview shell (`system-interface --preview`, booted by `preview_app.py` over a seeded copy of the state directory and a copied registry) answers `POST /api/apps/<name>/stop`, `POST /api/apps/<name>/start`, and the two notice verbs with `403 {"detail": "This is a preview of a proposed change; it cannot change the live workspace."}`; every other route edits its own copy or reaches only its own windows, so it stays live. Its page carries the meta tag `system-interface-preview` (content `true`), which the frontend reads to offer no Stop or Start, and never the staleness tag.
+A preview shell (`system-interface --preview`, booted by `preview_app.py` over a seeded copy of the state directory and a copied registry) answers `POST /api/apps/<name>/stop`, `POST /api/apps/<name>/start`, `POST /api/apps/<name>/quit`, and the two notice verbs with `403 {"detail": "This is a preview of a proposed change; it cannot change the live workspace."}`; every other route edits its own copy or reaches only its own windows, so it stays live. Its page carries the meta tag `system-interface-preview` (content `true`), which the frontend reads to offer no Quit, and never the staleness tag. A preview shell neither parks ports nor stops or wakes apps: a POST launch of a stopped app from a preview fails as one to any unreachable app does.
 
 ### 5.2 Desktops
 
@@ -173,15 +188,16 @@ A preview shell (`system-interface --preview`, booted by `preview_app.py` over a
 
 | Route | Request | Response |
 |---|---|---|
-| `POST /api/desktops/<id>/windows` | `{"app", "path", "client_id", "if_present": "focus" \| "new"}` | `201 {"window", "is_new": true}` for an open; `200 {"window", "is_new": false}` when `if_present` is `focus` and a window of that app at that path exists on the desktop; `400` for an unregistered app or a bad path |
+| `POST /api/desktops/<id>/windows` | `{"app", "path", "client_id", "if_present": "focus" \| "new", "minimized"?}` | `201 {"window", "is_new": true}` for an open; `200 {"window", "is_new": false}` when `if_present` is `focus` and a window of that app at that path exists on the desktop; `400` for an unregistered app or a bad path |
 | `POST /api/desktops/<id>/launch` | `{"app", "launch", "params"?, "client_id", "target": {"kind": "new" \| "focus" \| "window", "window_id"?}, "minimized"?}` | Runs a launch path (post-launch-paths plan section 5): the page is the launch path with its presets and `params` as the query for a GET, and for a POST what the app answers to `{presets..., params..., "client_id", "desktop_id", "window_path"}` posted to it. `new` and `focus` then open as the windows route does (`201`/`200 {"window", "path", "is_new"}`); `window` points the named window at the page as a location report for `client_id` would (`200`, `is_new` false), with the window's path as that client sees it as `window_path`. `400` for an unregistered app, an unknown launch path, an undeclared param, a window of another app, or a launch the app refused (a 4xx from it carrying a `detail`: `<app> refused the launch: <detail>`); `502` when the app could not be asked (unreachable, timed out, or a 4xx with no `detail`) or answered no path |
 | `POST /api/desktops/<id>/windows/<window_id>/close` | | `204`; idempotent; `409` for a pinned window |
 | `POST /api/desktops/<id>/windows/<window_id>/location` | `{"path", "title", "client_id"}` | `200 window`; `404` unknown window; `400` bad path or title. For an independent window the report is stored for `client_id` alone and the answer's `path` and `title` are that client's |
 
-An open with `is_new` writes the requesting client's placement (section 10, cascade) on top of its stack and broadcasts `placements_updated` for that client, and `desktops_updated` for everyone.
+An open with `is_new` writes the requesting client's placement (section 10, cascade) on top of its stack, minimized when `minimized` is true (a phone's opens: no other client's layout gets a placement, so the window reads as minimized for everyone), and broadcasts `placements_updated` for that client, and `desktops_updated` for everyone.
 An open answered with `is_new: false` restores and raises the existing window in the requesting client's layout, writes it, and broadcasts `placements_updated` for that client.
 A close drops the window from every layout file of the desktop and broadcasts `desktops_updated` and one `placements_updated` per rewritten layout.
-After that, when the window's app registered a `window_closed_path`, the shell POSTs `{"path", "window_id", "desktop_id"}` to the app's `url` plus that path from a thread of its own, with a 2 second timeout, and neither waits for nor acts on the answer; a deleted desktop's windows are posted the same way. An app may take the posted `path` as proof that a window showed the resource it names (the terminal and the browser mark it window-seen before sweeping), while reading what is shown now from `GET /api/desktops`.
+After that, when the window's app registered a `window_closed_path` and the app is running (a stopped app's port is the shell's own parker, which would wake the app to tell it a window closed), the shell POSTs `{"path", "window_id", "desktop_id"}` to the app's `url` plus that path from a thread of its own, with a 2 second timeout, and neither waits for nor acts on the answer; a deleted desktop's windows are posted the same way. An app may take the posted `path` as proof that a window showed the resource it names (the terminal and the browser mark it window-seen before sweeping), while reading what is shown now from `GET /api/desktops`.
+A close is also what starts the clock of the stop-when-no-windows spec (section 6): an app that declares `stop_when_no_windows` and has no window left on any desktop is stopped 60 seconds later, once a client has arrived at the shell since it started, unless a per-app share grant names it (its visitors reach it without the shell, so their use leaves no window to count).
 A location that changes nothing writes and broadcasts nothing.
 
 ### 5.4 Placements
@@ -198,18 +214,20 @@ A save whose placements name windows the desktop does not hold is accepted with 
 
 | Route | Response |
 |---|---|
-| `GET /api/clients` | `{"clients": [{"id", "active_desktop", "last_seen", "is_connected", "user_id", "entries"}]}` |
+| `GET /api/clients` | `{"clients": [{"id", "active_desktop", "last_seen", "is_connected", "user_id", "entries", "shown_history"}]}` |
+| `POST /api/clients/<client_id>/shown` | takes `{"window_id": "<id>" \| null}` (null for the home grid) and records it at the end of the client's `shown_history` (section 4.3); answers the client record; `404` for a window no desktop holds or an unknown client |
 | `POST /api/clients/<client_id>/arrive` | `{"desktop_id", "created_desktop": desktop \| null, "replaced_desktop_name": string \| null}` |
 | `POST /api/clients/<client_id>/entries/<app>` | takes `{"mode", "style", "position"}` (section 4.3), for a pinned non-internal app, the style `plain` or the pin's; answers the client record and announces `client_entries_changed` to that client's windows |
 | `GET /api/avatars` | `{"designs": [{"id", "label", "source_path"}], "selected", "default"}` |
 | `POST /api/avatars` | loopback only: registers `{"id", "label", "svg", "source_path"}` (`201`); `400` for a design off the vocabulary of `docs/system/avatar-designs.md` |
 | `GET /api/avatars/<id>/image.svg?mood=idle\|working&preview=1` | the rendered image; `GET /api/avatars/<id>/source.svg` the original as an attachment; `404` otherwise |
+| `GET /api/avatars/<id>/icon.png?size=180` | the design's still pose on an opaque square tile as a PNG of `size` pixels (16 to 1024, default 180); `400` for another size, `404` for an unknown design. `GET /apple-touch-icon.png` answers the selected design's at 180, and `GET /manifest.webmanifest` a web manifest naming the workspace with the selected design's icons |
 | `POST /api/avatar-selection` | takes `{"design"}`; writes `avatar_selection.json` and announces `avatar_selection_changed`; `400` for an unknown design |
-| `GET /api/inventory` | `{"is_preview", "desktops": [desktop, ...], "apps": [app, ...], "clients": [client with "shown": [window_id, ...]]}` where `is_preview` is whether a preview shell (section 5.1) answered and `shown` is the windows of the client's active desktop that its layout does not minimize. The one read a shell page boots from (below), and what an agent's `desktops` and `list` ops answer (section 8) |
+| `GET /api/inventory` | `{"is_preview", "workspace_name", "desktops": [desktop, ...], "apps": [app, ...], "clients": [client with "shown": [window_id, ...]]}` where `is_preview` is whether a preview shell (section 5.1) answered, `workspace_name` is the workspace's name (the `SYSTEM_INTERFACE_WORKSPACE_NAME` setting, else the services agent's `workspace_display_name` label, else the host's name, else `Workspace`), which the page's title carries too, and `shown` is the windows of the client's active desktop that its layout does not minimize. The one read a shell page boots from (below), and what an agent's `desktops` and `list` ops answer (section 8) |
 | `GET /api/wallpapers` | `{"wallpapers": [{"kind", "name", "url"}]}`, bundled first |
 | `GET /wallpapers/<kind>/<name>` | the image; `404` otherwise |
 
-`app` is `{"name", "display_name", "icon", "label", "url", "internal", "program", "critical", "launch_paths": [{"id", "label", "path", "method", "params": [name, ...], "presets": {name: value, ...}, "text_param", "draft_param"}], "default_shortcut", "launcher_rank", "pin", "is_running"}`, `pin` the manifest table or `null`, and each launch path's `text_param` and `draft_param` the declared param name or `null`.
+`app` is `{"name", "display_name", "icon", "label", "url", "internal", "program", "critical", "stop_when_no_windows", "launch_paths": [{"id", "label", "path", "method", "params": [name, ...], "presets": {name: value, ...}, "text_param", "draft_param"}], "default_shortcut", "launcher_rank", "pin", "message_handlers": [{"type", "path"}, ...], "is_running"}`, `pin` the manifest table or `null`, each launch path's `text_param` and `draft_param` the declared param name or `null`, and `message_handlers` the row's handlers (`[]` when it registers none). The `apps_updated` push (section 6) carries the same objects.
 
 The arrival is what a shell page posts first, with its client id; it reads the requester's `X-Imbue-Identity` header (the share identity spec, section 4.2). The page then reads `GET /api/inventory` once, taking the desktops (the seeded one among them), the apps, and its own client record from that one answer, so it knows every app before it draws a shortcut and needs nothing from the socket to show a complete desktop; the socket's `apps_updated` and `desktops_updated` (section 6) carry every change from then on. Until the inventory answers, a shortcut whose app the page cannot look up draws as connecting (`data-connecting="true"`) and running it says the page is still connecting, rather than that the app is not registered.
 `desktop_id` is where the client lands (`null` while the workspace has no desktop): for the owner and for a request with no `user_id`, the client's stored desktop when it exists, else the first desktop (section 4.3); for a visiting user (`owner` false with a `user_id`), the desktop made for them.
@@ -217,11 +235,19 @@ On a visiting user's first arrival the shell creates that desktop and answers it
 A later client of the same user lands on that desktop; a returning client keeps the desktop it was on, when it last arrived as that same user (a client whose record names another user, or none, lands on the user's desktop).
 When the recorded desktop no longer exists the shell seeds another the same way and answers the deleted one's name (as of the user's last arrival) as `replaced_desktop_name`, which the page shows once (`data-replaced-desktop-notice`).
 
+### 5.6 Embedder messages
+
+`POST /api/embedder-messages` takes `{"type", "client_id", "payload"}`: a message the minds chrome sent a client's shell page, its type, that client, and the message's other fields.
+The shell page posts every message the chrome sends it, once, when some app's `message_handlers` names its type, and posts nothing otherwise; a solo page (section 9) posts nothing, since its client is the main window's; either way it still rebroadcasts every such message to its child frames unchanged (the workspace app model's contracts section 11).
+The shell posts `{"type", "client_id", ...payload}` (the message itself, with the client added) to the `url` plus `path` of every registered app whose row names the type, in registry order, with a 10 second timeout, and reads no payload.
+It answers `200 {"type", "deliveries": [{"app", "status", "detail"}, ...]}` when every app answered 2xx (`detail` empty); `502` with the same body and a `detail` naming each app that answered otherwise or could not be reached (its `status` then `null`); `404` when no app handles the type; `400` for a type off the manifest rule, a bad client id, or a payload carrying `type` or `client_id`; and a preview shell `403`, its page posting nothing (the workspace app model's contracts section 6).
+
 ## 6. The WebSocket
 
 Route `/api/ws`, one connection per browser window.
 
 Inbound: `client_state {"client_id", "active_desktop", "previous_desktop"}` on connect and on every desktop switch; the shell records the active desktop and `last_seen`, and logs a `desktop_switch` activity when `previous_desktop` differs.
+A solo page (section 9) sends `client_state {"client_id", "is_pop_out": true}` on every connect instead: the shell registers the connection under the client, so the ops targeting the client (section 8) reach it, and records nothing else. It never becomes the client's report, never logs a desktop switch, and never supplies an active desktop to `context` or anything else: the client's active desktop stays its main window's.
 
 Outbound:
 
@@ -231,38 +257,40 @@ Outbound:
 | `desktops_updated` | `{"desktops": [desktop, ...]}` | on connect, and after any write of `desktops.json` (a desktop, shortcut, wallpaper, window open or close, or location change) |
 | `placements_updated` | `{"desktop_id", "client_id", "save_id"}` | after any write of a layout file, and after a write of a client's window path (with a shell-minted save id); a window applies it only when `client_id` is its own, the desktop is the one it shows, and `save_id` is not one it minted |
 | `active_desktop_changed` | `{"client_id", "desktop_id"}` | after a `client_state` report, an op, or an arrival (section 5.5) changed the client's stored active desktop |
-| `layout_op` | `{"op", "args", "requester", "target_client_id"}` | only the transient ops `refresh` and `reload_system_interface` (section 8) |
+| `layout_op` | `{"op", "args", "requester", "target_client_id"}` | the transient ops `refresh` and `reload_system_interface`, and, to the target client, every `show` (`{"window", "is_detached"}`), every placed `open` and every `focus` (`{"window"}`) (section 8): a phone shows that window, and a desktop raises the desktop window of a `show` whose window is pulled out |
 | `client_entries_changed` | `{"client_id", "entries"}` | to that client's windows, after its entry presentations were written |
 | `avatar_status` | `{"mood": "idle" \| "working", "is_stale"}` | on connect, and when either changes |
 | `avatar_selection_changed` | `{"design"}` | after the selection is written |
 | `update_notice_changed` | `{"notice": notice \| null}` | on connect (after `avatar_status`), and whenever `data/.state/update-apply/last-good.json` is written or removed and reads differently: an apply kept it, a rollback's progress and outcome, a confirm cleared it; `notice` is the document `GET /api/updates/pending` answers (section 5.1) |
 | `presence_updated` | `{"users": [present_user, ...]}` | on connect, when a heartbeat brings a user into the connected set, and when the shell's sweep (every 10 seconds) finds that a user's heartbeats have stopped (section 5.1) |
 
-`is_connected` on a client is whether any window of it holds the socket.
+`is_connected` on a client is whether any window of it holds the socket, a solo page's included.
 
 ## 7. The app contract (`app_contract.js`)
 
 Built once, into the shell's static output, and served by every app at `/_static/app_contract.js` from its own origin (the shell serves it too, with `Access-Control-Allow-Origin: *`): a page imports it as a module, and a module import is a fetch without cookies, which the desktop client's forwarder and the share gateway refuse across origins.
-Exports `connectToShell({onHandshake, onShown, onHidden, onCloseRequest, onNavigate, capabilities})` returning `{isFramed, focused(), location(path, title), openPath(path, ifPresent), startWithText(text), disconnect()}`.
-`openPath` sends `shell:open` below; `startWithText` sends `shell:start-with-text`.
-`capabilities` is `{navigation: boolean}` and must agree with the handlers: giving `onNavigate` without `navigation: true`, or `navigation: true` without `onNavigate`, is an error the module throws at connect.
+Exports `connectToShell({onHandshake, onShown, onHidden, onCloseRequest, onNavigate, capabilities})` returning `{isFramed, focused(), location(path, title), openPath(path, ifPresent), startWithText(text), draftText(text), disconnect()}`.
+`openPath` sends `shell:open` below; `startWithText` sends `shell:start-with-text`; `draftText` sends `shell:draft-text`.
+Beside it the shell builds and every app serves `/_static/context_menu.js`, the element context menu of the element-reference-menu plan (section 9 there), which drafts through `draftText`.
+`capabilities` is `{navigation: boolean, closeChord: boolean}` and must agree with the handlers: giving `onNavigate` without `navigation: true`, or `navigation: true` without `onNavigate`, is an error the module throws at connect, and so is `closeChord: true` without `onCloseRequest`. A page that declares `closeChord` owns the close chord: the shell sends `shell:close-request` and leaves the window open (the browser closes its current tab that way).
 
 | Direction | Type | Payload |
 |---|---|---|
-| shell to page | `shell:handshake` | `{"clientId", "windowId", "desktopId", "path"}`; after every `load` of the frame and when the window's desktop changes |
+| shell to page | `shell:handshake` | `{"clientId", "windowId", "desktopId", "app", "path"}`; after every `load` of the frame and when the window's desktop changes; `app` is the name of the app the window belongs to (element-reference-menu plan section 5) |
 | shell to page | `shell:shown`, `shell:hidden` | `{}` |
-| shell to page | `shell:close-request` | `{}` |
+| shell to page | `shell:close-request` | `{}`; a page that declared `closeChord: true` keeps its window, any other page's window closes right after |
 | shell to page | `shell:navigate` | `{"path"}`; only to a page that declared `navigation: true` |
-| page to shell | `shell:capabilities` | `{"navigation": bool}`; sent once by `connectToShell`; absent means `false` |
+| page to shell | `shell:capabilities` | `{"navigation": bool, "closeChord": bool}`; sent once by `connectToShell`; absent means `false` |
 | page to shell | `shell:location` | `{"path", "title"}`; the shell remembers the pair as the page's last report and posts it to the window's location route when it differs from the stored one |
-| page to shell | `shell:focused` | `{}`; the shell raises the page's window |
+| page to shell | `shell:focused` | `{}`; the shell raises the page's window. A report from a page that is not shown (minimized, pulled out, being pulled out) is ignored, since a raise would bring the window back onto the desktop and the user cannot have chosen a hidden page (the shell also takes the document's focus off a page as it hides it, so the browser does not restore focus there). It is ignored too while a move or resize of another window is in progress: the gestured window holds the top of the stack until its gesture ends, and a focus report meanwhile (the page's focus coming back with the embedder window's, mid-drag) is not the user choosing that window |
 | page to shell | `shell:open` | `{"path", "ifPresent"}`; opens a window of the posting frame's own app on the posting window's desktop, with `client_id` the hosting client |
 | page to shell | `shell:start-with-text` | `{"text"}`; the shell runs the launcher's primary free-text row with the text (launcher-and-getting-started plan section 3.7), so a page starts a chat without naming the chat app; with no free-text row on the machine the shell notifies and does nothing |
+| page to shell | `shell:draft-text` | `{"text"}`; the shell drafts the text, unsent, through the pinned app's launch path with a `draft_param` into this client's view of the pinned window (as the avatar dialog's "Design your own..." does, post-launch-paths plan section 4.3), else through the first draft row of the machine; with neither the shell notifies and does nothing (element-reference-menu plan section 5) |
 
 Following rule: after every `desktops_updated`, for every live page of a window whose stored `path` differs from that page's last reported path, the shell sends `shell:navigate` when the page declared navigation, else reassigns the iframe `src`, and records the stored path as that page's last report at once, so a second broadcast before the page lands does not navigate it again.
 A page's own report never navigates it.
 
-Nested frames: an app page that frames another page of its own origin (the chat root) forwards `minds:` messages from that frame to `window.parent` unchanged, re-posts the inner page's `shell:focused` as its own, and forwards the inner page's `shell:open` of a sub-agent view, from one module named in `test_embed_ratchets.py`'s allowlist.
+Nested frames: an app page that frames another page of its own origin (the chat root) forwards `minds:` messages from that frame to `window.parent` unchanged, re-posts the inner page's `shell:focused` as its own, and forwards the inner page's `shell:open` of a sub-agent view and its `shell:draft-text`, from one module named in `test_embed_ratchets.py`'s allowlist.
 A `shell:open` whose path is the root's own (`/` or `/?chat=<id>`) it answers itself, by selecting that chat in place, rather than asking the shell for a second root window.
 The shell and the minds chrome accept messages only from frames they created, so nothing else reaches them from an inner frame.
 
@@ -270,7 +298,7 @@ The shell and the minds chrome accept messages only from frames they created, so
 
 `POST /api/layout/broadcast` with `{"op", "args", "requester"}`, loopback only.
 `requester` is `{"app", "marker"}` (`{"app": "chat", "marker": "<chat-id>"}` for a chat's agent, from `MINDS_CHAT_ID`, else `MNGR_AGENT_ID`), or `null`; `self` in a window argument names the window of `app` on the target client's active desktop whose path, as the target client sees it (its own stored path for an independent window), carries `marker` as a path segment or a query value; `pinned` names the pinned window of `app` on that desktop (`404` when it has none, `400` with no requester).
-Targeting: `args.client`, else the client that most recently messaged the requester, else the one connected client, else `412` listing the connected clients; `open` alone, with nothing settling the client, writes the window on `args.desktop` (else the first desktop) with no placement instead, so it reads as minimized for every client, and answers with `client_id` and `layout` null.
+Targeting: `args.client`, else the client that most recently messaged the requester while it is connected, else the one connected client (when a client messaged, only if both last arrived as the same user), else that messaging client though it is not connected, else `412` listing the connected clients; `open` alone, with nothing settling the client, writes the window on `args.desktop` (else the first desktop) with no placement instead, so it reads as minimized for every client, and answers with `client_id` and `layout` null.
 `args.desktop` names the desktop an op edits by name or id and switches the target client to it.
 
 | Op | Args | Effect |
@@ -278,7 +306,8 @@ Targeting: `args.client`, else the client that most recently messaged the reques
 | `context` | | read-only; every client's recent activity (`{"ok", "clients"}`) |
 | `desktops`, `list` | | read-only; the inventory document of section 5.5 (with `"ok"`) |
 | `load` | `desktop` | switch the client to the desktop |
-| `open` | `app`, `path?`, `launch?`, `params?`, `if_present?`, `minimized?` | open a window at `path`, else at the page of the launch path (`launch`, else the app's `default_shortcut.launch`, else its first): a GET launch path with `params` as the query string, a POST launch path posted `params` for the page it answers (section 5.3, with the targeted client as `client_id`, or none when the open is unplaced); a window of the app at that page is focused unless `if_present` is `new`; with `minimized`, a window this open creates is placed minimized and one it finds is left as placed; answers the window id |
+| `show` | `app`, `path`, `showing?`, `repoint?` | put the app's page at `path` on the client's screen, choosing the window (below); answers the window id and `shown` |
+| `open` | `app`, `path?`, `launch?`, `params?`, `if_present?`, `minimized?`, `beside?` | open a window at `path`, else at the page of the launch path (`launch`, else the app's `default_shortcut.launch`, else its first): a GET launch path with `params` as the query string, a POST launch path posted `params` for the page it answers (section 5.3, with the targeted client as `client_id`, or none when the open is unplaced); a window of the app at that page is focused unless `if_present` is `new`; with `minimized`, a window this open creates is placed minimized and one it finds is left as placed; with `beside` (a window argument, resolved as the window verbs resolve one), the two are framed as `paired_frames` gives, for the target client alone: the opened window `PAIRED_WIDTH` wide at the named window's `y` and `height`, against whichever side of it has that much room (the right first), and on top; the named window is untouched, down to its state, where a side has the room; where neither has, it moves (keeping its width and height) by the least that opens `PAIRED_WIDTH` on one side, which is the side that already has more of it, ties going right; and it is narrowed to `PAIRED_WIDTH` at `x = 0` only when it is wider than that. And a `beside` naming no window on the desktop (or naming `self` or `pinned` with no requester to resolve it against) leaves the opened window as placed rather than refusing the open, while a `beside` that is no window spelling at all, and `beside` with `minimized`, are refused before the window is opened; answers the window id |
 | `focus` | `window` | restore and raise |
 | `minimize`, `restore`, `maximize` | `window` | set the placement accordingly |
 | `place` | `window`, `zone` (`left`, `right`, `maximized`) or `frame` (`x,y,width,height`) | set the state, or the frame with state `NORMAL` |
@@ -290,7 +319,19 @@ Targeting: `args.client`, else the client that most recently messaged the reques
 | `wallpaper` | `wallpaper` | set the desktop's wallpaper |
 
 `window` is a window id, `self`, or an app name (that app's most recently focused window on the target client's active desktop).
-Document ops are applied to the files and answered with `{"ok", "desktop_id", "client_id", "desktop", "layout", "window_id"?}`; the two transient ops travel as `layout_op`.
+`show` knows nothing of what the path shows and reads no meaning into a query string. `showing` is a list of the app's other paths that count as already showing it (`path` itself always does). `repoint` is a list of the app's pages, each a path with no query string or fragment, whose windows `show` may point at `path`; absent or empty, step 2 below repoints nothing. A `showing` entry that is not a path, or a `repoint` entry that is not a page, is a `400`. For the target client, every path as that client sees it (its own stored path for an independent window), the first of these that applies:
+
+1. `raised`: a window of `app` at `path` or a `showing` path, on the client's active desktop before any other and nearest the top of the client's stack first, minimized or not, is restored and raised; one on another desktop is raised there and the client switched to that desktop.
+2. `navigated`: the on-screen window of `app` (one not minimized, or one pulled out, whose own desktop window is on screen whether or not its ghost is hidden) on the active desktop nearest the top of the stack whose page (its path before any `?` or `#`) is in `repoint` is set to `path` as `navigate` sets it (a linked window moves for every client, an independent one for this client) and raised; a window of the app on any other page is never repointed.
+3. `pinned`: the app's pinned window on the active desktop is set to `path` the same way and restored.
+4. `opened`: a window of `app` at `path` is opened on the active desktop for the client, shown and on top.
+
+A window the first three settle on that is pulled out for the client stays out: its placement is left as it stands, and the client is not switched to its desktop.
+Whichever of the four it is, once its edit is written the client's windows are sent a `show` `layout_op` naming the window and whether it is pulled out (`{"window", "is_detached"}`): for a pulled-out one the desktop's page (not a solo page) asks the embedder to raise the window's own desktop window, as the ghost's and taskbar entry's "Show" does, and a phone layout shows the window (`plan-phone-interface.md`).
+An `open` that places its window for a client (not `minimized`) and a `focus` likewise send that client's windows an `open` or `focus` `layout_op` naming the window (`{"window"}`) once written, which only a phone layout acts on.
+
+`show` is answered like the document ops, with `desktop_id`, `desktop`, and `layout` those of the desktop the path is shown on, and `"shown"` one of the four above.
+Document ops are applied to the files and answered with `{"ok", "desktop_id", "client_id", "desktop", "layout", "window_id"?}`; the two transient ops travel only as `layout_op`.
 `split`, `move`, and every instance verb (`rename`, `delete`, `stop`, `start`, `replace-url`) are refused with an error naming the replacement; `chat:`, `terminal:`, and `app:` spellings are refused with an error saying to give an app name and a path.
 Exit codes are `0`, `1`, `3`.
 
@@ -298,6 +339,10 @@ Exit codes are `0`, `1`, `3`.
 
 Honoured by the shell on page load for the requesting client, then stripped: `?desktop=<id>` switches to it; `&open=<app>:<path>` opens (or focuses) a window there; `&launch=<app>:<launch_id>` runs a launch path through the launch route (section 5.3) with a `new` target.
 Unknown or stale targets are ignored silently.
+
+`?solo=<window-id>` is *solo mode* (the pull-out-window spec, section 7.5): the page shows that one window edge to edge and nothing else, which is what a pulled-out window's desktop window loads. It is read and kept in the URL, unlike the deep link, so any reload of the page (the `reload_system_interface` op, the browser's own) comes back as the same pop-out. A solo page lands on the desktop that holds the window without reporting its desktop (its `client_state` is a pop-out's, section 6, and the client's active desktop stays its main window's), ignores every layout verb but its own window's detach and reattach, and never follows an `active_desktop_changed`.
+`&reopened=1` beside it (also kept) says the embedder reopened the page's desktop window (a session restore, a reopen of the app, a backend retry) rather than opening it for a tear-out just now. A reopened page takes its first layout as the truth: when it says the window is back (brought back while the embedder was away), the page reports the window back at once, which closes it. A page without the flag (a tear-out, the window menu's "Open in its own window", or an embedder that does not send it) cannot: a first layout load that does not yet say the window is out waits a moment for the desktop's word (the main window's shell writes the detach as the window leaves, and that save is on its way while the solo page boots) and detaches the window itself only when none comes.
+Either way its own window's return is reported to the embedder (`minds:detached-windows`) only once saved, since the embedder closes the page's window on that report; a later load that says the window is back is the desktop's word.
 
 ## 10. Geometry rules and constants
 
@@ -311,48 +356,58 @@ Both editors (`shell/desktop_document.py` and `frontend/src/geometry/`) implemen
 - **Snap zones**: a drag released with the pointer within the snap threshold of the left or right backdrop edge snaps to that half; within the threshold of the top edge maximizes; the top edge wins a corner.
 - **Un-snap**: a drag of a snapped or maximized window beyond the un-snap distance makes it `NORMAL` at its kept frame's width and height, positioned so the pointer sits at the same horizontal fraction of the title bar it was pressed at, then clamped.
 - **Drag threshold**: a press becomes a drag after the drag threshold; below it, it is a click.
+- **Press focus** (fixed): a press on a handle (a title bar, a resize edge, a shortcut, an entry) takes the document's focus back from any other window's page that holds it, as the browser would have on a press whose default the gesture source did not prevent; the pressed window's own page keeps it. A page left holding the document's focus would be raised again on every return of the embedder window's focus (section 7, `shell:focused`), over the window the user chose.
+- **Focus follows the focused window** (fixed): whenever the focused window changes, by any route (a press on a lower window's content, an agent's focus, a menu, a window a page opens), the document's focus is taken off every other window's page, for the reason Press focus gives. Only the focused window's page ever keeps it, so an agent opening or focusing a window takes the keyboard from the page the user was typing in.
+- **Gestured window on top** (fixed): while a move or resize is in progress, a raise of any other window is dropped, whatever asks for it (a page's focus report, a notification); the gesture's end raises its own window again.
 - **Grid**: origin at the inset from the backdrop's top-left; `columns = max(1, floor((backdrop.width - inset) / cell.width))`, `rows = max(1, floor((backdrop.height - inset) / cell.height))`.
 - **Nearest free cell** (fixed): among free cells, the one at the least Euclidean distance in cell units from the clamped target cell, ties by lower column then lower row.
 - **Reading order** (fixed): `cell(i) = {column: i mod columns, row: floor(i / columns)}`.
 - **Placement of shortcuts** (render only): shortcuts whose stored cell is inside the grid and unclaimed take it, in shortcut order; every other shortcut takes the nearest free cell to its clamped stored cell, in shortcut order.
-- **Compact override** (render only): every window renders as `MAXIMIZED`.
+- **Room made for a dragged shortcut** (drawn by the client alone; nothing new is stored, so `frontend/src/geometry/grid.ts` implements it and `desktop_document.py` does not): the held shortcut takes the cell the pointer is in, clamped into the grid, and the shortcut that was in it -- and only that one -- steps aside to the **nearest free cell** (above), reckoning the cell the held shortcut is leaving as free. A free cell needs nothing stepping aside, so the rest of the grid never moves. The arrangement is drawn live -- the shortcut that stepped aside slides to its cell for the length of the drag and no longer, so a grid re-fitted by a resize or a desktop switch is taken without sliding, and the slide is asked for rather than taken away (`motion-safe`, as the window travel is) -- and the drop commits it through the move route (section 5.2), naming only the shortcut that was dragged: the shell displaces the occupant by the same rule and its answer stands. The two searches differ in their bounds -- the drag searches the grid, the shell the unbounded plane -- so on a desktop whose free cells near the target are all off the grid the shortcut settles where the shell put it rather than where the drag drew it.
+- **Phone showing** (render only): a phone shows one window at a time whatever its layout says of it, and writes no placement for showing it (`plan-phone-interface.md`).
+- **Tear-out** (the pull-out-window spec): when the embedder has said it can pull windows out, every title-bar drag is announced to it (`minds:window-drag-started`, with the window's rendered size and the grab offset) and the embedder watches the cursor from there, since the shell's own pointer events stop at the embedder window's edge on some platforms. On its word (`minds:tear-out`): `out`, the chrome is dragging a desktop window of its own under the cursor, so `is_detached` is set with the frame untouched and saved at once (the ghost stands where the drag began, and the chrome's window reads a placement that already says it is out, in this shell's stacking order), and this one hides, offering no snap zone; `in`, the chrome dropped that window and this one is brought back (raised, its state kept) and shows again where the drag has it, saved at once; `released`, the gesture is over and nothing more is written. The dragged window holds the top of the stack for the whole gesture, the return included (the embedder window's focus comes back with it, and a page reporting that focus does not displace it). The desktop's shell is the one writer during a drag; the chrome's window only reads. The shell's own gesture end (a release it sees, or Escape) tells the embedder how it ended (`minds:window-drag-ended`, `isDetached` and `isCancelled`). The embedder's word stands even when it lands after that release (a fast drag's release can beat its `out`): a late `released` after a release inside puts back the placement the drag began at and detaches it, saved at once; a late `in` after a release taken as out brings the window back; a cancelled drag takes no late word.
+- **Detach and reattach** (fixed): `detach` sets `is_detached` and clears `is_minimized` where the placement stands; `reattach` clears `is_detached` and `is_minimized`, sets the state to `NORMAL`, moves the placement to the top, and takes the frame a drop back onto the desktop names (clamped into the unit square) or keeps the placement's own. Every verb that shows a window on the desktop (focus, restore, maximize, snap, and place) clears `is_detached`; `show` leaves a pulled-out window out and has its own desktop window raised (section 8); `minimize` shows nothing, so on a detached placement it hides the ghost and leaves the window out, and `detach` on a placement already detached shows the ghost again.
 
 ## 11. Theme tokens and metrics
 
-`frontend/src/theme/default.css`, imported after `base.css`, declares on `:root` and redeclares under `[data-compact]` and `[data-touch]` where a value differs:
+`frontend/src/theme/default.css`, imported after `base.css`, declares on `:root` and redeclares under `[data-touch]` where a value differs:
 
-| Token | Default | Compact | Touch | Read by `metrics.ts` |
-|---|---|---|---|---|
-| `--desk-title-bar-height` | `36px` | | `44px` | yes |
-| `--desk-taskbar-height` | `48px` | `56px` | `56px` | yes |
-| `--desk-cell-width` | `96px` | `80px` | | yes |
-| `--desk-cell-height` | `112px` | `96px` | | yes |
-| `--desk-grid-inset` | `16px` | `8px` | | yes |
-| `--desk-window-min-width` | `320px` | | | yes |
-| `--desk-window-min-height` | `240px` | | | yes |
-| `--desk-title-min-visible` | `120px` | | | yes |
-| `--desk-snap-threshold` | `16px` | | | yes |
-| `--desk-unsnap-distance` | `12px` | | | yes |
-| `--desk-drag-threshold` | `4px` | | `8px` | yes |
-| `--desk-touch-target` | `32px` | | `44px` | yes |
-| `--desk-window-radius` | `12px` | `0px` | | no |
-| `--desk-window-shadow` | `var(--shadow-overlay)` | | | no |
-| `--desk-taskbar-surface` | translucent surface | | | no |
-| `--desk-backdrop` | `var(--c-bg)` | | | no |
-| `--desk-default-wallpaper` | `url(/wallpapers/bundled/<name>)` | | | no |
-| `--desk-icon-size` | `48px` | `40px` | | no |
-| `--desk-shortcut-label-shadow` | `0 1px 2px rgb(0 0 0 / 0.6)` | | | no |
-| `--desk-floating-entry-size` | `56px` | | | yes |
-| `--desk-floating-entry-inset-x` | `16px` | | | yes |
-| `--desk-floating-entry-inset-y` | `12px` | | | yes |
-| `--desk-resize-edge` | `8px` | | | no |
-| `--desk-resize-corner` | `16px` | | | no |
-| `--desk-resize-overhang` | `3px` | | | no |
-| `--desk-resize-edge-inset` | `calc(var(--desk-resize-corner) - var(--desk-resize-overhang))` | | | no |
-| `--desk-launcher-menu-width` | `22rem` | `calc(100% - var(--spacing) * 4)` | | no |
+| Token | Default | Touch | Read by `metrics.ts` |
+|---|---|---|---|
+| `--desk-title-bar-height` | `36px` | `44px` | yes |
+| `--desk-taskbar-height` | `48px` | `56px` | yes |
+| `--desk-cell-width` | `96px` | | yes |
+| `--desk-cell-height` | `112px` | | yes |
+| `--desk-grid-inset` | `16px` | | yes |
+| `--desk-window-min-width` | `320px` | | yes |
+| `--desk-window-min-height` | `240px` | | yes |
+| `--desk-title-min-visible` | `120px` | | yes |
+| `--desk-snap-threshold` | `16px` | | yes |
+| `--desk-unsnap-distance` | `12px` | | yes |
+| `--desk-drag-threshold` | `4px` | `8px` | yes |
+| `--desk-touch-target` | `32px` | `44px` | yes |
+| `--desk-window-radius` | `12px` | | no |
+| `--desk-window-shadow` | `var(--shadow-overlay)` | | no |
+| `--desk-taskbar-surface` | translucent surface | | no |
+| `--desk-backdrop` | `var(--c-bg)` | | no |
+| `--desk-default-wallpaper` | `url(/wallpapers/bundled/<name>)` | | no |
+| `--desk-icon-size` | `48px` | | no |
+| `--desk-shortcut-label-shadow` | `0 1px 2px rgb(0 0 0 / 0.6)` | | no |
+| `--desk-floating-entry-size` | `56px` | | yes |
+| `--desk-floating-entry-inset-x` | `16px` | | yes |
+| `--desk-floating-entry-inset-y` | `12px` | | yes |
+| `--desk-resize-edge` | `8px` | | no |
+| `--desk-resize-corner` | `16px` | | no |
+| `--desk-resize-overhang` | `3px` | | no |
+| `--desk-resize-edge-inset` | `calc(var(--desk-resize-corner) - var(--desk-resize-overhang))` | | no |
+| `--desk-window-move` | `180ms` | | no |
+| `--desk-window-move-ease` | `cubic-bezier(0.2, 0, 0, 1)` | | no |
+| `--desk-launcher-menu-width` | `22rem` | | no |
 
-The compact breakpoint is `COMPACT_MAX_WIDTH_PX = 700` in `theme/metrics.ts`, applied as `matchMedia("(max-width: 700px)")`; touch is `matchMedia("(pointer: coarse)")`.
+The phone breakpoint is `PHONE_MAX_SHORT_SIDE_PX = 500` and `PHONE_MAX_LONG_SIDE_PX = 1000` in `theme/metrics.ts`, applied to the viewport whichever way round as `matchMedia("(max-width: 500px) and (max-height: 1000px), (max-height: 500px) and (max-width: 1000px)")`, which sets `data-phone`; touch is `matchMedia("(pointer: coarse)")`.
+The phone layout's own tokens (`--desk-phone-*`, and `--desk-toast-gap` and `--desk-toast-radius` for the toasts both layouts draw) are declared on `:root` and read by no behaviour: the bar's controls (`64px` by `42px`), its `48px` pill, and `12px` of padding (above and beside the controls; below them, only the safe-area inset), the sheets' radius and top, the rows and the home grid's tiles.
 The resize handles are strips of `--desk-resize-edge` overhanging the window's border by `--desk-resize-overhang` (so a press just outside the frame still grabs an edge), inset from the corners by `--desk-resize-edge-inset`; the corners are `--desk-resize-corner` squares over the same overhang.
+`--desk-window-move` and `--desk-window-move-ease` time a window's travel to a rectangle the pointer did not move it to (a snap, a `place`, an `open` with `beside`): the window's root transitions over them, a press turns the transition off for its whole length through `data-window-motion="off"` on the desktop's root, and and the transition is declared inside `prefers-reduced-motion: no-preference`, so a platform that does not say motion is welcome gets the arrangement without the travel.
 Colours, type roles, radii, and elevation come from `base.css` and are not repeated here.
 
 ## 12. Selectors shared with tests
@@ -366,7 +421,7 @@ Data attributes, never classes, so restyling cannot break a test:
 | `data-window-frame`, `data-window-content` | the window's clipping frame, and the content box its page is laid over |
 | `data-drag-handle`, `data-resize-edge="n\|s\|e\|w\|ne\|nw\|se\|sw"` | title bar, resize edges |
 | `data-window-control="minimize\|maximize\|restore\|close\|menu"` | the controls |
-| `data-shortcut="<app>:<launch>"`, `data-cell="<column>,<row>"`, `data-connecting="true"` | each shortcut; the last only while its app is unknown because no app list has landed |
+| `data-shortcut="<app>:<launch>"`, `data-cell="<column>,<row>"`, `data-connecting="true"`, `data-lifted="true"` | each shortcut; `data-cell` is the cell it is drawn in, which for the one a drag holds is the cell it would land in rather than the cell its box is still at; `data-connecting` only while its app is unknown because no app list has landed; `data-lifted` only on the one a drag holds |
 | `data-taskbar`, `data-taskbar-entry="<window-id>"`, `data-launcher-field`, `data-launcher-overlay` | the taskbar, the launcher field, and its menu (the overlay's name kept from the tiles) |
 | `data-tray-widget="desktops"`, `data-desktop-switch="<id>"`, `data-tray-widget="presence"`, `data-presence-user="<user-id>"`, `data-presence-self="true"` | the tray; the Presence widget is drawn only while two or more users are connected, and `data-presence-self` marks the viewer's own entry, drawn last |
 | `data-replaced-desktop-notice="<name>"` | the notice that a visitor's desktop was deleted and replaced |
@@ -383,8 +438,15 @@ Data attributes, never classes, so restyling cannot break a test:
 | `data-mood="working\|idle"`, `data-stale="true\|false"` | each avatar image's button |
 | `data-avatar-chooser`, `data-avatar-design="<id>"` | the chooser and its cells |
 | `data-menu-item="float\|move-to-taskbar\|style-plain\|style-avatar\|change-avatar"` | the pinned entry's menu rows |
+| `data-phone-bar`, `data-phone-home`, `data-phone-pill="<window-id>" \| "home"`, `data-phone-count`, `data-phone-new` | the phone's bar, its home button, the pill (naming what it shows), the pill's window count, and plus |
+| `data-phone-sheet="windows" \| "start"`, `data-phone-sheet-scrim` | the phone's sheets, and the scrim under each |
+| `data-phone-window-row="<id>"`, `data-phone-window-close="<id>"`, `data-phone-window-menu="<id>"`, `data-phone-close-all`, `data-phone-window-search` | the windows sheet's rows, their X and kebab, Close all, and the field shown past six windows |
+| `data-phone-start-field` | the start sheet's field |
+| `data-phone-app="<app>"`, `data-phone-home-grid` | the home grid's tiles, and the grid |
+| `data-phone-page-host="<window-id>"` | the area the shown window's page is laid over |
+| `data-toast` | each toast, on both layouts |
 
 ## 13. Where data lives
 
 Unchanged from the workspace app model's section 17: `data/.apps/<name>/` for what an app persists about the user's things (now including `data/.apps/system_interface/wallpapers/` and the registered avatar designs at `data/.apps/system_interface/avatars/catalog.json`), `data/.state/<name>/` for what a program keeps about this machine (the registry, the shell's desktops, placements, clients, each client's window paths, and the avatar selection).
-Also under `data/.state/`: every isolated instance's state at `data/.state/isolated-instances/<name>/` (its pids, ports, logs, `copies/<key>/` for the directories its manifest's preview table names, and `scratch/`), beside a preview's registry copy `<name>-preview.registry.toml`; and the update apply's own files at `data/.state/update-apply/` (its in-flight marker, emergency record, and `snapshots/`, plus `last-good.json` and `rollback-last.log` after an apply run with `--keep-rollback-point`; the workspace app model's section 17 has the detail).
+Also under `data/.state/`: every isolated instance's state at `data/.state/isolated-instances/<name>/` (its pids, ports, logs, `copies/<key>/` for the directories its `--copy` flags or its manifest's preview table name, and `scratch/`), beside a preview's registry copy `<name>-preview.registry.toml`; and the update apply's own files at `data/.state/update-apply/` (its in-flight marker, emergency record, and `snapshots/`, plus `last-good.json` and `rollback-last.log` after an apply run with `--keep-rollback-point`; the workspace app model's section 17 has the detail).

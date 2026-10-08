@@ -43,15 +43,16 @@ Key fields:
   other shell syntax must be wrapped in `bash -c "..."`:
 
   ```ini
-  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/foo/app.toml --url http://localhost:8090 && foo"
+  command=python3 system/services/oom_priority/bin/oom_tag_service.py user bash -c "python3 system/scripts/forward_port.py --manifest system/apps/foo/app.toml --url http://localhost:8090 && exec foo"
   ```
 
   The `python3 system/services/oom_priority/bin/oom_tag_service.py user` prefix is the **OOM band tag**
   (see below) -- keep it as the outermost command, in front of any `bash -c`
   wrapper. `forward_port.py --manifest` reads the app's `app.toml` (its
   registered name, display name, icon, and the supervisord `program` that
-  runs it, which is what lets the workspace offer Stop/Start for the app) and
-  registers the app at `--url`. The manifest's `name` becomes the leading
+  runs it, which is what lets the shell Quit the app, stop it once no window
+  shows it, hold its port while it is stopped, and start it again on the next
+  request) and registers the app at `--url`. The manifest's `name` becomes the leading
   label of the app's origin hostname (`http://<name>.<workspace-host>/`), so
   it must be DNS-safe: lowercase letters/digits with single hyphens
   (underscores are tolerated only for legacy names like `system_interface`),
@@ -89,6 +90,13 @@ Key fields:
   are **not** under `data/`, so they are not backed up. If you omit them,
   supervisord writes AUTO logs into its `childlogdir` (`/var/log/supervisor`)
   instead.
+
+A service that needs a credential the user supplied through the
+`connect-external-service` skill's secret card runs its entry point under
+`python3 system/scripts/with_secrets.py data/.secrets/<name>.env -- <command>`
+inside the `bash -c` string, so the file's variables reach that process and
+nothing else does; the value goes in no config file and no command line, and
+the secrets guard refuses the direct reads of the file it recognises.
 
 Services inherit the agent environment (`MNGR_AGENT_STATE_DIR`,
 `MNGR_HOST_DIR`, `LATCHKEY_*`, ...) from the bootstrap shell

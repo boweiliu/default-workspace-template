@@ -7,9 +7,14 @@
  * empty transcript (a message typed now is held until the agent lands); failed, it shows the
  * reason and a way to try again over the composer, so a message held through the failure is
  * back in it where it can be seen. The transcript takes over when creation completes. A
- * seeded chat (the Mind app's onboarding conversation, continued here) has a transcript from
+ * seeded chat (the Imbue Studio app's onboarding conversation, continued here) has a transcript from
  * the start, so it renders as one through its wait for the first send and its create; only a
  * failed create shows the provisional screen.
+ *
+ * In the phone layout (``isCompact``) the model menu opens from a settings button at the
+ * composer's left rather than the chip in the under-bar, and carries the Source view switch as
+ * one of its rows; the under-bar keeps the connecting and fast-mode notices, and the switch while
+ * the terminal face is up, since the composer and its button turn over with the chat face.
  */
 
 import m from "mithril";
@@ -39,6 +44,7 @@ import {
   addChatsUpdatedListener,
   getChatById,
   getProvisionalChat,
+  hasReceivedChatList,
   launchChat,
   removeChatsUpdatedListener,
 } from "../models/Chats";
@@ -110,8 +116,9 @@ export function isSeededTranscriptShown(provisional: ProvisionalChat | null): bo
   return provisional !== null && provisional.is_seeded && provisional.phase !== "failed";
 }
 
-export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }> {
+export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; isCompact?: boolean }> {
   let currentChatId: string | null = null;
+  let panelElement: HTMLElement | null = null;
 
   // Whether the page's frame is on screen. The shell keeps a minimized window's frame mounted
   // and mithril redraws globally, so the component keeps running while hidden against an
@@ -182,6 +189,17 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
   // rather than global: two chats open side by side turn over independently.
   let isFlipped = false;
   let hasEverFlipped = false;
+
+  function toggleSourceView(): void {
+    isFlipped = !isFlipped;
+    // Turning the card over is the user navigating TO the terminal, so the host grants it
+    // focus -- the embedded ttyd client never takes focus on its own (see terminalFocus.ts).
+    // Redraw first so a first flip has mounted the back face before the ask.
+    if (isFlipped) {
+      m.redraw.sync();
+      requestFrameFocus(panelElement?.querySelector(".chat-flip-back") ?? null);
+    }
+  }
 
   function isFileDrag(event: DragEvent): boolean {
     const types = event.dataTransfer?.types;
@@ -292,19 +310,19 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
       });
   }
 
-  /** The page of a chat whose create is running: an empty transcript with the composer's held
-   *  "Sending" bubbles (a message typed now waits for the agent to land, see MessageInput), so
-   *  the message is visibly waiting rather than gone. */
+  /** A conversation with nothing in it yet -- being created, loading, or empty -- drawn as the
+   *  transcript's own empty list with no placeholder text, so a new chat is ready to type into
+   *  at once and moving between these states never changes the page. ``stateClass`` names the
+   *  state for tests and styles; ``nodes`` are messages already on their way (a send typed while
+   *  the chat is created), laid out where the transcript will put them. */
+  function renderEmptyConversation(stateClass: string, nodes: m.Children[]): m.Vnode {
+    return m("div", { class: `message-list-wrapper ${stateClass}` }, [m("div", { class: MESSAGE_LIST_CLASS }, nodes)]);
+  }
+
+  /** The page of a chat whose create is running. A message typed now waits for the agent to
+   *  land (see MessageInput). */
   function renderStarting(chatId: string): m.Vnode {
-    const outgoing = renderOutgoingMessages(chatId);
-    return m("div", { class: "message-list-creating flex flex-col h-full" }, [
-      m(
-        "div",
-        { class: "flex-1 flex items-center justify-center" },
-        m("p", { class: "text-secondary" }, "Starting the chat..."),
-      ),
-      outgoing.length > 0 ? m("div", { class: MESSAGE_LIST_CLASS }, outgoing) : null,
-    ]);
+    return renderEmptyConversation("message-list-creating", renderOutgoingMessages(chatId));
   }
 
   /** The page of a chat that is not an agent yet, by its phase. */
@@ -319,11 +337,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
     if (provisional.phase === "awaiting_first_send") {
       // A chat with no seed that waits for its first send (an intake that could not launch it at once,
       // post-launch-paths plan section 3.7): an empty conversation over the composer, whose send launches it.
-      return m(
-        "div",
-        { class: "message-list-empty message-list-awaiting flex items-center justify-center h-full" },
-        m("p", { class: "text-secondary" }, "Send a message to start this chat."),
-      );
+      return renderEmptyConversation("message-list-empty message-list-awaiting", renderOutgoingMessages(chatId));
     }
     return m(
       "div",
@@ -470,6 +484,14 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
     });
   }
 
+  /** Whether a transcript 404 is the answer rather than a race. A new chat's page can load before
+   *  the chat app has told it about the chat, and the reload that follows the chat coming up is
+   *  still in flight when it does: both are the chat not known yet, which reads as an empty chat.
+   *  Only a chat the app lists (or has no record of) with no retry pending has no conversation. */
+  function isNotFoundSettled(chatId: string): boolean {
+    return hasReceivedChatList() && !(notFoundRetryInFlight && currentChatId === chatId);
+  }
+
   function renderMessages(chatId: string): m.Vnode {
     // A provisional record short-circuits the load: there is no agent to read yet. A load that
     // raced ahead of the record (a page opened before the socket replayed it) 404s and latches
@@ -489,6 +511,9 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
       manageStreamConnection(chatId);
     }
 
+    if (isConversationNotFound(chatId) && !isNotFoundSettled(chatId)) {
+      return renderEmptyConversation("message-list-loading", []);
+    }
     if (isConversationNotFound(chatId)) {
       fetchScreenCapture(chatId);
       return m("div", { class: "message-list-not-found flex flex-col items-center justify-center h-full gap-4 p-8" }, [
@@ -525,14 +550,10 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
     // error state as soon as any reload succeeds -- the window menu's Refresh or the
     // stream's background reconnect, neither of which goes through loadChat.
     // The phase, not just the error: a load that is in flight -- including a retry -- must not
-    // fall through to "No events yet for this agent.", which claims an answer it does not have.
+    // fall through to the empty state, which claims an answer it does not have.
     const load = getConversationLoadState(chatId);
     if (hasNothingToShow && load.phase === "loading") {
-      return m(
-        "div",
-        { class: "message-list-loading flex items-center justify-center h-full" },
-        m("p", { class: "text-secondary" }, "Loading events..."),
-      );
+      return renderEmptyConversation("message-list-loading", []);
     }
 
     if (hasNothingToShow && load.error !== null) {
@@ -567,14 +588,8 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
     const events = getEventsForChat(chatId);
 
     if (events.length === 0) {
-      // No transcript yet -- but render any queued or in-flight message rather
-      // than the empty-state placeholder (see tailNodes above).
       if (tailNodes.length === 0) {
-        return m(
-          "div",
-          { class: "message-list-empty flex items-center justify-center h-full" },
-          m("p", { class: "text-secondary" }, "No events yet for this agent."),
-        );
+        return renderEmptyConversation("message-list-empty", []);
       }
       return m("div", { class: "message-list-wrapper" }, [
         failedReloadNotice,
@@ -667,6 +682,11 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
 
     view(vnode) {
       const chatId = vnode.attrs.chatId;
+      const isCompact = vnode.attrs.isCompact === true;
+      // The terminal back face attaches to the agent's own tmux session, which a chat still being
+      // created does not have: without a name the terminal dispatch attaches to whatever session
+      // it finds, so the flip waits for the agent to register.
+      const isListed = getChatById(chatId) !== undefined;
       // The shell's live visibility for this frame, fed in by the page. Read
       // it before building content / running lifecycle hooks so the scroll hooks
       // (which read this closure variable) see the current value. Undefined for a
@@ -688,6 +708,9 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
         "div",
         {
           class: "chat-panel flex flex-col h-full relative",
+          oncreate: (panelVnode: m.VnodeDOM) => {
+            panelElement = panelVnode.dom as HTMLElement;
+          },
           ondragenter: acceptsFileDrops ? handleDragEnter : undefined,
           ondragover: acceptsFileDrops ? handleDragOver : undefined,
           ondragleave: acceptsFileDrops ? handleDragLeave : undefined,
@@ -733,7 +756,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
                 m(
                   "main",
                   {
-                    class: "app-content transcript-scroll flex-1 overflow-y-auto bg-chat px-8 py-6",
+                    class: `app-content transcript-scroll flex-1 overflow-y-auto bg-chat ${isCompact ? "px-4 py-4" : "px-8 py-6"}`,
                     // Focusable so native keyboard scrolling (PageUp/Down, Home/End)
                     // works; the engine's listeners classify the input source.
                     tabindex: 0,
@@ -764,7 +787,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
               ]),
               // Present for every chat, a create in flight included: a message typed while the
               // chat is being created is held and delivered when it lands.
-              m("footer", { class: "app-footer shrink-0 bg-chat px-8" }, [
+              m("footer", { class: `app-footer shrink-0 bg-chat ${isCompact ? "px-3" : "px-8"}` }, [
                 m(EmptySlot, { name: "conversation-before-input" }),
                 // The switch dialog a provider choice opens (spec 5.1), and why a switch
                 // failed, with a retry on any account (spec 5.10).
@@ -776,7 +799,17 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
                       chatId,
                       events: getEventsForChat(chatId),
                     }),
-                m(MessageInput, { chatId }),
+                m(MessageInput, {
+                  chatId,
+                  leading:
+                    isCompact && isListed
+                      ? m(ModelProviderMenu, {
+                          chatId,
+                          isCompact: true,
+                          sourceView: { on: isFlipped, onToggle: toggleSourceView },
+                        })
+                      : undefined,
+                }),
                 // The under-bar is a sibling of the whole flip card, not part of this face: on
                 // a face it would rotate away with the face its own switch turns, and the flip
                 // would be one-way.
@@ -790,42 +823,27 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean }
           // on the composer and sits evenly in its own band.
           m(
             "div",
-            { class: "chat-under-bar shrink-0 bg-chat px-8 pb-2" },
+            { class: `chat-under-bar shrink-0 bg-chat pb-2 ${isCompact ? "px-3" : "px-8"}` },
             m(
               "div",
               {
                 // Same max-width as the composer card above it; relative as
-                // the containing block for centered overlays.
+                // the containing block for centered overlays. As tall as the model chip
+                // whether or not anything in it has rendered yet, so the composer never moves;
+                // on a phone, where the chip is the settings button, only as tall as a notice in it.
                 class:
-                  "composer-under-bar relative mx-auto mt-2 flex w-full " +
+                  `composer-under-bar relative mx-auto mt-2 flex w-full ${isCompact ? "" : "min-h-[30px]"} ` +
                   "max-w-[calc(var(--width-message-column)+2*var(--radius-xl))] items-center gap-2",
               },
               [
-                m(ModelProviderMenu, { chatId }),
+                // On a phone a chat with no agent yet still names its account here: it has no menu to open.
+                isCompact && isListed ? null : m(ModelProviderMenu, { chatId }),
                 m(ConnectingIndicator, { chatId }),
                 m(FastModeNotice, { chatId }),
-                // The terminal back face attaches to the agent's own tmux session, which
-                // a chat still being created does not have: without a name the terminal
-                // dispatch attaches to whatever session it finds, so the flip waits for
-                // the agent to register.
-                getChatById(chatId) === undefined
+                !isListed || (isCompact && !isFlipped)
                   ? null
                   : m("div", { class: "composer-under-bar-actions ml-auto flex items-center gap-0.5" }, [
-                      m(TerminalViewToggle, {
-                        on: isFlipped,
-                        onToggle: (event: Event) => {
-                          isFlipped = !isFlipped;
-                          // Turning the card over is the user navigating TO the terminal,
-                          // so the host grants it focus -- the embedded ttyd client never
-                          // takes focus on its own (see terminalFocus.ts). Redraw first so
-                          // a first flip has mounted the back face before the ask.
-                          if (isFlipped) {
-                            const panel = (event.currentTarget as HTMLElement | null)?.closest?.(".chat-panel");
-                            m.redraw.sync();
-                            requestFrameFocus(panel?.querySelector?.(".chat-flip-back") ?? null);
-                          }
-                        },
-                      }),
+                      m(TerminalViewToggle, { on: isFlipped, onToggle: toggleSourceView }),
                     ]),
               ],
             ),

@@ -11,7 +11,7 @@ contract; everything about chats lives in this app's own pages and routes.
 
 The `chat` program (declared in `system/supervisord.conf.d/chat.conf`) runs
 `chat-app`, the console script of this package, from its own uv tool environment
-(installed by `system/scripts/build_workspace.sh` with the mngr harness plugins
+(installed by `system/scripts/build_workspace.sh` with the mngr plugins
 `system/config/mngr_plugins.toml` assigns to `chat`). At startup it registers
 its manifest and port 8010 through `system/scripts/forward_port.py`, follows
 the agent lifecycle event file the workspace's `agent-observer` program (`mngr
@@ -22,7 +22,18 @@ observe`, its own supervised service) writes, and serves:
   ordered by recency, with rename, stop and restart, and delete) beside an inner
   frame of the selected chat's page. The selection is the `chat` query parameter,
   so the root's path is `/?chat=<chat-id>`, which it reports to the shell with the
-  chat's title. The page is pure: nothing is created or sent by loading it. An
+  chat's title. Loading the page sends and writes nothing. With nothing selected it
+  shows the most recent chat, and with no chats one awaiting its first send
+  (`POST /api/chats/awaiting`, held in memory until that send launches it). At
+  700px wide or less (a phone, or a narrow window) the root takes its phone
+  layout (`frontend/src/compactLayout.ts`, docs/system/blueprint/desktop-interface/plan-phone-interface.md):
+  a 44px header with a list button, the chat's title and a kebab of its verbs,
+  and the list in a drawer over the chat, each row carrying a kebab with the
+  right-click menu's verbs; with nothing selected the drawer is open over an
+  empty chat. The root tells each chat page it frames which layout it is in, and
+  a page in the phone layout opens its model menu from a settings button at the
+  composer's left, with submenus sliding over the card, effort as segments, and
+  the Source view switch as a row. An
   `intake` query parameter names a pending intake (below) the root applies once
   (`docs/system/blueprint/post-launch-paths/`): the text goes into a composer,
   unsent, a chat is picked from a picker the root opens over the list, or a chat
@@ -40,8 +51,11 @@ observe`, its own supervised service) writes, and serves:
 - Every `/api/chats/<chat-id>/...` route (events, streams, sends, model choice,
   the queue actions, presence, destroy, rename, start, stop; the subagent reads under
   `/api/chats/<chat-id>/agents/<agent-id>/subagents/<session-id>/`),
-  `/api/chats/create`, `/api/chats`, `/api/harnesses`, `/api/uploads`,
-  `/api/claude-auth`, `/api/accounts`, `/api/lanes`, and `/api/latchkey`.
+  `/api/chats/create`, `/api/chats/awaiting` (the chat an empty chat list opens on), `/api/chats`,
+  `/api/harnesses`, `/api/uploads`,
+  `/api/claude-auth`, `/api/accounts`, `/api/lanes`, `/api/latchkey`, and
+  `/api/secret-requests` (an agent's `request_secret.py` files a secret request;
+  the transcript's secret card submits, declines, and re-reads it).
   `/api/agents` is the plain listing of every mngr agent (the loopback callers'
   view of background agents too); the older `/api/agents/<id>/...` spellings of
   the per-chat routes are gone.
@@ -50,6 +64,14 @@ observe`, its own supervised service) writes, and serves:
   its last message as `last_messaged_at`, which the chat root's list orders on)
   and the provisional-chat events (`provisional_chat_created`,
   `provisional_chat_completed`).
+- `POST /api/focus-chat`: what the shell posts for the Imbue Studio app's `minds:focus-chat` (the user opened a
+  chat's notification), since the manifest registers the type under `[[message_handlers]]`. It takes the
+  message's `chatId` and the `client_id` the shell adds, and asks the shell's `show` op
+  (`focus_chat.py`) to put the chat root with the chat selected (`/?chat=<chat-id>`) on that client's
+  screen, the chat's own page (`/<chat-id>`) counting as already showing it and a subagent view not,
+  and a chat root window (`/`) on screen allowed to be moved to it. The shell picks the window. It
+  answers the shell's `shown` and window id; `400` for a chat id of the wrong shape, `403` in a
+  secondary chat, and `502` when the shell cannot be reached, refuses, or answers something else.
 - `/api/health`: `{"status", "is_frontend_built", "agent_events"}`, the probe
   the update apply polls on the `--preflight` boot and on every critical app
   after the restart. `agent_events` (`{"is_stream_healthy", "detail"}`) says
@@ -71,9 +93,12 @@ serving its last known list and reports degraded; the returning observer's
 opening snapshot replaces the folded view and the health recovers.
 
 The chat page talks to the shell only through the browser-side contract
-(`shell:open`, `shell:focused`, the handshake); the shell never calls the chat.
+(`shell:open`, `shell:focused`, the handshake); the shell calls the chat only to
+post the messages its manifest registers for (`minds:focus-chat`).
 Sends are reported to the shell's client-activity route (`shell_client.py`) so
-agents can attribute a request to a client. A chat's status (`ChatStatus` in
+agents can attribute a request to a client, and the app asks the shell for
+windows through the one layout client there (`ShellLayoutClient`), which the
+auto-open reactor and the focus-chat route share. A chat's status (`ChatStatus` in
 `primitives.py`: working, idle, attention, stopped, or error) comes from its
 active agent's activity state, a pending permission request, and the lifecycle,
 and rides the `chats_updated` snapshots the chat root's list draws its status
@@ -160,7 +185,12 @@ opens the dialog's rebind variant, whose picker starts from "Keep the current
 model", for changing account and model in one switch. A chat that has had no
 user turn skips the dialog too: it switches at once, with no summary and no
 handoff prompt, since there is nothing to hand over. Only a switch that will
-write a summary asks.
+write a summary asks. A press that lands before a new chat's transcript has
+loaded waits for that load before deciding. The strip, the "Switch and send"
+button and the model bar's "next" mark show only while the next send is what
+carries the switch out: once its message is sent the chip names the target,
+unmarked, until the new agent reports its model, and a failed switch leaves it
+on the agent the chat still runs on.
 While the chat converges the held messages render from the snapshot's
 `handoff.held_sends` (the message the user switched with stands down once the
 `agent_switch` marker carrying it is on the transcript, where it renders as the
@@ -190,7 +220,9 @@ from the agent's terminal.
 
 The send route is also how anything inside the workspace messages a chat:
 `system/scripts/message_chat.py` posts to it by chat id (the browser app's
-wake-ups, a lead's replies to a worker, the automation runner) and falls back
+wake-ups, a lead's replies to a worker, the automation runner, and the
+`<background-task-report>` that `system/scripts/run_in_background.py` sends when
+a command it ran exits, which the page shows as a one-line notice) and falls back
 to `mngr message` only when the chat app cannot be reached or does not know the
 chat. A send that names no client (no `client_id` or `desktop_id`) posts no
 client-activity report. The route answers 503 until
@@ -222,8 +254,23 @@ or a draft into a new chat, mints an unseeded provisional chat in the
 restart of this app drops it); its page shows an empty conversation over the
 composer, and its first send launches it as a seeded chat's does.
 
+An element reference (the right-click menu's description of an element,
+`docs/system/blueprint/element-reference-menu/`) enters a composer as an
+attachment: the reference travels as a fenced `json` block in a draft's text
+until it reaches a chat, and `models/elementReferences.ts` takes each block out
+wherever a draft enters a composer (`prependToComposer`: the root applying a
+pending intake or drafting from its rail, a chat page drafting from its own menu)
+and uploads it as a `REF-<id>.json` file through the ordinary `/api/uploads`
+path, so the composer shows a chip and the sent message names the file on its
+"See attachment here:" line. Ready attachments are persisted to localStorage
+beside the draft text, so a chip survives a reload and a page finds what the
+root staged for it before it loaded. Every chat page and the root draw the
+element context menu; a chat page drafts into its own composer, the root into
+the selected chat's (else through the shell), and a sub-agent view through the
+shell, its `shell:draft-text` relayed by the root.
+
 The create route is likewise how a chat is made from outside the chat page:
-`message_chat.py --create` posts to `/api/chats/create` (the Minds app's assist
+`message_chat.py --create` posts to `/api/chats/create` (the Imbue Studio app's assist
 and update chats go through it, run inside the workspace by `mngr exec`). Beside
 `name`, `account_id`, and `message`, the request takes `labels` for the chat's
 agent (`auto_open=true` has the shell surface its window; the labels the app sets
@@ -240,7 +287,7 @@ the field it does not know (a workspace that has taken a template update and has
 not restarted its chat app yet).
 
 A chat can also start from a conversation that happened before the workspace
-existed. `POST /api/chats/seed` (`chat_seed.py`; the Mind app runs
+existed. `POST /api/chats/seed` (`chat_seed.py`; the Imbue Studio app runs
 `system/scripts/seed_welcome_chat.py` through `mngr exec` the moment a
 workspace is ready) takes a title and the turns of the onboarding conversation
 and opens a chat on them: the turns are written as the chat's first segment
@@ -262,22 +309,53 @@ out as typed, since a harness runs a command only when the slash leads the
 message. The seed survives a restart of this app because
 the record does; discarding the chat before its first send drops both.
 
-Every chat that starts with no message is greeted: the `welcome` create
-template (`.mngr/settings.toml`) sends `/welcome`, and the skill varies what it
-says by how many times it has run (`system/scripts/welcome_count.py`). Fast mode
-is a per-chat setting with three modes (`chat_fast_mode.py`, kept in the chat's
-folder as `fast_mode.json`, `GET`/`PUT /api/chats/<chat-id>/fast-mode`):
+A chat that starts with no message sends nothing and waits for the user's
+first one. Fast mode is a per-chat setting with three modes
+(`chat_fast_mode.py`, kept in the chat's folder as `fast_mode.json`,
+`GET`/`PUT /api/chats/<chat-id>/fast-mode`):
 **off** (standard speed throughout), **auto** (fast for the first
 `fast_mode_turn_limit` of the user's turns, then standard speed) and **on**
 (fast throughout). A new chat starts in the workspace's default mode
 (`fast_mode_default` in `GET`/`PUT /api/settings`, `chat_settings.py`, stored
-at `data/.apps/chat/settings.json`; auto with a limit of 5 unless changed), and
+at `data/.apps/chat/settings.json`; auto with a limit of 2 unless changed), and
 a chat whose mode calls for it launches through the `fast` create template, a
 handoff's successor included. The model picker's fast row states the chat's
 mode and opens a submenu where the mode, auto's turn limit and the default for
 new chats are set; `/fast on` and `/fast off` typed in the composer choose the
 mode too. The first time auto switches a chat in a workspace, a one-time notice
 over the model bar explains it.
+
+## Chat names
+
+A new chat is minted as "Chat N". Its first message is sent, in the background
+and outside the chat, to the cheapest model the chat's account offers
+(`chat_naming.py`, through the harness's `OneShotCompletion`, from an empty
+directory with no session kept), and the answer, in the form "Short name: brief
+description", renames the chat the way the rail's rename does. Models are named
+by family rather than by id, so a change to a provider's model list moves the
+call to the new model instead of breaking it:
+
+- Claude: `claude -p` with no tools and thinking off, trying the `haiku` alias,
+  then `sonnet`, then the account's default model.
+- Codex: `codex exec`, read-only and ignoring the account's config, on the newest
+  "luna" model in the account's own model list (the sidecar a model probe keeps
+  in the account folder, probed once when there is none) at its lowest reasoning
+  effort; the account's default model when it offers no luna, or refuses it.
+
+The question goes out alongside the send, not after it: the account is known
+from the moment a create starts (`resolve_chat_account_binding`), so a chat still
+coming up is asked about too. The answer is shown in the chat list as soon as it
+arrives (`show_automatic_title`), ahead of the slower `mngr rename` that makes it
+the chat's own name; a rename that does not land takes the shown name back. The
+name is set once and does not follow the chat as its topic drifts. An opening
+with no clear subject ("hi") leaves "Chat N" and the next message is tried, up to
+three messages. Only a chat still wearing a name nobody chose is renamed: exactly
+"Chat N", or a seeded chat's seed title (the Mind app's "Welcome"), named from
+the first message the user sends in it. A name the user or an agent chose is left
+alone. What has been tried is kept in `naming.json` in the chat's folder, so a
+restart neither renames a named chat nor retries past the limit. A harness with
+no `OneShotCompletion` (Pi, Antigravity, OpenCode) keeps the minted name, and a
+secondary chat names nothing.
 
 ## Provider accounts
 
@@ -288,14 +366,23 @@ binds to an account when it is created and moves to another only through a
 switch (a handoff or a rebind, above). A launch that names no account (the
 launcher, a desktop shortcut, `layout.py open chat`) goes to the account the user
 pinned as the default in a chat's provider menu, else to the most recently used
-one; pressing another account in that menu switches the chat to it (through
-the dialog, or at once for a chat with nothing to hand over -- see the switch
-above). `system/scripts/migrate_claude_auth.py` imports this package from
-the root venv.
+one (the account of the latest sign-in, chat create, or switch); pressing
+another account in that menu switches the chat to it (through the dialog, or at
+once for a chat with nothing to hand over -- see the switch above).
+`system/scripts/migrate_claude_auth.py` imports this package from the root venv.
+
+Removing (signing out of) an account deletes its credential files and its index
+row; its chats keep running, since their harness already holds the credential,
+but take no more of the user's messages. The message route and the intake answer
+409 with `kind: account_signed_out` for a chat whose `account` label names an
+account the index no longer has (a send held for a chat already switching is
+still held), and the composer shows "Choose a provider" in place of the input
+until a switch to another account is armed. A notice the chat app delivers for
+the agent's own secret request still goes through.
 
 The same default reaches every `mngr create` in the workspace that names no
 harness and no account -- workers, automations, the caretaker, and the bare
-create the Minds app's chats fall back to on a template whose script has no
+create the Imbue Studio app's chats fall back to on a template whose script has no
 create mode -- through `.mngr/settings.local.toml`, mngr's
 git-ignored local config layer (`create_defaults.py`). The account store writes
 it on every index write and at boot: `[commands.create]` with the default
@@ -310,11 +397,12 @@ removed, and a create in the workspace is then refused by
 entry in `.mngr/settings.toml`) with a message that says to sign in.
 
 A chat created from outside the workspace with an `auto_open` or `assist` label
-(the Mind app's update and help chats) has its window surfaced by this app
-(`auto_open.py`): when the agent appears, the app asks the shell to point this
-app's pinned window (the avatar's chat) at the chat and show it, in every
-connected client (a desktop with no pinned window gets a chat root window opened
-instead), holds the request until a client is connected if none is, and records
+(the Imbue Studio app's update and help chats) has its window surfaced by this app
+(`auto_open.py`): when the agent appears, the app asks the shell's `show` op for
+the chat root on the chat in every connected client, allowing no other window to
+be moved to it, so the shell raises a window already showing the chat, else
+points this app's pinned window (the avatar's chat) at it, else opens a chat root
+window. It holds the request until a client is connected if none is, and records
 the delivery under
 `data/.apps/chat/auto_opened_chats.json` so a restart never re-pops a window.
 The open is held for as long as the chat exists, so a chat started while nobody
@@ -331,8 +419,14 @@ uv run chat-app --no-register
 
 # Tests
 cd system/apps/chat
-uv run pytest
+uv run pytest                   # skips the browser and real_claude tests
+uv run pytest -m ''             # everything, as CI runs it
+uv run pytest --no-cov -m browser   # just the browser tests
 ```
+
+The suite fails any run that covers less than 75% of the app, so a run of only
+some of its tests needs `--no-cov`. A browser test file named without `-m ''`
+or `-m browser` runs nothing: pytest reports "N deselected".
 
 `--no-register` boots the app without re-pointing the live chat row in the
 registry, for a throwaway boot on another port (`CHAT_PORT`).
@@ -351,9 +445,10 @@ agent the live chat tracks, but reconciles no accounts, writes no memory scores,
 runs no automatic compaction, resumes no unfinished switch, opens no windows,
 reports no client activity to the shell, and registers nothing. Sends from it are
 real, but a switch to another account is refused, since it would write the chat's
-record into the scratch copy only. Point `CHAT_DATA_DIR` at a scratch copy of
-`data/.apps/chat/` so its writes (the message stamps, settings, and chat records)
-never land in the live chat's data.
+record into the scratch copy only, and so is an answer to a secret card, since the
+answer belongs to the live chat. Point `CHAT_DATA_DIR` at a scratch copy of
+`data/.apps/chat/` so its writes (the message stamps, settings, chat records, and
+secret requests) never land in the live chat's data.
 
 The frontend lives in `frontend/` and builds into `imbue/chat/static/`; see
 `system/apps/README.md` for the shared frontend library and the npm

@@ -1,7 +1,7 @@
 """Project-specific ratchets confining the chat page's cross-frame messaging to the shared boundaries.
 
 The chat page is an app page: it reaches the shell only through the shared library's
-``app_contract.ts`` and the minds chrome only through its ``embed.ts`` (whose messages the
+``app_contract.ts`` and the Imbue Studio chrome only through its ``embed.ts`` (whose messages the
 shell relays). Nothing in this frontend touches ``postMessage`` or registers a ``message``
 listener itself, except the chat root's relay for the frame it nests; any NEW file that does
 fails at once, so the whole message surface stays in the allowlisted files. Lives outside ``test_ratchets.py`` because that file must
@@ -20,13 +20,13 @@ from imbue.imbue_common.ratchet_testing.core import check_regex_ratchet
 
 _FRONTEND_SRC = Path(__file__).parent.parent.parent / "frontend" / "src"
 
-pytestmark = pytest.mark.xdist_group(name="ratchets")
+pytestmark = [pytest.mark.xdist_group(name="ratchets"), pytest.mark.frontend]
 
 _RAW_POST_MESSAGE_RULE = RatchetRuleInfo(
     rule_name="raw postMessage / message-listener usages in the chat frontend",
     rule_description=(
         "Cross-frame messaging must flow through the shared library's boundary modules: the shell "
-        "through app_contract.ts (connectToShell) and the minds chrome through embed.ts "
+        "through app_contract.ts (connectToShell) and the Imbue Studio chrome through embed.ts "
         "(sendToEmbedder / setEmbedderMessageHandler), so the whole message surface stays in "
         "auditable, allowlisted files with each boundary's source checks and payload validation "
         "applied. Do not call postMessage or register 'message' listeners here -- extend a boundary "

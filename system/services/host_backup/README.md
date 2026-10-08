@@ -8,13 +8,72 @@ to a GitHub orphan branch as a fine-grained checkpoint. `host_backup` covers the
 host_dir (code, worktrees, agent state, chat sessions, logs) and pushes to
 an encrypted restic repo on cheaper object storage.
 
+## Slow backups
+
+A backup's time follows how many files and directories restic walks, not how
+many bytes changed. It checks every entry against the previous snapshot, and
+under gVisor each check costs a few hundred microseconds, so a home tree of a
+million entries takes five minutes or more every hour even when only a few
+dozen files changed. A slow backup therefore almost always means a large tree
+that nothing excludes, usually something that can be rebuilt: a cache,
+downloads, extracted archives, clones.
+
+1. Confirm it. A backup that takes longer than `slow_backup_threshold_seconds`
+   (default 300) records a `BACKUP_SLOW` event, at most once a day, carrying
+   `duration_seconds` and restic's counts. Every tick's
+   `RESTIC_BACKUP_SUCCEEDED` event has the same numbers: `duration_seconds`,
+   and restic's `summary` as the last JSON line of `stdout`
+   (`total_files_processed`, `files_new`, `files_changed`, `files_unmodified`).
+   A long duration with nearly every file unmodified means the tree is too big,
+   not that too much changed.
+2. Find the tree. `uv run host-backup-heavy-dirs` (from `/home/user/workspace`)
+   lists the latest snapshot and prints the directories holding at least 2% of
+   its entries, nested under their parents. On a large snapshot it takes a
+   minute or two, so run it in the background and read its output afterwards.
+   It counts what the backup actually held, with every exclude applied.
+3. Exclude what can be rebuilt:
+   - A directory an app owns and can rebuild on demand: the app creates an
+     empty `.nobackup` file in it when it creates the directory. The backup
+     then keeps only that file. This is the fix to make in the app itself; see
+     "Keep rebuildable data out of the backup" in
+     `.agents/shared/worker/references/harden-creation.md`. (`CACHEDIR.TAG` is
+     deliberately not honored: uv writes one into every virtualenv and tool
+     environment, which a restore could not refill.)
+   - Anything else, or until the app is changed: add a pattern to
+     `extra_excludes` in `data/system/backup.toml`, e.g.
+     `extra_excludes = ["**/data/.apps/pr-review/repos"]`. Do not use
+     `excludes` for this: setting it replaces the built-in defaults.
+4. Check the result. Saving `backup.toml` starts a backup at once; its
+   `total_files_processed` should have dropped by the tree's size.
+
+Excluded data is not restored. A restore deletes whatever its snapshot lacks,
+so whoever owns an excluded directory must rebuild it when it is missing.
+
+Old snapshots still hold the excluded tree, and the daily `restic prune` walks
+every tree they hold until they age out (monthly snapshots are kept for two
+years). To drop it from history now, rewrite the snapshots with the same
+pattern. This permanently removes those paths from every backup, so ask the
+user first:
+
+```
+supervisorctl stop host-backup
+set -a; source /home/user/workspace/data/.secrets/restic.env; set +a
+restic rewrite --dry-run --exclude '**/data/.apps/pr-review/repos'
+restic rewrite --forget --exclude '**/data/.apps/pr-review/repos'
+restic prune
+supervisorctl start host-backup
+```
+
+`rewrite` has no counterpart to the `.nobackup` marker, so a marked directory
+is rewritten out of history by its path pattern.
+
 ## Behavior
 
 - Single long-running tick loop run as the `host-backup` supervisord program
   (defined in `system/supervisord.conf.d/host-backup.conf`, started by supervisord after `bootstrap`).
   Restart policy: `autorestart=true`.
-- The repository is created (and keyed) by the minds app, not by
-  host_backup: minds runs `restic init` from outside the workspace -- the
+- The repository is created (and keyed) by Imbue Studio, not by
+  host_backup: Imbue Studio runs `restic init` from outside the workspace -- the
   workspace's own random password is the repository's single key -- and
   injects the resulting `restic.env`. host_backup just backs up to the
   existing repository -- it does not probe-then-init.
@@ -29,8 +88,8 @@ an encrypted restic repo on cheaper object storage.
     `RESTIC_REPOSITORY` (the only source of the repo URL), `RESTIC_PASSWORD`
     (this workspace's repository password), and any backend credentials
     restic reads from the environment (e.g. `AWS_ACCESS_KEY_ID` /
-    `AWS_SECRET_ACCESS_KEY` for an S3/R2 backend). Written only by the minds
-    app (injected whole); a missing file means backups are not configured.
+    `AWS_SECRET_ACCESS_KEY` for an S3/R2 backend). Written only by the Imbue
+    Studio app (injected whole); a missing file means backups are not configured.
     `restic.env` is gitignored (rides nothing). `backup.toml` is *not*
     gitignored (everything under data/ is), so it survives via these restic
     backups themselves when
@@ -75,13 +134,33 @@ an encrypted restic repo on cheaper object storage.
   - `direct`: no snapshot; restic reads `/home/user/.mngr/` directly (plain docker;
     intended for testing).
 - Restic is run with `--exclude` for each entry in `backup.toml`'s
-  `excludes` list (default: `**/.venv`, `**/node_modules`, etc). Rust's
+  `excludes` list (default: `**/.venv`, `**/node_modules`, etc) followed by
+  its `extra_excludes` list (default empty; for adding patterns without
+  restating the defaults), and with `--exclude-if-present .nobackup`, which
+  keeps only the marker file of any directory holding one. Rust's
   regenerable caches (`~/.cargo/registry`, `~/.cargo/git`,
   `~/.rustup/toolchains`, `~/.rustup/downloads`) are excluded by default while
   the user-data parts of those trees (`~/.cargo/bin` binaries, config,
   credentials, rustup's `settings.toml`) ride the backup.
-- After every successful backup, `restic forget --group-by '' --keep-hourly N
-  --keep-daily M --keep-weekly W --keep-monthly O` runs (cheap, index-only).
+- Restic runs from inside the directory it reads and backs up `.`, so each
+  snapshot stores that tree at its root. restic only skips re-reading an
+  unchanged file when the previous snapshot holds it at the same path inside
+  the snapshot, and `outer_trigger` reads every tick from a new timestamped
+  path, so an absolute source would never match and every tick would re-read
+  the whole home tree. `--group-by ''` makes the newest snapshot the parent
+  (the recorded path still changes every tick), and `--ignore-inode` compares
+  files by size and mtime only. A restore reads the tree from `<snapshot>:/`;
+  older snapshots hold it under their recorded absolute path instead.
+- Every restic command runs with `GOMAXPROCS=1` and
+  `RESTIC_READ_CONCURRENCY=1`, so a backup or prune uses one core and reads
+  one file at a time. This is the only lever that works everywhere: gVisor
+  (remote workspaces) ignores `nice`, and rejects `ionice` outright.
+- After every successful backup, `restic forget --group-by '' --keep-within 1h
+  --keep-hourly N --keep-daily M --keep-weekly W --keep-monthly O` runs
+  (cheap, index-only). `--keep-within 1h` keeps every snapshot taken within an
+  hour of the newest, so an extra tick in the same hour (a service restart, a
+  changed `restic.env`, a manual backup) cannot thin away a snapshot that a
+  user may be restoring at that moment.
   Grouping is disabled because restic applies the keep-* policy per group and
   its default grouping (`host,paths`) would put every snapshot in a group of
   its own -- `outer_trigger` reads each tick from a uniquely-named snapshot
@@ -97,11 +176,14 @@ an encrypted restic repo on cheaper object storage.
 - A hard `minimum_backup_gap_seconds` (default 60) gap is enforced between
   successive backup attempts, so a config that's being mutated constantly
   cannot spam restic / the error log.
-- Stale-lock recovery: a `restic backup` blocked by an existing repository
-  lock (e.g. an exclusive lock left by a dead PID from a prior container
-  incarnation) triggers `restic unlock` -- which removes only *stale* locks,
-  never one a live process holds -- and one retry. Without this, a single
-  stale lock would fail every tick indefinitely.
+- Stale-lock recovery: a `restic backup`, `forget` (retention or restore-marker
+  age-out) or `prune` blocked by an existing repository lock triggers
+  `restic unlock` -- which removes only *stale* locks, never one a live process
+  holds -- and one retry. `forget` and `prune` need an exclusive lock, which
+  restic refuses while any other lock exists, so the non-exclusive lock a
+  backup killed with its container leaves behind blocks them while new backups
+  still succeed. Without this, a single stale lock would fail the blocked step
+  on every tick indefinitely.
 - Repeated-failure escalation: consecutive failed ticks are counted (reset on
   any success). Once the count reaches a threshold (3), each failing tick also
   emits a `backup_repeatedly_failing` event and logs at error level, so a
@@ -154,6 +236,9 @@ Structured events at `$MNGR_AGENT_STATE_DIR/events/backup/events.jsonl`:
   snapshot -- `outer_trigger` may emit several per tick when it sweeps leftovers)
 - `restic_backup_succeeded`, `restic_backup_failed`
 - `backup_repeatedly_failing` (escalation alarm after N consecutive failures)
+- `backup_slow` (a backup took longer than `slow_backup_threshold_seconds`;
+  at most once a day, gated by `data/.state/last-slow-backup-notice`; see
+  "Slow backups")
 - `forget_completed`, `prune_completed`, `prune_skipped`
 - `config_reloaded`
 - `tick_skipped_due_to_missing_secrets`, `tick_error`
@@ -173,8 +258,8 @@ log stays bounded. Rotating only there keeps each tick's events in one file.
 
 ## First-run setup
 
-In the minds app the whole `data/.secrets/restic.env` is written for you
-when you pick a backup provider on the create form -- minds initializes the
+In the Imbue Studio app the whole `data/.secrets/restic.env` is written for you
+when you pick a backup provider on the create form -- Imbue Studio initializes the
 repository (`restic init`, keyed solely by the workspace's own random
 password) from outside the workspace and injects the file. To configure
 backups by hand instead, populate
@@ -184,19 +269,19 @@ credentials (e.g. R2 access keys), and a `RESTIC_PASSWORD`, and initialize
 the repository yourself (`restic init`) before the first tick -- host_backup
 does not create the repository.
 
-## Stable contract (minds backup-service updates)
+## Stable contract (Imbue Studio backup-service updates)
 
-The minds desktop app can inject a newer version of this service into a
+The Imbue Studio desktop app can inject a newer version of this service into a
 running workspace by checking out `system/services/host_backup/**` at the `minds-v<X>`
 tag matching the app version, committing it with the subject
 `backup-update: minds-v<X>` (a convention like `update-self:` -- tools that
 classify built-in vs. user code match on it), running `uv sync`, and
-restarting the `host-backup` supervisord program. Tags are fetched from a
-minds-owned `official` git remote that always points at the canonical
+restarting the `host-backup` supervisord program. Tags are fetched from an
+`official` git remote owned by Imbue Studio that always points at the canonical
 template repository (`https://github.com/imbue-ai/default-workspace-template.git`);
-minds creates or repoints that remote idempotently, and the `upstream` remote
+Imbue Studio creates or repoints that remote idempotently, and the `upstream` remote
 name stays reserved for the update-self machinery. Drift *detection* compares
-against a fixed minimum required tag (bumped by minds only when a newer
+against a fixed minimum required tag (bumped by Imbue Studio only when a newer
 service is actually required), so a workspace at or above the minimum is
 never flagged even when the app is newer. For that mechanism to stay sound,
 the following are stable contracts that must NOT be changed by edits to this
@@ -219,5 +304,5 @@ Out of scope for v1. To restore manually:
 ```
 set -a; source /home/user/workspace/data/.secrets/restic.env; set +a
 restic snapshots
-restic restore <snapshot_id> --target /tmp/restored
+restic restore <snapshot_id> --target /var/tmp/restored
 ```

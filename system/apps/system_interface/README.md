@@ -30,7 +30,8 @@ format. In brief:
   the whole of what the shell knows about what a window shows.
 - A **placement** is where one client keeps one window: its frame in fractions
   of the backdrop, whether it is snapped or maximized, whether it is
-  minimized; the order is the stack. A **client** is one browser context,
+  minimized, whether it is pulled out into a desktop window of the Imbue Studio app's
+  own; the order is the stack. A **client** is one browser context,
   identified by a stored id, with an active desktop. Truth is shared,
   arrangement is scoped.
 - A **shortcut** is an icon on a desktop's backdrop that runs one app's launch
@@ -49,23 +50,33 @@ supervisord from the repo root) listens on `http://127.0.0.1:8000` and serves:
   `imbue/system_interface/static/`; `/assets/<path>` for its bundle.
 - `/api/health`: `{"status", "is_frontend_built"}`, the probe the update
   apply and the preview flow poll.
-- `/_static/app_contract.js`: the browser-side contract module (source in
-  `system/libs/workspace_ui/src/app_contract.ts`), built into this app's static
-  output; every app serves that same file from its own origin, since a
-  cross-origin module import carries no cookie and the forwarder refuses it.
+- `/_static/app_contract.js` and `/_static/context_menu.js`: the browser-side
+  contract module and the element context menu module (sources in
+  `system/libs/workspace_ui/src/app_contract.ts` and `context_menu.ts`), built
+  into this app's static output; every app serves those same files from its
+  own origin, since a cross-origin module import carries no cookie and the
+  forwarder refuses it. The desktop's own chrome draws the element menu too: a
+  right-click the views leave alone opens it, and the entry, shortcut, and
+  desktop menus end with its reference rows
+  (`docs/system/blueprint/element-reference-menu/`).
 - The shell routes of contracts sections 5 and 8: desktops (`/api/desktops`,
   `.../<id>/settings|wallpaper|delete|shortcuts|shortcuts/move|shortcuts/remove`),
   windows (`/api/desktops/<id>/windows`, `.../windows/<window>/close|location`),
   placements (`/api/placements/<desktop>`), wallpapers (`/api/wallpapers`,
-  `/wallpapers/<kind>/<name>`), the per-app Stop and Start
-  (`/api/apps/<name>/stop|start`), clients (`/api/clients`, and the arrival
+  `/wallpapers/<kind>/<name>`), the per-app Stop, Start, and Quit
+  (`/api/apps/<name>/stop|start|quit`), clients (`/api/clients`, and the arrival
   `/api/clients/<client>/arrive` a page posts first), client activity
   (`/api/client-activity`), the inventory (`/api/inventory`), each client's
   pinned-entry presentation
-  (`/api/clients/<client>/entries/<app>`), the avatar (`/api/avatars`,
-  `/api/avatars/<id>/image.svg|source.svg`, `/api/avatar-selection`; the
-  registration `POST /api/avatars` is loopback-only), and the loopback-only
-  op route (`/api/layout/broadcast`).
+  (`/api/clients/<client>/entries/<app>`), what a client's phone shows
+  (`/api/clients/<client>/shown`), the avatar (`/api/avatars`,
+  `/api/avatars/<id>/image.svg|source.svg|icon.png`, `/api/avatar-selection`; the
+  registration `POST /api/avatars` is loopback-only), the embedder-message
+  relay (`/api/embedder-messages`), and the loopback-only op route
+  (`/api/layout/broadcast`).
+- The home-screen tile: `/apple-touch-icon.png` and `/manifest.webmanifest`,
+  from the selected avatar design and the workspace's name, which also titles
+  the page.
 - Presence (`/api/presence`, `/api/presence/heartbeat`): who is connected
   right now, with their identity and profile (see "Who is here").
 - The WebSocket (`/api/ws`): `apps_updated`, `desktops_updated`,
@@ -75,9 +86,11 @@ supervisord from the repo root) listens on `http://127.0.0.1:8000` and serves:
   report.
 
 Its state lives under `data/.state/system_interface/`: `desktops.json`,
-`placements/<desktop>/<client>.json`, `window_paths/<client>.json` (a client's
-own paths for independent windows), `clients.json`, `users.json` (the desktop
-made for each visiting user), `avatar_selection.json`, and the client-activity
+`default_shortcuts_offered.json` (the apps whose default shortcut the shell
+has offered), `placements/<desktop>/<client>.json`,
+`window_paths/<client>.json` (a client's own paths for independent windows),
+`clients.json`, `users.json` (the desktop made for each visiting user),
+`avatar_selection.json`, and the client-activity
 event log (`events/client_activity/events.jsonl`, what `layout.py context`
 reads). Wallpapers are listed from `static/wallpapers/` (bundled) and
 `data/.apps/system_interface/wallpapers/` (files the user adds); avatar designs
@@ -92,26 +105,34 @@ and the profile cache.
   wallpaper, shortcuts, windows), a `Window` (an app, a path
   under its origin, and the title its page last reported; shared), and per
   client a `DesktopLayout` of `WindowPlacement`s (frame in fractions of the
-  backdrop, state, minimized; the order is the stack).
+  backdrop, state, minimized, detached; the order is the stack).
 - **Pinned windows** (`docs/system/blueprint/pinned-taskbar-entries/`): an
   app whose manifest declares a `[pin]` has exactly one pinned window on
-  every desktop, reconciled on every read after the registry is read and
-  never closed. With the `independent` scope the window's shared path stays
-  its home path and each client's own path and title live in
-  `shell/window_paths.py`'s per-client file. How a client shows the entry
-  (in the bar or floating, plain or as the avatar) is on its client record.
+  every desktop, reconciled on every read after the registry is read and on
+  every change of the registry's rows, and never closed. With the
+  `independent` scope the window's shared path stays its home path and each
+  client's own path and title live in `shell/window_paths.py`'s per-client
+  file. How a client shows the entry (in the bar or floating, plain or as the
+  avatar) is on its client record.
 - **The avatar** (`avatar/`): the bundled and registered designs, the
   workspace's selection, the rendered image routes, and the status reader,
   which folds mngr's agents event file into a mood (working when any agent
   but the services agent is running) and pushes `avatar_status` on change.
 - **State files**: a fresh workspace gets one desktop, `Home`, seeded from
-  every registered app's `default_shortcut` on the first read after the
-  registry has been read. A client record holds the client's active desktop,
-  when it was last seen, and the user it last arrived as; clients unseen for
-  a while are pruned with their placement files. `users.json` holds the
-  desktop made for each visiting user (see "Who is here").
+  every registered app's default shortcut (its `default_shortcut`, else, for
+  an app a program runs, its first launch path taking no text, or its first
+  when every one takes text) on the first read after the registry has been read.
+  An app that registers later has its default shortcut added to every
+  desktop once, on the registry change and on every read;
+  `default_shortcuts_offered.json` lists the apps offered so far, so a
+  shortcut the user removed stays removed. A client record holds the client's
+  active desktop, when it was last seen, and the user it last arrived as;
+  clients unseen for a while are pruned with their placement files.
+  `users.json` holds the desktop made for each visiting user (see "Who is
+  here").
 - **The pure editor** (`shell/desktop_document.py`): every verb (open, close,
-  focus, minimize, restore, maximize, snap, place, the shortcut edits) and
+  focus, minimize, restore, maximize, snap, place, detach, reattach, the
+  shortcut edits) and
   every geometry rule (cascade, fit, snap zones, un-snap, the grid, nearest
   free cell, reading order, shortcut placement) as pure functions over the
   records. The rules the frontend also applies pass the shared vectors in
@@ -125,9 +146,9 @@ and the profile cache.
 - **The op route** (`shell/layout_ops.py`): an op is `{op, args, requester}`,
   the requester `{app, marker}` or null; `self` names the requester's app's
   window whose path carries the marker. The document verbs (`open`, `focus`,
-  `minimize`, `restore`, `maximize`, `place`, `close`, `navigate`, `load`, the
-  shortcut and wallpaper edits) are applied to the files and announced as
-  `desktops_updated` and `placements_updated`; `context` answers every
+  `minimize`, `restore`, `maximize`, `place`, `close`, `navigate`, `load`,
+  `show`, the shortcut and wallpaper edits) are applied to the files and
+  announced as `desktops_updated` and `placements_updated`; `context` answers every
   client's recent activity, folded from the client-activity log and the live
   socket registrations, and `desktops` and `list` answer the inventory
   document (`GET /api/inventory`'s `{desktops, apps, clients}`); only
@@ -146,13 +167,30 @@ modules it shares with the app pages live in `system/libs/workspace_ui`, and
 `src/relay.ts` is the shell's side of the embedder relay (it forwards the
 framed pages' `minds:` messages to the minds chrome unchanged).
 
+A message the Imbue Studio chrome sends the shell's page reaches an app another way
+too: an app whose manifest registers its type (`[[message_handlers]]`) has it
+posted, by the shell's page once (never by a solo page, whose client is the
+main window's) and then by the shell's backend
+(`POST /api/embedder-messages`, `shell/embedder_messages.py`), to the route it
+named, with the client whose page received it. The shell reads no payload. An
+app that wants a window for what it was told asks the op route's `show`, which
+takes the app, a path, the other paths that count as already showing it, and
+the pages whose windows it may point at the path, and picks the window itself:
+one already showing it (switching desktops if it must), else the frontmost
+window on screen at one of those pages (pointed at the path), else the app's
+pinned window, else a new one. A pulled-out window it settles on stays out, and
+the client stays on its desktop: the shell asks that client's page to have the
+Imbue Studio app raise the window's own desktop window. The shell reads no meaning into
+a path's query string.
+
 ### How the shell learns about apps
 
 The **inventory** (`shell/inventory.py`) watches the registry, probes each
 app's liveness (supervisord for rows with a `program`, a TCP connect
 otherwise) on a periodic sweep, and pushes the diffed result to every browser
 as `apps_updated`. That is all it knows of an app: its row (display name,
-icon, launch paths, default shortcut, launcher rank) and whether it is running.
+icon, launch paths, default shortcut, launcher rank, message handlers) and
+whether it is running.
 The page learns the apps from `GET /api/inventory` right after it arrives (one
 read for the desktops, the apps, and the clients), so it never draws a
 shortcut for an app it does not know; the socket's `apps_updated` (sent on
@@ -160,15 +198,42 @@ every connect, and on every change) keeps the list current from then on.
 Until that first read answers, a shortcut whose app the page cannot look up
 draws faint as "Connecting to the workspace..." and running it says the page is
 still connecting; only once the apps are known is a missing app reported as
-not registered.
+not registered. The sweep also compares the registry's mtime with the last
+read's and re-reads on a change, the backstop for a write no watch event
+reported (under gVisor and on lima, a change made outside the sandbox raises no
+inotify event in it).
 
-Stop and Start of the whole app act on its supervisord program and are refused
-for critical apps; the desktop offers them on the window menu
-(`frontend/src/views/WindowMenu.ts`). A framed page reaches the shell only
+Every registry read is also announced to the minds desktop (`app_announcements.py`):
+one `service_registered` event per app whose URL, label, or icon differs from
+the last announced, and one `service_deregistered` per app that left, appended
+to `$MNGR_AGENT_STATE_DIR/events/services/events.jsonl` in the `imbue_common`
+event envelope; the first read after the shell starts announces every app. The
+stream is what `mngr forward` and the desktop resolve app origins from, and
+they replay it whole each time they attach, so a stream over 5 MiB at that
+first read is renamed aside before it and gzipped to
+`events.jsonl.<timestamp>.gz` (a name mngr does not replay) on a thread of its
+own; the newest three archives are kept. Streams that large were left by the
+retired `app-watcher` service, which re-announced every app on each registry
+rewrite. A preview shell announces nothing, since its registry is a copy.
+
+The shell also owns each stoppable app's process (`shell/app_lifecycle.py`,
+the stop-when-no-windows spec): an app whose manifest declares
+`stop_when_no_windows` is stopped once no window on any desktop has shown it
+for a minute (only once someone has visited the workspace, and never while a
+per-app share grant names it, since such a visitor reaches the app without the
+shell: `shell/share_grants.py` reads `data/.secrets/share_grants.toml`), and while any
+stoppable app is stopped the shell holds its port (`shell/port_parking.py`), so
+the first request for the app starts it again and is answered with a loading
+page that reloads into the app. "Quit <app>" on the window menu
+(`frontend/src/views/WindowMenu.ts`) closes every window of the app and stops
+it at once; critical apps offer nothing there and are never stopped or parked.
+The stop and start routes remain for agents. A framed page reaches the shell only
 through the contract module (`shell:open`, `shell:focused`, `shell:location`,
 `shell:capabilities`, `shell:start-with-text`); a page that reports the path it is showing gets it
-stored on its window and reopens there, and one that declared `navigation`
-is sent `shell:navigate` when an agent points its window elsewhere.
+stored on its window and reopens there, one that declared `navigation`
+is sent `shell:navigate` when an agent points its window elsewhere, and one
+that declared `closeChord` keeps its window on the close chord (it is only sent
+`shell:close-request`; the browser closes one of its own tabs that way).
 
 ### Who is here
 
@@ -209,7 +274,7 @@ are in one app, not in the workspace.
 not the header: the shell (`profiles.py`) fetches `GET {broker_url}/users/<user_id>/profile`
 (public; `{"user_id", "display_name", "profile_picture_url"}`) with a 2 second bound,
 where `broker_url` is `SHARE_BROKER_URL` in `data/.secrets/share.env`, the
-file the minds desktop writes while the workspace is shared (read fresh on
+file the Imbue Studio desktop writes while the workspace is shared (read fresh on
 every miss; no file means no profiles). Each answer, and each failure, is
 cached for 5 minutes under `data/.state/presence/profiles/<user_id>.json`, so
 a connector outage costs one failed fetch per user per 5 minutes and no
@@ -247,7 +312,7 @@ opens the avatar chooser. Desktops are created, renamed, recoloured,
 re-wallpapered, and deleted from the switcher; shortcuts are added, moved, and
 removed on the backdrop.
 
-The launcher is a text field ("Start app or send message...") and the menu it
+The launcher is a text field ("Open an app or send a message") and the menu it
 opens above itself (`frontend/src/views/LauncherMenu.ts`, its rows computed by
 `reducers/launcherRows.ts`). The rows: one per launch path of every
 non-internal app, the apps that declare a `launcher_rank` in their manifest
@@ -269,9 +334,31 @@ highlighted; the arrows move it, hovering moves it, Enter or a click runs it,
 and a run closes the menu and clears the field. A framed page starts a chat
 without naming the chat app through `shell:start-with-text`, which the shell
 answers by running the primary free-text row (the Getting Started app's
-intents and templates use it). The shell names no app in any of this. A
+intents and templates use it), and drafts a text into the chat on screen
+through `shell:draft-text`, which the shell answers by running the pinned
+app's launch path with a `draft_param` into the pinned window, as the avatar
+dialog's "Design your own..." does (the element context menu's "Explain..."
+uses it). The shell names no app in any of this. A
 fresh install lands on its `Home` desktop with the Getting Started window
 open, placed there once by that app for the first client that connects.
+
+A refused operation (an open, a close, a shortcut move) says so in a toast at
+the foot of the screen (`views/Toast.ts`) rather than a browser alert.
+
+### The phone layout
+
+A phone-sized viewport (at most 500px one way and 1000px the other) gets the phone layout
+(`frontend/src/views/phone/`, `docs/system/blueprint/desktop-interface/plan-phone-interface.md`)
+over the same store: a bar of home, a pill naming what is on screen, and plus; a
+home grid of the apps on the first desktop's wallpaper; a windows sheet listing
+every desktop's windows, what this phone showed first; and a start sheet that is
+the launcher's menu made tappable. It shows one window at a time and writes no
+placement for it, so a laptop sees nothing move: what it shows is recorded as the
+client's `shown_history`, where a reload lands. Every window it opens goes on the
+first desktop, placed minimized for itself alone, and it follows the `show`,
+`open`, and `focus` ops an agent aims at it. Only the shown window's page and
+the pinned chat window's are mounted (`pages/livePages.ts`, the `shown` mount
+policy).
 
 ## Running and developing
 
@@ -314,7 +401,7 @@ and windows (desktop-interface contracts.md section 8):
 ```bash
 python3 system/scripts/layout.py desktops
 python3 system/scripts/layout.py context
-python3 system/scripts/layout.py open files --path /notes/ --desktop Research
+python3 system/scripts/layout.py open files --path /home/user/workspace/data/notes/ --desktop Research
 python3 system/scripts/layout.py open terminal
 python3 system/scripts/layout.py place self --zone left
 python3 system/scripts/layout.py navigate win-0123456789abcdef /other/
@@ -324,17 +411,22 @@ The document ops are applied by the shell to the desktop and to the target
 client's placements and announced as `desktops_updated` and
 `placements_updated`, so an op lands whether or not a browser is connected.
 Every op targets exactly one client (`--client <id>`, else the client that last
-messaged the requesting agent, else the one connected client; refused with the
-clients listed otherwise); `--desktop` edits that desktop and switches the
-client to it; `open` opens a window at `--path` or at a launch path
+messaged the requesting agent while it is connected, else the one connected
+client (when a client messaged, only if it is the same user's), else that
+messaging client though it is not connected; refused with the clients listed
+otherwise); `--desktop` edits that desktop and switches the client to it; `open`
+opens a window at `--path` or at a launch path
 (`--launch`, `--param`; a bare URL is the browser's `new`; a POST launch path
 is posted the params for the page it answers), minimized with
-`--minimized`, and prints the window's id; an `open` with no client to target
-still writes the window, unplaced. A close is posted to the app's registered
-`window_closed_path`, when it has one, so an app whose resources live as long
-as their windows (the terminal, the browser) can collect at once
-(`docs/system/specs/window-bound-resources.md`). Only `refresh` and the
-interface reload reach the browser as messages. See the `manage-desktop` skill for end-to-end orientation.
+`--minimized` or beside a window (`--beside [window]`, bare the caller's own
+chat), which is moved across only where it has to be and never resized unless
+it is over half the backdrop wide, and prints the window's id;
+an `open` with no client to target still writes the window, unplaced. A close
+is posted to the app's registered `window_closed_path`, when it has one, so an
+app whose resources live as long as their windows (the terminal, the browser)
+can collect at once (`docs/system/specs/window-bound-resources.md`). Only
+`refresh` and the interface reload reach the browser as messages. See the
+`manage-desktop` skill for end-to-end orientation.
 
 ## Updating the running UI
 
@@ -370,7 +462,7 @@ header and checks that the module script comes back as JavaScript). Only then
 does it ask every open view to reload, through
 `system/scripts/refresh_workspace_view.py` (a `reload_system_interface` op on
 the loopback-only op route, which reloads the top-level page and every child
-frame, plus the minds app's own refresh endpoint). On any failure it reverts
+frame, plus the Imbue Studio app's own refresh endpoint). On any failure it reverts
 the merge as a forward revert commit, restores the pre-apply snapshots it took
 before anything destructive ran, and re-confirms health; the exit code reports
 the outcome (`0` applied, `2` rolled back, `3` emergency, `1` precondition).
@@ -498,7 +590,7 @@ this order:
 
 "Affects what this process runs" is the whole design (see `update_staleness.py`
 for the rules and their test table). A bare HEAD comparison would show the
-banner near-permanently -- minds commit their ordinary work in this repo
+banner near-permanently -- agents commit their ordinary work in this repo
 constantly, the apply's own version-history commit lands after the restart, and
 a frontend-only apply rebuilds the served bundle without restarting -- so the
 check diffs the startup HEAD against the current one and reports only when a

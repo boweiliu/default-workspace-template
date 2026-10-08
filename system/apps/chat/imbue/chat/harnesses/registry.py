@@ -39,6 +39,7 @@ from imbue.chat.harnesses.claude.activity import ClaudeActivityTracker
 from imbue.chat.harnesses.claude.model import CLAUDE_CATALOG
 from imbue.chat.harnesses.claude.model import CLAUDE_STATE_RELATIVE_PATH
 from imbue.chat.harnesses.claude.model import ClaudeModelResolver
+from imbue.chat.harnesses.claude.one_shot import ClaudeOneShotCompletion
 from imbue.chat.harnesses.claude.tap import ClaudeAtomicShoulderTap
 from imbue.chat.harnesses.claude.tap import ClaudeInterruptToComposer
 from imbue.chat.harnesses.claude.watcher import ClaudeSessionWatcher
@@ -48,6 +49,7 @@ from imbue.chat.harnesses.codex.activity import CodexActivityTracker
 from imbue.chat.harnesses.codex.model import CODEX_CATALOG
 from imbue.chat.harnesses.codex.model import CODEX_STATE_RELATIVE_PATH
 from imbue.chat.harnesses.codex.model import CodexModelResolver
+from imbue.chat.harnesses.codex.one_shot import CodexOneShotCompletion
 from imbue.chat.harnesses.codex.session import CodexHarnessSession
 from imbue.chat.harnesses.codex.watcher import CodexSessionWatcher
 from imbue.chat.harnesses.codex.watcher import CodexTranscriptLoader
@@ -59,6 +61,7 @@ from imbue.chat.harnesses.model import HarnessCatalog
 from imbue.chat.harnesses.model import HarnessModelResolver
 from imbue.chat.harnesses.model import ModelOption
 from imbue.chat.harnesses.model import model_state_path
+from imbue.chat.harnesses.one_shot import OneShotCompletion
 from imbue.chat.harnesses.opencode.placeholder import OpenCodePlaceholderActivityTracker
 from imbue.chat.harnesses.pi_coding.account_binding import PiAccountBinding
 from imbue.chat.harnesses.pi_coding.activity import PI_STARTUP_READY_MARKER
@@ -118,9 +121,12 @@ class HarnessPopup(FrozenModel):
     trigger: PopupTrigger
     commands: tuple[str, ...] = ()
     action: PopupAction
-    # NOTICE only: replaces the notice's default "send it from the agent's terminal"
-    # body. A harness declares WHY a command is declined; the composer stays free of
-    # per-command branching, which is the whole point of shipping these declaratively.
+    # NOTICE: replaces the notice's default "send it from the agent's terminal" body. A
+    # harness declares WHY a command is declined; the composer stays free of per-command
+    # branching, which is the whole point of shipping these declaratively.
+    # FAST_MODE_LIMIT: a line the turn-limit notice adds after its default body, for a
+    # harness with something more to say about running fast (the frontend never branches
+    # on the harness name for it).
     notice_body: str | None = None
 
 
@@ -134,8 +140,8 @@ class HarnessPopup(FrozenModel):
 # the distinct rationale survives: those tuples are measured-against-a-live-agent lists,
 # and a future re-measure would find these three send fine and drop them.
 # Split by whether the harness HAS a fast mode. /model and /effort are universal, but
-# only claude and codex can launch fast (they are the harnesses declaring
-# ``_FAST_MODE_LIMIT_POPUP``), and their catalogs are the only ones carrying
+# only claude and codex can launch fast (they are the harnesses declaring a
+# ``FAST_MODE_LIMIT`` popup), and their catalogs are the only ones carrying
 # ``supports_fast``. Declining /fast on a harness with no fast mode would point the user at
 # a picker control that is not rendered for it -- worse than letting the text through.
 _MODEL_BAR_COMMANDS: Final[tuple[str, ...]] = ("/model", "/effort")
@@ -252,9 +258,16 @@ _PI_DECLINED_COMMANDS: Final[tuple[str, ...]] = (
 # the harness's agent-auth surface instead of sending.
 _AUTH_COMMANDS: Final[tuple[str, ...]] = ("/login", "/logout")
 
-# The fast-mode turn limit, declared by the harnesses that can launch fast.
+# The fast-mode turn limit, declared by the harnesses that can launch fast. Claude Code
+# bills fast mode through the API even on a subscription; codex's fast tier has no such
+# split, so only claude's notice carries the billing line.
 _FAST_MODE_LIMIT_POPUP: Final[HarnessPopup] = HarnessPopup(
     trigger=PopupTrigger.TURN_CHECK, action=PopupAction.FAST_MODE_LIMIT
+)
+_CLAUDE_FAST_MODE_LIMIT_POPUP: Final[HarnessPopup] = HarnessPopup(
+    trigger=PopupTrigger.TURN_CHECK,
+    action=PopupAction.FAST_MODE_LIMIT,
+    notice_body="Fast mode always uses API billing, not subscription usage.",
 )
 
 
@@ -326,6 +339,9 @@ class HarnessSpec(FrozenModel):
     # the rebind's edit, the sessions a rebind carries along). None for a harness no account can run:
     # no lane signs in to it, so nothing binds one.
     binding_class: type[AccountBinding] | None = None
+    # How the chat app asks this harness one question on a chat's account, outside the chat (a new
+    # chat's name). None for a harness that cannot yet: its chats keep the name they were minted with.
+    one_shot_completion_class: type[OneShotCompletion] | None = None
 
 
 HARNESS_SPECS: Final[dict[HarnessType, HarnessSpec]] = {
@@ -337,6 +353,7 @@ HARNESS_SPECS: Final[dict[HarnessType, HarnessSpec]] = {
         process_started_marker_filename=ClaudeActivityTracker.marker_filename,
         startup_ready_marker=CLAUDE_STARTUP_READY_MARKER,
         binding_class=ClaudeAccountBinding,
+        one_shot_completion_class=ClaudeOneShotCompletion,
         resolver_class=ClaudeModelResolver,
         catalog_factory=lambda: CLAUDE_CATALOG,
         model_state_relative_path=CLAUDE_STATE_RELATIVE_PATH,
@@ -354,7 +371,7 @@ HARNESS_SPECS: Final[dict[HarnessType, HarnessSpec]] = {
                 trigger=PopupTrigger.COMPOSER_COMMAND, commands=_CLAUDE_DECLINED_COMMANDS, action=PopupAction.NOTICE
             ),
             _MODEL_BAR_POPUP_WITH_FAST,
-            _FAST_MODE_LIMIT_POPUP,
+            _CLAUDE_FAST_MODE_LIMIT_POPUP,
         ),
     ),
     HarnessType.CODEX: HarnessSpec(
@@ -370,6 +387,7 @@ HARNESS_SPECS: Final[dict[HarnessType, HarnessSpec]] = {
         tracker_class=CodexActivityTracker,
         process_started_marker_filename=CodexActivityTracker.marker_filename,
         binding_class=CodexAccountBinding,
+        one_shot_completion_class=CodexOneShotCompletion,
         resolver_class=CodexModelResolver,
         catalog_factory=lambda: CODEX_CATALOG,
         model_state_relative_path=CODEX_STATE_RELATIVE_PATH,
@@ -483,7 +501,7 @@ HARNESS_SPECS: Final[dict[HarnessType, HarnessSpec]] = {
         # No `/login` popup, unlike codex and pi: agy has no such command. Signing in is what
         # a bare `agy` does on first launch, which is what the instructions below say.
     ),
-    # The seed segment of a chat the Mind app opened (``chat_seed.py``): turns the app wrote
+    # The seed segment of a chat the Imbue Studio app opened (``chat_seed.py``): turns the app wrote
     # before the workspace had any agent, read like an archived segment. No agent ever runs
     # on it, so every live part is inert: the watcher watches nothing, the tracker reads
     # idle, the resolver switches nothing, and there is no catalog and no popup.
@@ -534,6 +552,12 @@ def build_account_binding(harness: HarnessType) -> AccountBinding:
     if binding_class is None:
         raise BindingError(f"{harness} has no account binding")
     return binding_class()
+
+
+def build_one_shot_completion(harness: HarnessType) -> OneShotCompletion | None:
+    """Build the one-shot completion for ``harness``, or None when the harness registers none."""
+    completion_class = get_harness_spec(harness).one_shot_completion_class
+    return completion_class() if completion_class is not None else None
 
 
 def build_resolver(agent_info: AgentInfo) -> HarnessModelResolver:

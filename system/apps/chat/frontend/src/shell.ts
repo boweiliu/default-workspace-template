@@ -16,6 +16,7 @@ import { connectToShell } from "@imbue/workspace-ui/src/app_contract";
 import type { ShellConnection, ShellHandshake } from "@imbue/workspace-ui/src/app_contract";
 import { currentPresenceState, reportPresence, startPresenceReporting } from "./presence";
 import type { ChatPageEmbedApi } from "./embedApi";
+import { setCompactFromRoot } from "./compactLayout";
 import { rootPathFor } from "./root/selection";
 import { prependToComposer } from "./views/MessageInput";
 
@@ -25,6 +26,12 @@ export function subagentViewPath(key: string): string {
 }
 
 let connection: ShellConnection | null = null;
+let lastHandshake: ShellHandshake | null = null;
+
+/** The shell's last handshake to this page (or the root's, handed down), null before one. */
+export function getShellHandshake(): ShellHandshake | null {
+  return lastHandshake;
+}
 // Whether the shell says this page is on screen: true until told otherwise on a top-level
 // visit, and false from the moment a framed page connects, until the shell says shown.
 let isShown = true;
@@ -62,6 +69,7 @@ export interface ChatShellOptions {
 export function connectChatToShell(chatId: string, options: ChatShellOptions): ShellConnection {
   const { isPresenceReported } = options;
   const onHandshake = (received: ShellHandshake): void => {
+    lastHandshake = received;
     adoptClientIdentity({ clientId: received.clientId, desktopId: received.desktopId });
     // Hidden until the shell says shown: a page can load into a background tab, and open
     // (any client's unexpired report) is what a hidden report keeps.
@@ -88,6 +96,10 @@ export function connectChatToShell(chatId: string, options: ChatShellOptions): S
       shown: onShown,
       hidden: onHidden,
       prependDraft: (text) => prependToComposer(chatId, text),
+      setCompact: (isCompact) => {
+        setCompactFromRoot(isCompact);
+        m.redraw();
+      },
     };
     window.chatPageEmbed = embedApi;
   }

@@ -28,7 +28,7 @@ Users make "creations". There are conventions for the common kinds:
   traffic, so registered app names must be DNS-safe hostname labels
   (lowercase letters/digits with single hyphens, not `localhost`, not
   starting with `host-` or `agent-`).
-- a **skill**: teaches the mind how to do work the user cares about (including
+- a **skill**: teaches the agent how to do work the user cares about (including
   scripts and CLI tools, which ship inside the skill that knows how to use
   them). A skill that is automatically run on a schedule is called an
   "automation" -- the machinery that runs automations lives in
@@ -63,9 +63,8 @@ in that app's folder and is named `<app>-<role>`.
   Python app with a manifest is installed as its own uv tool and is also a
   member of the uv workspace via the `system/apps/*` glob; an app with no
   manifest runs from the root venv)
-- `system/services/` - Standalone background services (`app_watcher/`,
-  `caretaker/`, `share_gateway/`, `host_backup/`, `env_converge/`,
-  `oom_priority/`)
+- `system/services/` - Standalone background services (`caretaker/`,
+  `share_gateway/`, `host_backup/`, `env_converge/`, `oom_priority/`)
 - `system/libs/` - Support libraries, including `bootstrap/` (first-boot
   setup, then launches supervisord to supervise the apps and services),
   `app_manifest/` (the manifest and registry models), and `automations/`
@@ -77,12 +76,53 @@ in that app's folder and is named `<app>-<role>`.
   from mngr (the embed contract and service icons the UI bundles, the style
   guide), fetched at build time from the mngr commit `pyproject.toml` pins.
   mngr itself is installed as packages from that same commit, not vendored.
+  On `main` the pin always names the public mngr mirror. A branch iterating on
+  a paired mngr change may pin the private mngr-internal repo instead; such a
+  build needs a credential, delivered by whoever runs the build to
+  `/run/secrets/mngr_internal_git_token` (a BuildKit secret on docker, an
+  uploaded file on lima/modal) and used by `system/scripts/_mngr_git_auth.sh`
+  around just the commands that fetch mngr. The BuildKit lines that deliver it
+  (`--secret` on the docker create templates, `--mount=type=secret` on two
+  Dockerfile RUNs) exist only with a private pin, since they need `docker buildx`
+  and a public pin must build without it; `system/scripts/set_mngr_pin.py` moves
+  the pin and those lines together and is their only writer. Before such a branch
+  merges, the mngr side exports the branch's public subset to the mirror and the
+  pin moves to that public commit (`just dwt-mngr-pin-export` in the mngr repo):
+  CI's `pin-is-public` job, which `main` requires, refuses a private pin, and a
+  `minds-v*` tag never carries one (`release-pin-gate.yml`).
 - `system/vendor/tk/` - A vendored copy of the
   [tk](https://github.com/wedow/ticket) ticket tracker. The `ticket` script
   (also callable as `tk`) manages tickets stored as markdown. We point
   `TICKETS_DIR` at `data/.tickets/` (set in `.mngr/settings.toml`'s
   `host_env`) so tickets live alongside the rest of the workspace's data
   (covered by the restic host backup).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`. The `test`
+job checks the lockfile, the mngr pin and the frontends on a bare runner. The
+Python suites run in the `test-offload` job, inside the workspace
+image on Modal through [offload](https://github.com/imbue-ai/offload): one
+config per pytest root at the repo root (`offload-modal.toml`,
+`offload-modal-chat.toml`, `offload-modal-system-interface.toml`). The
+checkpoint image is `system/Dockerfile` as shipped, plus a first boot
+(`default-workspace-template-seed`) and `system/scripts/offload_sandbox_init.sh`
+(the Fortress env.d unit and the offload binary); it rebuilds only when one of
+the config's build inputs changes, and every other commit rides it as a thin
+source diff followed by `system/scripts/offload_post_patch.sh`. Inside the
+image any test that skips fails the job
+(`system/libs/pytest_workspace_env`). Coverage for the two app suites is
+measured there and held to each app's floor on the runner.
+
+That job needs two things this repo cannot provide for itself, and skips
+without them: the repository variable `TEST_IN_WORKSPACE_IMAGE=true`
+(unset in a workspace repo made from the template, which then runs the
+Python suites on the bare runner in the `test` job, as fork PRs do), and the
+Modal token, read from Vault through the `dwt_ci_gh` role defined in
+`imbue-ai/vault` (`terraform/github_actions.tf`), which is bound to this
+repository and can read only `mngr/ci/MODAL_TOKEN_ID` and
+`mngr/ci/MODAL_TOKEN_SECRET`. offload records its image cache in git notes
+(`refs/notes/offload-images`), which is why the job has `contents: write`.
 
 ## Create templates
 

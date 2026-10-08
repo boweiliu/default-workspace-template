@@ -15,9 +15,12 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
 from imbue.system_interface.avatar.designs import BUNDLED_DESIGNS
+from imbue.system_interface.avatar.designs import LIVE_DESIGN_ID
+from imbue.system_interface.avatar.designs import LIVE_DESIGN_LABEL
 from imbue.system_interface.avatar.designs import MAX_SVG_BYTES
 from imbue.system_interface.avatar.designs import bundled_design
 from imbue.system_interface.avatar.designs import bundled_design_source
+from imbue.system_interface.avatar.designs import live_design_source
 from imbue.system_interface.avatar.designs import validate_design_source
 from imbue.system_interface.avatar.primitives import DesignId
 from imbue.system_interface.shell.errors import InvalidShellValueError
@@ -25,8 +28,8 @@ from imbue.system_interface.shell.state_files import STATE_FILES_LOCK
 from imbue.system_interface.shell.state_files import read_json_object
 from imbue.system_interface.shell.state_files import write_json_atomic
 
-# Where registered designs live: under the app data directory (the originals are the user's), relative to the
-# workspace root the supervised process runs from.
+# Where registered designs live: under the app data directory (the originals are the user's), named relative to
+# the workspace root ``build_shell_state`` resolves it against.
 DEFAULT_AVATAR_CATALOG_DIRECTORY: Final[Path] = Path("data/.apps/system_interface/avatars")
 CATALOG_FILENAME: Final[str] = "catalog.json"
 CATALOG_FILE_VERSION: Final[int] = 1
@@ -123,8 +126,9 @@ class AvatarCatalogStore(MutableModel):
             return AvatarCatalog()
 
     def entries(self) -> list[DesignListing]:
-        """Every design on offer: the bundled ones, then the registered ones."""
-        listings = [DesignListing(id=design.id, label=design.label, source_path=None) for design in BUNDLED_DESIGNS]
+        """Every design on offer: the character, then the bundled ones, then the registered ones."""
+        listings = [DesignListing(id=LIVE_DESIGN_ID, label=LIVE_DESIGN_LABEL, source_path=None)]
+        listings += [DesignListing(id=design.id, label=design.label, source_path=None) for design in BUNDLED_DESIGNS]
         for registered in self.read().designs:
             listings.append(
                 DesignListing(id=registered.id, label=registered.label, source_path=registered.source_path)
@@ -132,7 +136,10 @@ class AvatarCatalogStore(MutableModel):
         return listings
 
     def source(self, design_id: str) -> str | None:
-        """A design's original markup, or None for an id nothing holds."""
+        """A design's original markup, or None for an id nothing holds. For the character that is the still of
+        its resting pose; the rig that actually draws it lives in the client."""
+        if design_id == LIVE_DESIGN_ID:
+            return live_design_source()
         bundled = bundled_design(design_id)
         if bundled is not None:
             return bundled_design_source(bundled)
@@ -141,6 +148,10 @@ class AvatarCatalogStore(MutableModel):
     def register(self, registration: DesignRegistration) -> None:
         """Add a design, replacing a registered one of the same id (its source and provenance together); a bundled
         id is never replaced and the catalog never grows past its bound."""
+        if registration.id == LIVE_DESIGN_ID:
+            raise InvalidShellValueError(
+                f"design id {str(registration.id)!r} is the workspace's own character and cannot be replaced"
+            )
         if bundled_design(registration.id) is not None:
             raise InvalidShellValueError(f"design id {str(registration.id)!r} is bundled and cannot be replaced")
         with STATE_FILES_LOCK:

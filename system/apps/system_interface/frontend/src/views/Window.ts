@@ -15,9 +15,9 @@
  */
 
 import m from "mithril";
-import { Button } from "@imbue/workspace-ui/src/components/Button";
 import type { PixelRect, ResizeEdge } from "../geometry/frames";
 import { RESIZE_EDGES } from "../geometry/frames";
+import { windowChromeZIndex } from "../geometry/stacking";
 import type { AppRecord, WindowRecord, WindowState } from "../model/records";
 import { rectStyle } from "./pixelStyle";
 import { TitleBar } from "./TitleBar";
@@ -46,22 +46,26 @@ export interface WindowAttrs {
   readonly state: WindowState;
   readonly stackIndex: number;
   readonly isFocused: boolean;
-  readonly isCompact: boolean;
   readonly isTouch: boolean;
   readonly isMenuOpen: boolean;
+  /** Spread onto the maximize control: resting on it opens the window's size menu. */
+  readonly sizeMenuTrigger: m.Attributes;
   /** Whether the shield covers the content: every unfocused window, and every window while a menu or the
    *  launcher is open. */
   readonly isShielded: boolean;
-  /** Offered when the app is stopped and the workspace can start it; null otherwise. */
-  readonly onStartApp: (() => void) | null;
+  /** Whether the app behind the window is stopped and nothing brings it back on a request (a row the workspace
+   *  cannot start: no supervised program, critical, or inside a critical app's program): its page is replaced by
+   *  the stopped placeholder. A stoppable app's window keeps its page, which the shell's parker answers with a
+   *  loading page until the app is up. */
+  readonly isStopped: boolean;
   readonly onRaise: () => void;
   readonly onControl: (control: WindowControl, event: MouseEvent) => void;
   readonly onToggleMaximize: () => void;
 }
 
-/** What a window shows in place of its page while the app behind it is stopped: that it is
- *  stopped, and a Start where the workspace can start it. */
-function stoppedPlaceholder(app: AppRecord | undefined, onStartApp: (() => void) | null): m.Vnode {
+/** What a window shows in place of its page while the app behind it is stopped and the workspace cannot bring
+ *  it back on a request. */
+export function stoppedPlaceholder(app: AppRecord | undefined): m.Vnode {
   const label = app?.display_name ?? "This app";
   const detail = app !== undefined && app.program !== "" ? "stopped" : "not running (managed outside the workspace)";
   return m(
@@ -70,7 +74,6 @@ function stoppedPlaceholder(app: AppRecord | undefined, onStartApp: (() => void)
     [
       m("div", { class: "type-label text-primary" }, label),
       m("div", { class: "text-(length:--font-size-row) text-faint" }, detail),
-      onStartApp === null ? null : m(Button, { extra: "mt-1", onclick: onStartApp }, `Start ${label}`),
     ],
   );
 }
@@ -79,9 +82,8 @@ export function Window(): m.Component<WindowAttrs> {
   return {
     view(vnode) {
       const attrs = vnode.attrs;
-      const { window, app, title, rect, state, stackIndex, isFocused, isCompact, isTouch } = attrs;
-      const isStopped = app !== undefined && !app.is_running;
-      const isResizable = !isCompact && !isTouch;
+      const { window, app, title, rect, state, stackIndex, isFocused, isTouch, isStopped } = attrs;
+      const isResizable = !isTouch;
       return m(
         "div",
         {
@@ -93,8 +95,7 @@ export function Window(): m.Component<WindowAttrs> {
           class: "window absolute",
           style: {
             ...rectStyle(rect),
-            // Interleaved with the pages: this chrome over its own page (2i+1) and every lower window.
-            zIndex: String(2 * stackIndex + 2),
+            zIndex: windowChromeZIndex(stackIndex),
           },
           onpointerdown: () => {
             if (!isFocused) attrs.onRaise();
@@ -105,10 +106,11 @@ export function Window(): m.Component<WindowAttrs> {
             "div",
             {
               "data-window-frame": "",
+              // No border: the shadow is what separates a window from the backdrop, and a line
+              // around it only competes. Focus is the title bar's, which changes colour with it.
               class:
-                "window-frame flex h-full w-full flex-col overflow-hidden rounded-(--desk-window-radius) border " +
-                "shadow-(--desk-window-shadow) " +
-                (isFocused ? "border-default" : "border-subtle"),
+                "window-frame flex h-full w-full flex-col overflow-hidden rounded-(--desk-window-radius) " +
+                "shadow-(--desk-window-shadow)",
             },
             [
               m(TitleBar, {
@@ -116,8 +118,8 @@ export function Window(): m.Component<WindowAttrs> {
                 app,
                 state,
                 isFocused,
-                isCompact,
                 isMenuOpen: attrs.isMenuOpen,
+                sizeMenuTrigger: attrs.sizeMenuTrigger,
                 onControl: attrs.onControl,
                 onDoubleClick: attrs.onToggleMaximize,
               }),
@@ -131,15 +133,17 @@ export function Window(): m.Component<WindowAttrs> {
                   class: "window-content relative min-h-0 flex-1 [&>*]:pointer-events-auto",
                 },
                 [
-                  isStopped ? stoppedPlaceholder(app, attrs.onStartApp) : null,
+                  isStopped ? stoppedPlaceholder(app) : null,
                   // The shield: the press that raises the window (or closes an open menu or the launcher)
                   // lands here rather than in the page, and bubbles to the window's own handler and on to
-                  // the document.
+                  // the document. A right-click here is that press and nothing more: handled, so the
+                  // desktop's element menu yields to it (element-reference-menu plan section 12).
                   attrs.isShielded
                     ? m("div", {
                         "data-window-shield": "",
                         class: "absolute inset-0 cursor-default",
                         onpointerdown: (event: PointerEvent) => event.preventDefault(),
+                        oncontextmenu: (event: MouseEvent) => event.preventDefault(),
                       })
                     : null,
                 ],

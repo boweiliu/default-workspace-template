@@ -18,11 +18,12 @@ APP_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9_]+(?:-[a-z0-9_]
 MAX_APP_NAME_LENGTH: Final[int] = 32
 # ``localhost`` and ``auth`` are origin labels. The rest are the first label of every
 # standalone supervisord program with a hyphen in its name (``share-gateway``,
-# ``app-watcher``, ``owner-exec``, ``vm-exec-register``, ``host-backup``,
-# ``env-converge``, ``agent-observer``): an app named after one would claim that
-# program as its ``<name>-<role>`` sidecar. ``system/test_app_manifests.py`` keeps this
-# set in step with ``system/supervisord.conf``. ``github`` is the one it cannot see:
-# ``github-sync`` is only written once GitHub sync is enabled.
+# ``owner-exec``, ``vm-exec-register``, ``host-backup``, ``env-converge``,
+# ``agent-observer``; ``app`` stays reserved from the retired ``app-watcher``): an app
+# named after one would claim that program as its ``<name>-<role>`` sidecar.
+# ``system/test_app_manifests.py`` keeps this set in step with
+# ``system/supervisord.conf``. ``github`` is the one it cannot see: ``github-sync`` is
+# only written once GitHub sync is enabled.
 RESERVED_APP_NAMES: Final[frozenset[str]] = frozenset(
     {"localhost", "auth", "share", "app", "owner", "vm", "host", "env", "github", "agent"}
 )
@@ -48,6 +49,13 @@ ICON_SUFFIX: Final[str] = ".svg"
 
 # A name in a preview table: a port name or a copy key, referenced by placeholder.
 PREVIEW_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+# The <file> of data/.secrets/<file>.env, as the chat app's secret card writes it, and a
+# POSIX shell identifier for each variable the file sets (what `source` accepts).
+SECRET_FILE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+ENV_VAR_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 # The workspace's naming scheme, as the chat app applies it to chats and the terminal to its
 # sessions: a user types a human-readable title, and the true name every path, session, and key
 # is built from is a deterministic canonical form of it. Everything that is neither a safe-name
@@ -134,6 +142,44 @@ class DisplayName(str):
         )
 
 
+class SecretFileName(str):
+    """The <file> of a data/.secrets/<file>.env an app runs under: a lowercase slug."""
+
+    def __new__(cls, value: str) -> Self:
+        if not SECRET_FILE_NAME_PATTERN.fullmatch(value):
+            raise InvalidManifestValueError(
+                f"invalid secret file {value!r}: names match ^[a-z0-9][a-z0-9-]{{0,63}}$ (the <file> of data/.secrets/<file>.env)"
+            )
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
+class EnvVarName(str):
+    """An environment variable a secret file sets: a POSIX shell identifier."""
+
+    def __new__(cls, value: str) -> Self:
+        if not ENV_VAR_NAME_PATTERN.fullmatch(value):
+            raise InvalidManifestValueError(
+                f"invalid variable name {value!r}: names are letters, digits and underscores, not starting with a digit"
+            )
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
 class LaunchPathId(str):
     """The id of a launch path an app declares: lowercase, starts alphanumeric, at most 32 characters."""
 
@@ -174,6 +220,32 @@ class LaunchPathValue(str):
         problem = _describe_launch_path_problem(value)
         if problem is not None:
             raise InvalidManifestValueError(problem)
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
+# An embedder message type an app may handle (desktop-interface contracts.md section 2): ``minds:`` and a
+# lowercase kebab-case name, the spelling every type of the Imbue Studio embed contract uses.
+MESSAGE_TYPE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^minds:[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_MESSAGE_TYPE_LENGTH: Final[int] = 64
+
+
+class MessageType(str):
+    """The type of a message an app handles: ``minds:`` and a lowercase kebab-case name, at most 64 characters."""
+
+    def __new__(cls, value: str) -> Self:
+        if not MESSAGE_TYPE_PATTERN.fullmatch(value) or len(value) > MAX_MESSAGE_TYPE_LENGTH:
+            raise InvalidManifestValueError(
+                f"invalid message type {value!r}: a message type is 'minds:' and a lowercase kebab-case name, "
+                f"at most {MAX_MESSAGE_TYPE_LENGTH} characters"
+            )
         return super().__new__(cls, value)
 
     @classmethod

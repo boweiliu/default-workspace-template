@@ -12,6 +12,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 from typing import Final
+from typing import Self
 from uuid import uuid4
 
 from loguru import logger as _loguru_logger
@@ -39,7 +40,6 @@ from imbue.chat.agent_discovery import get_host_dir
 from imbue.chat.agent_discovery import read_claude_config_dir_from_env_file
 from imbue.chat.auto_open import AutoOpenLedger
 from imbue.chat.auto_open import AutoOpenReactor
-from imbue.chat.auto_open import DisconnectedShell
 from imbue.chat.autocompact import ChatAutoCompactor
 from imbue.chat.chat_fast_mode import ChatFastModeState
 from imbue.chat.chat_fast_mode import read_fast_mode_state
@@ -86,6 +86,7 @@ from imbue.chat.harnesses.harness_type import DEFAULT_HARNESS
 from imbue.chat.harnesses.harness_type import HarnessType
 from imbue.chat.harnesses.harness_type import parse_harness
 from imbue.chat.harnesses.lanes import HARNESS_LABEL
+from imbue.chat.harnesses.message_display import classify_user_message
 from imbue.chat.harnesses.model import InvalidModelPickError
 from imbue.chat.harnesses.model import ModelAxis
 from imbue.chat.harnesses.model import ModelChoice
@@ -118,6 +119,7 @@ from imbue.chat.models import AgentNameConflictError
 from imbue.chat.models import AgentRenameError
 from imbue.chat.models import AgentStateItem
 from imbue.chat.models import AgentStopError
+from imbue.chat.models import ChatAccountBinding
 from imbue.chat.models import ChatConvergingError
 from imbue.chat.models import ChatCreationOutcome
 from imbue.chat.models import ChatSegmentInfo
@@ -139,12 +141,14 @@ from imbue.chat.models import TransitionKind
 from imbue.chat.naming import AUTO_NAME_WORD
 from imbue.chat.naming import canonical_agent_name
 from imbue.chat.naming import first_free_numbered_name
+from imbue.chat.naming import is_minted_chat_name
 from imbue.chat.naming import is_name_conflict
 from imbue.chat.oom_prioritizer import ChatOomPrioritizer
 from imbue.chat.presence import PresenceState
 from imbue.chat.primitives import ChatId
 from imbue.chat.primitives import ChatStatus
 from imbue.chat.primitives import parse_chat_ref
+from imbue.chat.shell_client import DisconnectedShell
 from imbue.chat.ws_broadcaster import WebSocketBroadcaster
 from imbue.concurrency_group.concurrency_group import ConcurrencyGroup
 from imbue.concurrency_group.errors import ConcurrencyGroupError
@@ -216,22 +220,15 @@ DESTROY_TIMEOUT_SECONDS: Final[float] = 120.0
 FULL_SNAPSHOTS_BEFORE_A_CREATED_AGENT_IS_LET_GO: Final[int] = 2
 
 
-# The create templates a chat's launch stacks on ``chat`` (``.mngr/settings.toml``): ``welcome``
-# delivers ``/welcome`` to a chat that starts with nothing to say, and ``fast`` launches the
-# fast-capable harnesses in fast mode when the chat's fast mode (``chat_fast_mode.py``) calls for it.
-WELCOME_ROLE_TEMPLATE: Final[str] = "welcome"
+# The create template a chat's launch stacks on ``chat`` (``.mngr/settings.toml``) when the chat's
+# fast mode (``chat_fast_mode.py``) calls for it: it launches the fast-capable harnesses in fast mode.
 FAST_ROLE_TEMPLATE: Final[str] = "fast"
 
 
 @pure
-def launch_role_templates(message: str, is_fast: bool) -> tuple[str, ...]:
-    """The templates a chat create stacks beyond the caller's: a greeting for a silent start, fast mode when the chat's mode calls for it."""
-    templates: list[str] = []
-    if message == "":
-        templates.append(WELCOME_ROLE_TEMPLATE)
-    if is_fast:
-        templates.append(FAST_ROLE_TEMPLATE)
-    return tuple(templates)
+def launch_role_templates(is_fast: bool) -> tuple[str, ...]:
+    """The templates a chat create stacks beyond the caller's: fast mode when the chat's mode calls for it."""
+    return (FAST_ROLE_TEMPLATE,) if is_fast else ()
 
 
 @pure
@@ -361,9 +358,8 @@ def _build_chat_create_command(
     for setting in settings:
         cmd.extend(["-S", setting])
     # The seeded first message rides the create too, for the same reason: mngr delivers it
-    # once the harness signals readiness, exactly as the ``welcome`` template's ``/welcome``
-    # does (a CLI ``--message`` takes precedence over a template's). A create that has a model
-    # to apply first withholds its message and sends it afterwards, so it passes none here.
+    # once the harness signals readiness. A create that has a model to apply first withholds
+    # its message and sends it afterwards, so it passes none here.
     if initial_message:
         cmd.extend(["--message", initial_message])
     return cmd
@@ -474,19 +470,17 @@ def _build_chat_display_label_command(mngr_binary: str, agent_id: str, name: str
     ]
 
 
-def _refuse_to_set_oom_score_adj(pid: int, adj: int) -> bool:
-    """The ``set_adj`` a secondary chat gets: never writes, always fails.
-
-    Chat ``oom_score_adj`` is not shared state a second chat instance (a preview
-    booted from a worktree) may contribute to: the two would fight over the same
-    ``/proc`` entries, and this one's inputs are wrong anyway -- the presence it
-    sees is its own windows', not the workspace's, which reads as every other chat
-    closed. Withholding the capability rather than gating the call sites is
-    deliberate: ``reapply`` is reached from the sweep, from the presence and send
-    routes, and from every lifecycle event, so a new call site added later is
-    inert here by construction.
-    """
-    return False
+def _queued_message_state(entry: Mapping[str, Any]) -> QueuedMessageState:
+    """One harness's queued entry on the wire, carrying the render decision its content would get in the transcript."""
+    queued = QueuedMessageState.model_validate(entry)
+    decision = classify_user_message(queued.content)
+    if decision is None:
+        return queued
+    return queued.model_copy_update(
+        to_update(queued.field_ref().display, decision.display),
+        to_update(queued.field_ref().display_label, decision.display_label),
+        to_update(queued.field_ref().display_body, decision.display_body),
+    )
 
 
 # AgentMatch requires a host_name, but the send path never reads it -- it groups
@@ -565,6 +559,17 @@ def _lane_of_account_label(account_label: str) -> str:
     except AccountError as e:
         _loguru_logger.debug("Recorded no lane for account {}: {}", account_label, e)
         return ""
+
+
+def _record_mru(account_id: str) -> None:
+    """Record ``account_id``, the account a chat was just created on or is switching to, as the most recently
+    used account: the one the next launch that names no account picks when no default is pinned. A switch the
+    user later cancels leaves it recorded. Best-effort: the mru is a convenience, so a store that refuses is
+    logged, not raised."""
+    try:
+        set_mru(account_id)
+    except AccountError as e:
+        _loguru_logger.warning("Could not record {} as most-recently-used: {}", account_id, e)
 
 
 class _SwitchTarget(FrozenModel):
@@ -813,6 +818,9 @@ class AgentManager:
     _match_by_agent_id: dict[str, AgentMatch]
     # The chats minted here whose first agent mngr does not know yet, by chat id.
     _provisional_chats: dict[ChatId, ProvisionalChat]
+    # A name shown for a chat before its rename lands: the automatic name, from the moment the
+    # model answers until ``mngr rename`` (seconds of CLI startup) has carried it.
+    _title_override_by_chat: dict[ChatId, str]
     # The records of the chats that have run on more than one agent, read from the store at
     # build (and on ``refresh_chat_records``); a chat with no record is its one agent.
     _chat_record_store: ChatRecordStore
@@ -853,11 +861,13 @@ class AgentManager:
     _activity_state_by_agent: dict[str, ActivityState]
     # Per-agent live queued-message snapshot (a sibling of ``_activity_state_by_agent``),
     # pushed to the frontend on the agents WebSocket. Fed by the agent's watcher via
-    # ``update_queued_messages`` and cleared on a working->IDLE transition through the
-    # per-agent idle handler the watcher registers (its ``notify_idle`` -- the queue
-    # backstop). Both are dropped when activity tracking stops.
+    # ``update_queued_messages`` and swept while IDLE through the per-agent idle handler
+    # the watcher registers (its ``notify_idle`` -- the queue backstop), whose marks the
+    # busy handler (``notify_busy``) undoes on IDLE->working.
+    # All are dropped when activity tracking stops.
     _queued_messages_by_agent: dict[str, tuple[QueuedMessageState, ...]]
     _queue_idle_handler_by_agent: dict[str, Callable[[], list[dict[str, Any]]]]
+    _queue_busy_handler_by_agent: dict[str, Callable[[], list[dict[str, Any]] | None]]
     # Per-agent live harness session (``HarnessSpec.session_class``): the control surface that
     # owns the send + its Sending records, tap availability, the native tap/interrupt dispatch,
     # daemon liveness (codex's app-server connection + ledger live inside its session), and the
@@ -889,8 +899,8 @@ class AgentManager:
     _oom_prioritizer: ChatOomPrioritizer
     # Runs periodic context compaction checks (mngr autocompact run) for active chats.
     _autocompactor: ChatAutoCompactor
-    # Surfaces the window of a chat created from outside with an auto-open label (the Mind
-    # app's update and help chats): fed the agents that appear and go, seeded once with the
+    # Surfaces the window of a chat created from outside with an auto-open label (the Imbue
+    # Studio app's update and help chats): fed the agents that appear and go, seeded once with the
     # agents found at startup. Delivers through the shell, so ``main`` installs one that can
     # reach it; the default reaches nobody, so a manager a test builds opens no windows.
     _auto_open: AutoOpenReactor
@@ -918,6 +928,10 @@ class AgentManager:
     # manager only knows WHEN an agent is positively gone or stopped. ``None`` (tests) =
     # no eviction.
     _watcher_eviction_callback: Callable[[str], None] | None
+    # Drops what stopped chats nobody is streaming hold resident, after every observe event.
+    # Set once at composition (``set_unviewed_transcript_release``); the app state knows who
+    # is streaming. ``None`` (tests) = no release.
+    _unviewed_transcript_release: Callable[[], None] | None
 
     @classmethod
     def build(
@@ -933,7 +947,7 @@ class AgentManager:
         chat_settings: ChatSettingsStore | None = None,
         autocompactor: ChatAutoCompactor | None = None,
         is_secondary: bool = False,
-    ) -> "AgentManager":
+    ) -> Self:
         """Build an AgentManager with the given broadcaster.
 
         ``messenger`` is the agent-messaging collaborator; it defaults to the
@@ -969,6 +983,7 @@ class AgentManager:
         manager._chat_record_store = chat_record_store if chat_record_store is not None else InMemoryChatRecordStore()
         manager._chat_record_by_id = manager._chat_record_store.read_all()
         manager._provisional_chats = seeded_provisional_chats(manager._chat_record_by_id)
+        manager._title_override_by_chat = {}
         manager._chat_settings = chat_settings if chat_settings is not None else ChatSettingsStore(path=None)
         manager._chat_files_root = chat_files_root
         manager._prompt_template_path = prompt_template_path
@@ -989,6 +1004,7 @@ class AgentManager:
         manager._activity_state_by_agent = {}
         manager._queued_messages_by_agent = {}
         manager._queue_idle_handler_by_agent = {}
+        manager._queue_busy_handler_by_agent = {}
         manager._session_by_agent = {}
         manager._model_choice_by_agent = {}
         manager._model_state_poller = ModelStatePoller.build(
@@ -998,6 +1014,7 @@ class AgentManager:
         manager._message_stamps = message_stamps if message_stamps is not None else MessageStampStore(path=None)
         manager._transcript_broadcaster = None
         manager._watcher_eviction_callback = None
+        manager._unviewed_transcript_release = None
         manager._auto_open = (
             auto_open
             if auto_open is not None
@@ -1015,7 +1032,9 @@ class AgentManager:
         manager._oom_prioritizer = ChatOomPrioritizer(
             list_chat_ids=manager.get_chat_ids,
             resolve_pid=lambda chat_id: manager._resolve_active_pid(chat_id),
-            set_adj=_refuse_to_set_oom_score_adj if is_secondary else set_oom_score_adj,
+            # A secondary's presence is its own windows', not the workspace's, and the scores it
+            # would write are the live chat's, so it keeps an inert prioritizer.
+            set_adj=None if is_secondary else set_oom_score_adj,
             resolve_process_started_at=lambda chat_id: manager._read_agent_process_started_at(
                 manager._active_agent_id_of_chat(chat_id)
             ),
@@ -1100,6 +1119,7 @@ class AgentManager:
             self._activity_state_by_agent.clear()
             self._queued_messages_by_agent.clear()
             self._queue_idle_handler_by_agent.clear()
+            self._queue_busy_handler_by_agent.clear()
             self._model_choice_by_agent.clear()
         for session in sessions:
             session.close()
@@ -1125,6 +1145,44 @@ class AgentManager:
     def _broadcast_chats_updated(self) -> None:
         """Push every chat's snapshot to every WebSocket client."""
         self._broadcaster.broadcast_chats_updated(self.get_chat_snapshots())
+
+    def _broadcast_provisional(self, provisional: ProvisionalChat) -> None:
+        """Push a provisional chat to every client, under the name it is shown by."""
+        self._broadcaster.broadcast_provisional_chat_created(self._provisional_as_shown(provisional))
+
+    def _provisional_as_shown(self, provisional: ProvisionalChat) -> ProvisionalChat:
+        with self._lock:
+            title = self._title_override_by_chat.get(provisional.chat_id)
+        if title is None:
+            return provisional
+        return provisional.model_copy_update(to_update(provisional.field_ref().name, title))
+
+    def _snapshot_as_shown(self, snapshot: ChatSnapshot) -> ChatSnapshot:
+        with self._lock:
+            title = self._title_override_by_chat.get(snapshot.chat_id)
+        if title is None:
+            return snapshot
+        return snapshot.model_copy_update(to_update(snapshot.field_ref().title, title))
+
+    def show_automatic_title(self, chat_id: ChatId, title: str) -> None:
+        """Show ``title`` for the chat at once, ahead of the rename that will make it its name."""
+        with self._lock:
+            self._title_override_by_chat[chat_id] = title
+            provisional = self._provisional_chats.get(chat_id)
+        if provisional is not None:
+            self._broadcast_provisional(provisional)
+        self._broadcast_chats_updated()
+
+    def clear_automatic_title(self, chat_id: ChatId) -> None:
+        """Stop showing a title the rename did not carry; the chat reads as its own name again."""
+        with self._lock:
+            removed = self._title_override_by_chat.pop(chat_id, None)
+            provisional = self._provisional_chats.get(chat_id)
+        if removed is None:
+            return
+        if provisional is not None:
+            self._broadcast_provisional(provisional)
+        self._broadcast_chats_updated()
 
     # Agent-level: the tracked agents.
 
@@ -1235,19 +1293,26 @@ class AgentManager:
             }
         last_messaged = self._message_stamps.read()
         return [
-            chat_snapshot_for_active_agent(
-                agent,
-                chat,
-                pending_by_agent[agent.id],
-                self._shoulder_tap_available(agent),
-                connecting_by_agent[agent.id],
-                last_messaged.get(chat.chat_id),
+            self._snapshot_as_shown(
+                chat_snapshot_for_active_agent(
+                    agent,
+                    chat,
+                    pending_by_agent[agent.id],
+                    self._shoulder_tap_available(agent),
+                    connecting_by_agent[agent.id],
+                    last_messaged.get(chat.chat_id),
+                )
             )
             for agent, chat in listed
         ]
 
     def get_chat_snapshot(self, chat_ref: str) -> ChatSnapshot | None:
         """One chat's snapshot, or None when no listed chat has that id (a provisional chat included)."""
+        snapshot = self._chat_snapshot_by_its_own_name(chat_ref)
+        return None if snapshot is None else self._snapshot_as_shown(snapshot)
+
+    def _chat_snapshot_by_its_own_name(self, chat_ref: str) -> ChatSnapshot | None:
+        """``get_chat_snapshot`` under the chat's own name, ignoring a title shown ahead of its rename."""
         parsed = parse_chat_ref(chat_ref)
         if parsed is None:
             return None
@@ -1394,7 +1459,7 @@ class AgentManager:
         nothing on screen to say why.
 
         Every agent bound to the account carries the label, not only the chats this app
-        created: a worker, an automation, or a chat the Mind app started on the workspace's
+        created: a worker, an automation, or a chat the Imbue Studio app started on the workspace's
         default account gets it from the create defaults (`create_defaults`), so they restart too.
 
         `--no-resume` for the same reason the queue actions use it: the agent's transcript is
@@ -1541,6 +1606,7 @@ class AgentManager:
                 chat_id, agent_state, target, message, message_id, origin, now, model_pick, is_fresh_start
             )
         self._broadcast_chats_updated()
+        _record_mru(target.account.id)
         _loguru_logger.info(
             "Chat {} is moving from {} to {} (account {})",
             chat_id,
@@ -1592,12 +1658,7 @@ class AgentManager:
                 chat_id, agent_state, target, message, message_id, origin, now, model_pick
             )
         self._broadcast_chats_updated()
-        # Launching on an account makes it the most recently used one, as a create does; a
-        # convenience, so a store that refuses is logged rather than failing the switch.
-        try:
-            set_mru(target.account.id)
-        except AccountError as e:
-            _loguru_logger.warning("Could not record {} as most-recently-used: {}", target.account.id, e)
+        _record_mru(target.account.id)
         _loguru_logger.info(
             "Chat {} is moving agent {} from account {} to account {}",
             chat_id,
@@ -1854,6 +1915,7 @@ class AgentManager:
                 )
                 self._write_record_locked(record.with_converging(retried_handoff))
         self._broadcast_chats_updated()
+        _record_mru(target.account.id)
         if discarded_successor_id is not None:
             self._discard_successor(chat_id, discarded_successor_id)
         _loguru_logger.info("Retrying the switch of chat {} on account {}", chat_id, target.account.id)
@@ -2228,7 +2290,7 @@ class AgentManager:
             primary = self._agents.get(self._own_agent_id)
             primary_labels = dict(primary.labels) if primary else {}
         # The chat's fast mode travels with it: a successor starts fast when the chat would.
-        role_templates = (FAST_ROLE_TEMPLATE,) if self.get_fast_mode_state(spec.chat_id).launches_fast else ()
+        role_templates = launch_role_templates(self.get_fast_mode_state(spec.chat_id).launches_fast)
         return _build_chat_create_command(
             self._mngr_binary,
             spec.name,
@@ -2377,6 +2439,18 @@ class AgentManager:
         with self._lock:
             match = self._match_by_agent_id.get(agent_id)
             return [match] if match is not None else []
+
+    def is_chat_stopped(self, chat_id: ChatId) -> bool:
+        """Whether the chat's active agent is tracked and positively dead (stopped, crashed, shed).
+
+        A chat a send is reviving (its agent marked connecting) is not stopped: the send is
+        starting it, and the observe stream has not seen that yet.
+        """
+        with self._lock:
+            chat = self._resolve_chat_locked(chat_id)
+            agent = self._agents.get(chat.active_agent_id) if chat is not None and chat.active_agent_id else None
+            is_reviving = agent is not None and bool(self._connecting_message_ids_by_agent.get(agent.id))
+        return agent is not None and is_lifecycle_dead(agent.state) and not is_reviving
 
     def is_agent_alive(self, agent_id: str) -> bool:
         """Whether the agent's process is not POSITIVELY dead.
@@ -2529,7 +2603,7 @@ class AgentManager:
                 _loguru_logger.warning("No tracked agent for chat ref {}; leaving mngr alone", chat_ref)
             return
 
-        # The services agent runs the workspace itself; its name is the minds
+        # The services agent runs the workspace itself; its name is the Imbue Studio
         # app's to manage (alongside the host's), not a chat's.
         if agent_state.labels.get("is_primary") == "true":
             raise AgentRenameError("The workspace's services agent cannot be renamed from a chat")
@@ -2567,7 +2641,65 @@ class AgentManager:
                     to_update(renamed.field_ref().name, new_canonical_name),
                     to_update(renamed.field_ref().labels, {**renamed.labels, "display_name": display_name}),
                 )
+            if chat is not None:
+                self._title_override_by_chat.pop(chat.chat_id, None)
         self._broadcast_chats_updated()
+
+    def has_placeholder_name(self, chat_id: ChatId) -> bool:
+        """Whether a chat still wears a name nobody chose for it: a minted "Chat N", or the title it was seeded with
+        (the Mind app's "Welcome"). A chat still being created counts by the name it was minted with."""
+        with self._lock:
+            provisional = self._provisional_chats.get(chat_id)
+            record = self._chat_record_by_id.get(chat_id)
+        if provisional is not None:
+            title = provisional.name
+        else:
+            snapshot = self._chat_snapshot_by_its_own_name(chat_id)
+            if snapshot is None:
+                return False
+            title = snapshot.title
+        is_seed_title = record is not None and record.seed_title == title
+        return is_minted_chat_name(title) or is_seed_title
+
+    def resolve_chat_account_binding(self, chat_id: ChatId) -> ChatAccountBinding | None:
+        """The harness and account folder a chat runs on, or is being created on; None for a chat this app does
+        not know, or whose account is gone.
+
+        Known as soon as a create starts, before mngr lists the agent, so a question about the
+        chat can go to its account while the create is still running.
+        """
+        with self._lock:
+            provisional = self._provisional_chats.get(chat_id)
+        if provisional is not None:
+            return self._account_binding(chat_id, provisional.account_id)
+        agent_info = self.get_active_agent_info(chat_id)
+        if agent_info is None:
+            return None
+        account_id = agent_info.labels.get("account", "")
+        if not account_id:
+            # A chat from before accounts runs on the config dir its env file names.
+            return ChatAccountBinding(harness=agent_info.harness, account_dir=agent_info.claude_config_dir)
+        return self._account_binding(chat_id, account_id)
+
+    def _account_binding(self, chat_id: ChatId, account_id: str) -> ChatAccountBinding | None:
+        if not account_id:
+            return None
+        try:
+            account = resolve_account(account_id)
+        except AccountError as e:
+            _loguru_logger.debug("Could not resolve the account of chat {}: {}", chat_id, e)
+            return None
+        harness = harness_for(account)
+        return None if harness is None else ChatAccountBinding(harness=harness, account_dir=account_dir(account.id))
+
+    def rename_placeholder_named_chat(self, chat_id: ChatId, display_name: str) -> bool:
+        """Rename a chat that still wears a placeholder name, as ``rename_chat`` would; False, running nothing,
+        when it has any other name, so an automatic name never replaces one a person or agent chose.
+        Raises what ``rename_chat`` raises."""
+        if not self.has_placeholder_name(chat_id):
+            return False
+        self.rename_chat(chat_id, display_name)
+        return True
 
     def _start_session_sweep(self) -> None:
         """Start the background sweep that connects tracked agents' live backends once they come up."""
@@ -2636,6 +2768,10 @@ class AgentManager:
         with self._lock:
             return list(self._provisional_chats.values())
 
+    def get_provisional_chats_as_shown(self) -> list[ProvisionalChat]:
+        """``get_provisional_chats`` under the names they are shown by, for a client catching up."""
+        return [self._provisional_as_shown(provisional) for provisional in self.get_provisional_chats()]
+
     def get_provisional_chat(self, chat_id: str) -> ProvisionalChat | None:
         parsed = parse_chat_ref(chat_id)
         if parsed is None:
@@ -2685,7 +2821,7 @@ class AgentManager:
     def seed_chat(self, title: str, turns: tuple[SeedTurn, ...]) -> CreatedChat:
         """Open a chat on a conversation that happened before the workspace existed (``chat_seed.py``).
 
-        The Mind app's onboarding continues here as the workspace's first chat: the turns become
+        The Imbue Studio app's onboarding continues here as the workspace's first chat: the turns become
         the chat's seed segment on disk, its record names the seed as its first member, and the
         chat is listed as a provisional chat awaiting the user's first message, with the
         transcript on its page and a composer under it. That first send picks the account (the
@@ -2729,7 +2865,7 @@ class AgentManager:
                 is_seeded=True,
             )
             self._provisional_chats[chat_id] = provisional
-        self._broadcaster.broadcast_provisional_chat_created(provisional)
+        self._broadcast_provisional(provisional)
         self._auto_open.request_open(chat_id)
         return CreatedChat(chat_id=chat_id, name=canonical_agent_name(display_name), display_name=display_name)
 
@@ -2743,16 +2879,34 @@ class AgentManager:
         send launches it through ``create_chat`` by ``chat_id``. It has no record, so a restart of
         this app drops it.
         """
-        chat_id = ChatId(str(AgentId()))
         with self._lock:
-            provisional = ProvisionalChat(
-                chat_id=chat_id,
-                name=self._mint_display_name_locked(""),
-                account_id=account_id,
-                phase=ProvisionalChatPhase.AWAITING_FIRST_SEND,
-            )
-            self._provisional_chats[chat_id] = provisional
-        self._broadcaster.broadcast_provisional_chat_created(provisional)
+            provisional = self._mint_awaiting_chat_locked(account_id)
+        self._broadcast_provisional(provisional)
+        return provisional
+
+    def awaiting_chat_for_empty_list(self) -> ProvisionalChat:
+        """A chat for a chat list that has none to show: one already waiting for its first send, else a new one.
+
+        The chat list is never left open empty; it shows this chat, which launches on the first message sent in it.
+        Handing back a waiting chat keeps two lists that open empty at once from minting two.
+        """
+        with self._lock:
+            for provisional in self._provisional_chats.values():
+                if provisional.phase is ProvisionalChatPhase.AWAITING_FIRST_SEND and not provisional.is_seeded:
+                    return provisional
+            minted = self._mint_awaiting_chat_locked("")
+        self._broadcast_provisional(minted)
+        return minted
+
+    def _mint_awaiting_chat_locked(self, account_id: str) -> ProvisionalChat:
+        chat_id = ChatId(str(AgentId()))
+        provisional = ProvisionalChat(
+            chat_id=chat_id,
+            name=self._mint_display_name_locked(""),
+            account_id=account_id,
+            phase=ProvisionalChatPhase.AWAITING_FIRST_SEND,
+        )
+        self._provisional_chats[chat_id] = provisional
         return provisional
 
     def get_fast_mode_state(self, chat_id: ChatId) -> ChatFastModeState:
@@ -2846,8 +3000,8 @@ class AgentManager:
         provider chooser before it creates).
 
         ``message`` is the first message the chat sends once it runs, delivered by ``mngr
-        create --message`` after the harness signals readiness. A chat that starts with no
-        message gets ``/welcome`` instead, through the ``welcome`` template. A chat minted
+        create --message`` after the harness signals readiness; a chat that starts with no
+        message sends none and waits for the user. A chat minted
         earlier keeps the message it was minted with, so a launch that names one beside
         ``chat_id`` is refused like a name; the exception is a seeded chat awaiting its first send, whose
         message is exactly what the launch brings.
@@ -2969,12 +3123,9 @@ class AgentManager:
         # otherwise escape as a 500 before the creation thread starts -- leaving a provisional
         # record nothing ever pops, its name burned forever and every new socket replaying a
         # chat stuck at "creating".
-        try:
-            set_mru(account.id)
-        except AccountError as e:
-            _loguru_logger.warning("Could not record {} as most-recently-used: {}", account.id, e)
+        _record_mru(account.id)
         account_args = _account_binding_args(harness, account.id, self._get_agent_state_dir(agent_id))
-        role_templates = (*extra_role_templates, *launch_role_templates(message, fast_mode.launches_fast))
+        role_templates = (*extra_role_templates, *launch_role_templates(fast_mode.launches_fast))
 
         # A seeded chat's first agent joins a conversation it cannot see: the seed is a segment
         # this app renders from a file, which no harness transcript holds, so its launch carries
@@ -3002,7 +3153,7 @@ class AgentManager:
             settings=[SKIP_CLAUDE_INSTALLATION_CHECK_SETTING] if is_installation_check_skipped else [],
         )
 
-        self._broadcaster.broadcast_provisional_chat_created(provisional)
+        self._broadcast_provisional(provisional)
 
         # Mirror the labels the created mngr agent will carry (see
         # ``_build_chat_create_command``), so the pre-observe AgentStateItem below
@@ -3541,11 +3692,12 @@ class AgentManager:
 
         # Drop the resident transcript of every chat that just stopped (its active agent
         # died), its archived segments included; an archived member dying drops only its
-        # own. Edge-triggered (transition into dead, never dead-as-a-level): a user viewing
-        # a stopped chat's history rebuilds the watcher on read, and a level-triggered evict
-        # would tear that rebuild down again on the next observe tick.
+        # own. A read of a stopped chat rebuilds its transcript after that, so the release
+        # then drops what any stopped chat holds, sparing a chat whose stream is open.
         for agent_id in newly_dead_ids:
             self._evict_chat_transcripts(agent_id)
+        if self._unviewed_transcript_release is not None:
+            self._unviewed_transcript_release()
 
         self._broadcast_chats_updated()
 
@@ -3632,6 +3784,7 @@ class AgentManager:
             self._activity_state_by_agent.pop(agent_id, None)
             self._queued_messages_by_agent.pop(agent_id, None)
             self._queue_idle_handler_by_agent.pop(agent_id, None)
+            self._queue_busy_handler_by_agent.pop(agent_id, None)
         # Reap the live backend outside the lock (codex's join blocks on its reader thread);
         # idempotent, and a re-track rebuilds it via ensure_live.
         if session is not None:
@@ -3738,6 +3891,14 @@ class AgentManager:
         after every rebuild-on-read."""
         self._watcher_eviction_callback = callback
 
+    def set_unviewed_transcript_release(self, callback: Callable[[], None]) -> None:
+        """Wire the release of stopped chats' transcripts nobody is streaming (the composition root calls this once).
+
+        Invoked after every observe event. The transition eviction alone would leave a
+        stopped chat that is read after its stop resident until the app restarts: the read
+        rebuilds its transcript, and no further transition comes to evict it."""
+        self._unviewed_transcript_release = callback
+
     def _evict_watcher(self, agent_id: str) -> None:
         callback = self._watcher_eviction_callback
         if callback is not None:
@@ -3775,15 +3936,27 @@ class AgentManager:
         return session.switch_options()
 
     def register_queue_idle_handler(self, agent_id: str, handler: Callable[[], list[dict[str, Any]]]) -> None:
-        """Register the agent watcher's working->IDLE queue backstop.
+        """Register the agent watcher's idle queue backstop.
 
-        Called once when the watcher is created. On a working->IDLE transition
-        ``_recompute_activity_state`` invokes it: the handler clears the harness
-        queue populator and returns the resulting (empty) snapshot, which the same
-        broadcast that carries the IDLE state also carries.
+        Called once when the watcher is created. ``_recompute_activity_state`` invokes it
+        on every recompute that finds the agent IDLE with something queued, not only on the
+        working->IDLE transition: the handler applies the harness queue populator's idle
+        backstop and returns the resulting snapshot, which the same broadcast that carries
+        the IDLE state also carries.
         """
         with self._lock:
             self._queue_idle_handler_by_agent[agent_id] = handler
+
+    def register_queue_busy_handler(self, agent_id: str, handler: Callable[[], list[dict[str, Any]] | None]) -> None:
+        """Register the agent watcher's IDLE->working counterpart of the queue backstop.
+
+        Called once when the watcher is created. On an IDLE->working transition with something
+        queued, ``_recompute_activity_state`` invokes it: the handler undoes the idle backstop's
+        marks and returns the resulting snapshot (None when its harness keeps no marks), which
+        is folded in the same way the idle handler's is.
+        """
+        with self._lock:
+            self._queue_busy_handler_by_agent[agent_id] = handler
 
     def update_queued_messages(self, agent_id: str, snapshot: list[dict[str, Any]]) -> None:
         """Cache and broadcast a fresh queued-message snapshot from the agent's watcher.
@@ -3795,12 +3968,13 @@ class AgentManager:
         A replayed snapshot can arrive with no recompute ever following it (e.g. a
         priming replay for a stopped agent, whose lifecycle never changes again),
         so the level-triggered idle sweep is run here, after caching and BEFORE the
-        broadcast: an idle agent's stale snapshot is drained via its idle handler
-        and the single broadcast below carries the post-sweep state, so phantoms
-        are never rendered. A live mid-turn agent derives non-IDLE (its transcript
+        broadcast: an idle agent's snapshot goes through its idle handler (which
+        drops stale entries, or for Claude shows them as being sent until the
+        delivery grace runs out) and the single broadcast below carries the
+        post-sweep state. A live mid-turn agent derives non-IDLE (its transcript
         signals are seeded before the watcher starts) and the snapshot stands.
         """
-        queued = tuple(QueuedMessageState.model_validate(entry) for entry in snapshot)
+        queued = tuple(_queued_message_state(entry) for entry in snapshot)
         with self._lock:
             if agent_id not in self._activity_tracked_agents:
                 return
@@ -4010,17 +4184,19 @@ class AgentManager:
             )
             old_state = self._activity_state_by_agent.get(agent_id)
             # The queued-message backstop is LEVEL-triggered, not edge-triggered: an
-            # IDLE agent's harness queue is drained by definition, so ANY queued
-            # survivor while idle is stale -- an interrupt, our flush-restart SIGKILL,
-            # a crash, a hole in the harness's own ledger (an enqueue with no matching
-            # leave), or a stale entry re-surfaced by a backend restart's full replay
-            # (which sees no new working->IDLE transition to sweep it). So sweep
-            # whenever the agent is idle with a non-empty queue, even if the activity
-            # state itself did not change this cycle -- an edge-only backstop leaves
-            # such survivors stranded on an idle agent forever.
+            # IDLE agent's harness queue is about to drain, so a queued survivor while
+            # idle is either on its way in (Claude dequeues only after its end-of-turn
+            # hooks; its backstop shows such entries as being sent for a grace period)
+            # or stale -- an interrupt, our flush-restart SIGKILL, a crash, a hole in
+            # the harness's own ledger (an enqueue with no matching leave), or a stale
+            # entry re-surfaced by a backend restart's full replay (which sees no new
+            # working->IDLE transition to sweep it). So run the backstop whenever the
+            # agent is idle with a non-empty queue, even if the activity state itself
+            # did not change this cycle -- an edge-only backstop leaves such survivors
+            # stranded on an idle agent forever.
             is_idle = new_state == ActivityState.IDLE
-            has_stale_queue = is_idle and bool(self._queued_messages_by_agent.get(agent_id))
-            if old_state == new_state and agent_state.activity_state == new_state.value and not has_stale_queue:
+            has_idle_queue = is_idle and bool(self._queued_messages_by_agent.get(agent_id))
+            if old_state == new_state and agent_state.activity_state == new_state.value and not has_idle_queue:
                 return
             self._activity_state_by_agent[agent_id] = new_state
             # Update just this slot so any cached ``model_choice`` stays intact --
@@ -4028,21 +4204,33 @@ class AgentManager:
             self._agents[agent_id] = agent_state.model_copy_update(
                 to_update(agent_state.field_ref().activity_state, new_state)
             )
-            idle_handler = self._queue_idle_handler_by_agent.get(agent_id) if has_stale_queue else None
+            # An idle reading can predate the fold of the turn a leave just opened (the watcher
+            # pushes the queue snapshot ahead of that turn's events), so the backstop may have
+            # marked what is parked behind it; the working reading that follows undoes that.
+            is_leaving_idle = (
+                old_state == ActivityState.IDLE and not is_idle and bool(self._queued_messages_by_agent.get(agent_id))
+            )
+            if has_idle_queue:
+                queue_handler = self._queue_idle_handler_by_agent.get(agent_id)
+            elif is_leaving_idle:
+                queue_handler = self._queue_busy_handler_by_agent.get(agent_id)
+            else:
+                queue_handler = None
 
-        # The idle handler clears the watcher's queue populator and returns the
-        # resulting (empty) snapshot; it calls into the watcher, so it runs outside
-        # the lock, and its snapshot is folded into the same broadcast as the IDLE
+        # The queue handler applies the watcher's queue backstop (or undoes it) and
+        # returns the resulting snapshot; it calls into the watcher, so it runs outside
+        # the lock, and its snapshot is folded into the same broadcast as the activity
         # state below. Runs regardless of ``broadcast_on_change`` (it is a state
         # mutation); only the broadcast itself is gated.
-        if idle_handler is not None:
-            drained = tuple(QueuedMessageState.model_validate(entry) for entry in idle_handler())
+        handled_snapshot = queue_handler() if queue_handler is not None else None
+        if handled_snapshot is not None:
+            handled_queue = tuple(_queued_message_state(entry) for entry in handled_snapshot)
             with self._lock:
-                idle_agent_state = self._agents.get(agent_id)
-                if idle_agent_state is not None and idle_agent_state.queued_messages != drained:
-                    self._queued_messages_by_agent[agent_id] = drained
-                    self._agents[agent_id] = idle_agent_state.model_copy_update(
-                        to_update(idle_agent_state.field_ref().queued_messages, drained)
+                handled_agent_state = self._agents.get(agent_id)
+                if handled_agent_state is not None and handled_agent_state.queued_messages != handled_queue:
+                    self._queued_messages_by_agent[agent_id] = handled_queue
+                    self._agents[agent_id] = handled_agent_state.model_copy_update(
+                        to_update(handled_agent_state.field_ref().queued_messages, handled_queue)
                     )
 
         if broadcast_on_change:

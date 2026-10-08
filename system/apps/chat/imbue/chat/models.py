@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import auto
+from pathlib import Path
 
 from pydantic import Field
 from pydantic import SecretStr
@@ -9,6 +10,7 @@ from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.chat_fast_mode import ChatFastModeState
 from imbue.chat.chat_seed import SeedTurn
 from imbue.chat.chat_settings import ChatSettings
+from imbue.chat.harnesses.events import DisplayKind
 from imbue.chat.harnesses.harness_type import DEFAULT_HARNESS
 from imbue.chat.harnesses.harness_type import HarnessType
 from imbue.chat.harnesses.model import ModelAxis
@@ -267,13 +269,23 @@ class QueuedMessageState(FrozenModel):
     is_sending: bool = Field(
         default=False,
         description=(
-            "True while this chip is a message the backend is actively re-sending (a codex "
-            "shoulder-tap's interrupt+resend, Fix 3): it stays continuously visible but is rendered "
-            "as an ordinary sent message rather than as a plain queued chip, so it never blinks "
-            "out (contract A1a). "
+            "True while this chip is a message the backend is actively delivering (a codex "
+            "shoulder-tap's interrupt+resend, Fix 3; or a Claude message still queued when the reply "
+            "landed, which Claude picks up after its end-of-turn hooks): it stays continuously "
+            "visible but is rendered as an ordinary sent message rather than as a plain queued "
+            "chip, so it never blinks out (contract A1a). "
             "False for an ordinary parked queue chip."
         ),
     )
+    display: DisplayKind | None = Field(
+        default=None,
+        description=(
+            "The render decision the content would get as a transcript user_message "
+            "(``harnesses.message_display``); None for a plain message"
+        ),
+    )
+    display_label: str | None = Field(default=None, description="The decision's chip or notice label")
+    display_body: str | None = Field(default=None, description="The decision's body, when it is not the content")
 
 
 class AgentStateItem(FrozenModel):
@@ -612,6 +624,13 @@ class ChatCreationOutcome(FrozenModel):
     )
 
 
+class ChatAccountBinding(FrozenModel):
+    """The harness and the account folder a chat runs (or is about to run) on."""
+
+    harness: HarnessType = Field(description="The chat's harness")
+    account_dir: Path = Field(description="The account folder the harness's CLI is scoped to")
+
+
 class ProvisionalChatPhase(LowerCaseStrEnum):
     """Where a chat that is not an agent yet stands."""
 
@@ -651,7 +670,7 @@ class ProvisionalChat(FrozenModel):
 
 
 class SeedChatRequest(FrozenModel):
-    """Request body for POST /api/chats/seed: the conversation the Mind app had before the workspace existed."""
+    """Request body for POST /api/chats/seed: the conversation the Imbue Studio app had before the workspace existed."""
 
     title: str = Field(default="", description='The chat\'s display name; empty mints the first free "Chat N"')
     turns: tuple[SeedTurn, ...] = Field(min_length=1, description="The turns, in order")

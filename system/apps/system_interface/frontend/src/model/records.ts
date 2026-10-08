@@ -86,6 +86,10 @@ export interface Placement {
   readonly frame: Frame;
   readonly state: WindowState;
   readonly is_minimized: boolean;
+  /** Whether the window is pulled out into a desktop window of the embedding chrome's own (the pull-out-window
+   *  spec): drawn as a ghost at its frame here, its page shown elsewhere. Orthogonal to the state; a file
+   *  without the key reads as attached. */
+  readonly is_detached: boolean;
 }
 
 /** One client's path and title for an independent window (pinned-taskbar-entries plan section 5.1). */
@@ -143,6 +147,13 @@ export interface AppPin {
   readonly default_mode: EntryMode;
 }
 
+/** A message an app takes from the Imbue Studio chrome, and the route under its origin the shell posts it to
+ *  (contracts.md section 2). */
+export interface MessageHandler {
+  readonly type: string;
+  readonly path: string;
+}
+
 /** One registered app as the shell lists it (contracts.md section 5.5). */
 export interface AppRecord {
   readonly name: string;
@@ -155,11 +166,15 @@ export interface AppRecord {
   readonly internal: boolean;
   readonly program: string;
   readonly critical: boolean;
+  /** Whether the shell stops the app's program once no window shows it (the stop-when-no-windows spec). */
+  readonly stop_when_no_windows: boolean;
   /** The app's launch paths; the shell synthesizes ``open`` at ``/`` for an app declaring none. */
   readonly launch_paths: readonly LaunchPath[];
   readonly default_shortcut: DefaultShortcut | null;
   readonly launcher_rank: number | null;
   readonly pin: AppPin | null;
+  /** The messages from the Imbue Studio chrome the app takes, which the shell relays to it. */
+  readonly message_handlers: readonly MessageHandler[];
   readonly is_running: boolean;
 }
 
@@ -183,7 +198,13 @@ export interface ClientRecord {
   readonly is_connected: boolean;
   /** The client's presentation of each pinned entry, by app name. */
   readonly entries: Readonly<Record<string, EntryPresentation>>;
+  /** What the client's phone layout has shown (plan-phone-interface.md), most recent last: window ids, and
+   *  ``SHOWN_HOME`` for the home grid. */
+  readonly shown_history: readonly string[];
 }
+
+/** The ``shown_history`` entry that stands for the phone's home grid rather than a window. */
+export const SHOWN_HOME = "home";
 
 /** What the shell answers when this client's page arrives (contracts.md section 5.5): where it lands, the desktop
  *  seeded for a first-time user, and the name of the user's earlier desktop when it had been deleted meanwhile. */
@@ -206,6 +227,8 @@ export interface Inventory {
   readonly desktops: readonly Desktop[];
   readonly apps: readonly AppRecord[];
   readonly clients: readonly ClientRecord[];
+  /** What the workspace is called. */
+  readonly workspace_name: string;
 }
 
 /** One connected user as the shell serializes it (one entry per user, however many tabs): the identity record
@@ -375,6 +398,7 @@ export function parsePlacement(raw: unknown): Placement {
     frame: parseFrame(record.frame),
     state: asOneOf(record.state, WINDOW_STATES, "placement.state"),
     is_minimized: asBoolean(record.is_minimized, "placement.is_minimized"),
+    is_detached: record.is_detached === undefined ? false : asBoolean(record.is_detached, "placement.is_detached"),
   };
 }
 
@@ -442,6 +466,14 @@ function parsePin(raw: unknown): AppPin | null {
   };
 }
 
+function parseMessageHandler(raw: unknown): MessageHandler {
+  const record = asObject(raw, "message handler");
+  return {
+    type: asString(record.type, "message_handler.type"),
+    path: asString(record.path, "message_handler.path"),
+  };
+}
+
 export function parseAppRecord(raw: unknown): AppRecord {
   const record = asObject(raw, "app");
   const name = asString(record.name, "app.name");
@@ -455,10 +487,12 @@ export function parseAppRecord(raw: unknown): AppRecord {
     internal: record.internal === true,
     program: typeof record.program === "string" ? record.program : "",
     critical: record.critical === true,
+    stop_when_no_windows: record.stop_when_no_windows === true,
     launch_paths: asArray(record.launch_paths ?? [], "app.launch_paths").map(parseLaunchPath),
     default_shortcut: parseDefaultShortcut(record.default_shortcut),
     launcher_rank: typeof rank === "number" && Number.isFinite(rank) ? rank : null,
     pin: parsePin(record.pin),
+    message_handlers: asArray(record.message_handlers ?? [], "app.message_handlers").map(parseMessageHandler),
     is_running: record.is_running === true,
   };
 }
@@ -501,6 +535,9 @@ export function parseClientRecord(raw: unknown): ClientRecord {
     last_seen: asString(record.last_seen, "client.last_seen"),
     is_connected: record.is_connected === true,
     entries: parseEntries(record.entries),
+    shown_history: asArray(record.shown_history ?? [], "client.shown_history").map((entry, index) =>
+      asString(entry, `client.shown_history[${index}]`),
+    ),
   };
 }
 
@@ -577,6 +614,7 @@ export function parseInventory(raw: unknown): Inventory {
     desktops: parseDesktops(record.desktops),
     apps: parseAppRecords(record.apps),
     clients: parseClientRecords(record.clients),
+    workspace_name: asString(record.workspace_name ?? "", "inventory.workspace_name"),
   };
 }
 
@@ -625,7 +663,8 @@ export function isSamePlacement(first: Placement, second: Placement): boolean {
     first.frame.width === second.frame.width &&
     first.frame.height === second.frame.height &&
     first.state === second.state &&
-    first.is_minimized === second.is_minimized
+    first.is_minimized === second.is_minimized &&
+    first.is_detached === second.is_detached
   );
 }
 

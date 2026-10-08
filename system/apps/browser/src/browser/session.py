@@ -105,6 +105,9 @@ _FORTRESS_EXECUTABLE = "/opt/fortress/tilion-fortress/tilion"
 # env.d unit. Each subdirectory holding a manifest.json is passed via --load-extension.
 _EXTENSIONS_DIR = "/opt/fortress/extensions"
 
+# The fleet's own unpacked extensions, shipped in this package.
+_BUNDLED_EXTENSIONS_DIR = Path(__file__).parent / "extensions"
+
 # The fleet's CDP proxy: ONE websocket server for every browser, addressed by
 # ``/<browser-name>/<token>``. Deliberately its own loopback port and deliberately NOT
 # mounted on the Flask app -- that app's port is registered with ``forward_port.py`` and
@@ -160,6 +163,15 @@ def _display_is_free(number: int) -> bool:
     return not Path(f"/tmp/.X{number}-lock").exists() and not _x_socket_live(number)
 
 
+def _reap_on_exit(process: "subprocess.Popen[bytes]", name: str) -> threading.Thread:
+    """Wait for a child on a daemon thread, so it is reaped the moment it exits (shed under
+    memory pressure, or crashed). Left unwaited it stays a zombie of this process, which
+    earlyoom cannot free. Returns the waiting thread."""
+    reaper = threading.Thread(target=process.wait, name=f"{name}-reaper", daemon=True)
+    reaper.start()
+    return reaper
+
+
 def _spawn_xvfb() -> "tuple[str, subprocess.Popen[bytes]]":
     """Allocate a free display :N from the pool and start an Xvfb on it. Blocking --
     call via a thread. Returns (display, process); raises on failure."""
@@ -173,6 +185,7 @@ def _spawn_xvfb() -> "tuple[str, subprocess.Popen[bytes]]":
         ["Xvfb", display, "-screen", "0", f"{_FB_W}x{_FB_H}x24", "-nolisten", "tcp"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    _reap_on_exit(xvfb, "xvfb")
     deadline = time.monotonic() + _XVFB_READY_TIMEOUT
     while not _x_socket_live(number):
         if xvfb.poll() is not None or time.monotonic() > deadline:
@@ -229,12 +242,13 @@ def _ensure_pulse_daemon() -> bool:
         # above; only a stop that overruns stopwaitsecs reaps it with the group.
         # --daemonize=yes double-forks and trips over a stale PID file in this container; a
         # plain Popen does not.
-        subprocess.Popen(
+        daemon = subprocess.Popen(
             ["pulseaudio", "--system", "--daemonize=no", "--disallow-exit",
              "--exit-idle-time=-1", "--log-target=stderr", "-n",
              "-L", "module-native-protocol-unix auth-anonymous=1 socket=/var/run/pulse/native"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        _reap_on_exit(daemon, "pulseaudio")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if subprocess.run(["pactl", "info"], env=env, capture_output=True, timeout=5).returncode == 0:
@@ -341,7 +355,7 @@ _FAILED_LAUNCH_MEMORY = int(os.environ.get("BROWSER_FAILED_LAUNCH_MEMORY", "32")
 _LEASE_IDLE_TTL = float(os.environ.get("BROWSER_LEASE_IDLE_TTL", "60"))
 
 # A human take-control is STICKY: it blocks agents until the human explicitly hands
-# back ("Return to agent"). There is no idle/grace yield -- a human who grabs a
+# back ("Return control to agents"). There is no idle/grace yield -- a human who grabs a
 # browser keeps it even if they walk away mid-CAPTCHA/login, so they never come back
 # to find an agent moved the page out from under them. (Agents still auto-release via
 # _LEASE_IDLE_TTL; the asymmetry is deliberate -- a dead agent must not hoard, a human
@@ -356,7 +370,7 @@ _CLAIM_WINDOW = float(os.environ.get("BROWSER_CLAIM_WINDOW", "12"))
 
 # Chromium's in-process sandbox cannot run as root: it exits with "Running as root
 # without --no-sandbox is not supported" (crbug 638180), and browser-use swallows that
-# into a ~30s launch hang. Every minds workspace runs this daemon as ROOT inside an OUTER
+# into a ~30s launch hang. Every Imbue Studio workspace runs this daemon as ROOT inside an OUTER
 # boundary -- gVisor (runsc) under docker/cloud/AWS, the VM under Lima/Vultr -- so the
 # inner sandbox is both unusable-as-root and redundant. We therefore disable it whenever
 # we're root (the reliable signal; browser-use's own IN_DOCKER check misses the bare-VM
@@ -385,8 +399,8 @@ def _repo_root() -> Path:
 # The in-workspace chat messenger (see `_message_agent`): the owner recorded on a browser is
 # a chat id, and the chat app knows which agent is taking that chat's messages; the script
 # falls back to `mngr message` itself when the chat app cannot take the message. Its
-# `--system` flag wraps the fleet's nudges in the sentinel the chat transcript renders as a
-# collapsed system chip instead of a bare user bubble.
+# `--browser-fleet` flag wraps the fleet's nudges in the sentinel the chat transcript renders
+# as a collapsed "Browser fleet" chip instead of a bare user bubble.
 _MESSAGE_CHAT_SCRIPT = Path("system") / "scripts" / "message_chat.py"
 
 # Per-browser persistent Chromium profiles (cookies/logins/history) live here, on the
@@ -657,14 +671,19 @@ class LiveBrowser(MutableModel):
         return self._audio_source or None
 
     def _extension_paths(self) -> "tuple[str, ...]":
-        """Vendored, version-pinned unpacked extensions to load, if the env.d unit put
-        them there. browser-use used to download these from the Chrome Web Store at
-        runtime, unpinned, into the browser holding the human's real logins; they are now
-        pinned alongside Fortress (see the env.d unit) and simply passed as a flag."""
-        root = Path(os.environ.get("BROWSER_EXTENSIONS_DIR", _EXTENSIONS_DIR))
-        if not root.is_dir():
-            return ()
-        return tuple(str(d) for d in sorted(root.iterdir()) if (d / "manifest.json").is_file())
+        """Unpacked extensions to load: the fleet's own (shipped in this package), then the
+        vendored, version-pinned ones, if the env.d unit put them there. browser-use used to
+        download those from the Chrome Web Store at runtime, unpinned, into the browser
+        holding the human's real logins; they are now pinned alongside Fortress (see the
+        env.d unit) and simply passed as a flag."""
+        roots = [_BUNDLED_EXTENSIONS_DIR, Path(os.environ.get("BROWSER_EXTENSIONS_DIR", _EXTENSIONS_DIR))]
+        return tuple(
+            str(d)
+            for root in roots
+            if root.is_dir()
+            for d in sorted(root.iterdir())
+            if (d / "manifest.json").is_file()
+        )
 
     async def start(self, restore_tabs: list[str] | None = None, active_tab: int = 0) -> None:
         """Launch the headful Chromium and bring up the fleet's own CDP channel.
@@ -871,6 +890,40 @@ class LiveBrowser(MutableModel):
                 return
             await self._focus_and_foreground(target_id)
 
+    async def close_active_tab(self) -> None:
+        """Close the tab the pane is showing, keeping the Chromium window alive.
+
+        The tab is the one Chromium has in front (a human may have switched tabs inside
+        Chrome since the fleet last foregrounded one). The window-bound sweep stops a browser
+        whose window is gone, and Chromium closes its window with its last tab, so the last
+        tab is replaced with a fresh home page before it goes. A browser that is not running
+        has no tab to close.
+        """
+        if self._cdp is None or self._lifecycle != "running":
+            raise BrowserNotDrivableError(f"browser {self.browser_id} is not running")
+        async with self._lock:
+            try:
+                targets = await self._cdp.page_targets()
+            except _BROWSER_ERRORS as e:
+                raise BrowserNotDrivableError(f"browser {self.browser_id} cannot list its tabs: {e}") from e
+            if not targets:
+                logger.debug("close-tab on {} found no tab to close", self.browser_id)
+                return
+            closing = await self._shown_target(targets) or targets[-1]["targetId"]
+            remaining = [t["targetId"] for t in targets if t["targetId"] != closing]
+            if not remaining:
+                notify_chromium_processes_expected()
+                try:
+                    replacement = await asyncio.wait_for(self._cdp.create_target(_HOME_URL), timeout=_RESTORE_NAV_TIMEOUT)
+                except (asyncio.TimeoutError, *_BROWSER_ERRORS) as e:
+                    raise BrowserNotDrivableError(f"browser {self.browser_id} could not open a fresh tab: {e}") from e
+                remaining = [replacement]
+            try:
+                await asyncio.wait_for(self._cdp.close_target(closing), timeout=5.0)
+            except (asyncio.TimeoutError, *_BROWSER_ERRORS) as e:
+                raise BrowserNotDrivableError(f"browser {self.browser_id} could not close its tab: {e}") from e
+            await self._focus_and_foreground(remaining[-1])
+
     # tabs (the fleet's own CDP client is the single source of truth)
 
     def _active_target(self) -> str | None:
@@ -889,6 +942,51 @@ class LiveBrowser(MutableModel):
             logger.debug("active-url targets ignored ({})", e)
             return None
         return next((t["url"] for t in targets if t["targetId"] == active), None)
+
+    async def paste_into_active_tab(self) -> bool:
+        """Press Ctrl+V in the tab the pane is showing, through CDP; False when it could not land."""
+        if self._cdp is None:
+            return False
+        try:
+            targets = await self._cdp.page_targets()
+        except _BROWSER_ERRORS as e:
+            logger.debug("paste on {} could not list the tabs ({})", self.browser_id, e)
+            return False
+        target = await self._shown_target(targets)
+        if target is None:
+            logger.debug("paste on {} found no tab in front", self.browser_id)
+            return False
+        try:
+            await asyncio.wait_for(self._cdp.press_paste(target), timeout=5.0)
+        except (asyncio.TimeoutError, *_BROWSER_ERRORS) as e:
+            logger.debug("paste into {} ignored ({})", target, e)
+            return False
+        return True
+
+    async def _shown_target(self, targets: list[dict[str, Any]]) -> str | None:
+        """The tab in front of the window, asked of the pages themselves, recorded as the active tab.
+
+        ``_active_target_id`` is only the last tab the fleet foregrounded: a human switching
+        tabs inside Chrome does it over XTEST, which never reaches this connection, so that
+        cache is stale as soon as they browse (see ``_on_proxy_activity``). The cached tab is
+        asked first, so the common case costs one probe; a tab that cannot answer counts as
+        hidden, and when none says it is in front the cache stands in, if it is still open.
+        """
+        if self._cdp is None:
+            return None
+        cached = self._active_target()
+        open_ids = [t["targetId"] for t in targets]
+        cached_first = ([cached] if cached in open_ids else []) + [tid for tid in open_ids if tid != cached]
+        for target_id in cached_first:
+            try:
+                shown = await asyncio.wait_for(self._cdp.is_shown(target_id), timeout=5.0)
+            except (asyncio.TimeoutError, *_BROWSER_ERRORS) as e:
+                logger.debug("visibility of {} on {} ignored ({})", target_id, self.browser_id, e)
+                continue
+            if shown:
+                self._active_target_id = target_id
+                return target_id
+        return cached if cached in open_ids else None
 
     async def _focus_and_foreground(self, target_id: str) -> None:
         """The one tab primitive: foreground ``target_id`` in Chrome so pixelflux, which
@@ -1269,16 +1367,17 @@ class LiveBrowser(MutableModel):
         delivered but the agent's input is blocked) both leave a warning; the claim window /
         lifecycle handling is the backstop if a message never lands.
 
-        These are automated, non-human nudges, so they go with ``--system``: the transcript
-        UI renders them as a collapsed system chip instead of a bare user bubble. This is
-        display-only -- the agent still receives the message and resumes its turn exactly
-        as before. The chat is addressed by its chat id, never by an agent's name."""
+        These are automated, non-human nudges, so they go with ``--browser-fleet``: the
+        transcript UI renders them as a collapsed "Browser fleet" chip instead of a bare user
+        bubble. This is display-only -- the agent still receives the message and resumes its
+        turn exactly as before. The chat is addressed by its chat id, never by an agent's
+        name."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,
                 str(_MESSAGE_CHAT_SCRIPT),
                 agent_id,
-                "--system",
+                "--browser-fleet",
                 "--message",
                 text,
                 # Run from the repo root: the script path is repo-relative and the `mngr`
@@ -1825,7 +1924,7 @@ def closed_window_browser(hint_body: object) -> str | None:
 class BrowserSessionManager(MutableModel):
     """Owns the whole fleet (all live browsers).
 
-    The fleet is shared per workspace: every agent in a mind reaches this one
+    The fleet is shared per workspace: every agent in the workspace reaches this one
     manager, so ``ls`` shows one fleet and ownership arbitrates between agents.
     Every browser is created on demand -- there is no default browser and the
     fleet starts EMPTY. A daemon-minted NAME is the first free ``browser-<N>``

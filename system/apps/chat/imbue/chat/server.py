@@ -2,7 +2,8 @@
 
 Every chat renders inside an iframe at the registered ``chat`` origin (the desktop interface,
 ``docs/system/blueprint/desktop-interface/``), served by this process at its own port; the shell
-knows the chat only as an app with pages, and reaches it only through the browser-side contract.
+knows the chat only as an app with pages, and reaches it only through the browser-side contract and the messages
+this app's manifest registers for (``focus_chat.py``).
 """
 
 import json
@@ -34,8 +35,11 @@ from simple_websocket import ConnectionClosed
 from werkzeug.exceptions import NotFound
 
 from imbue.chat import accounts_endpoints
+from imbue.chat import focus_chat
 from imbue.chat import latchkey_endpoints
+from imbue.chat import secret_requests_endpoints
 from imbue.chat.accounts import AccountError
+from imbue.chat.accounts import account_exists
 from imbue.chat.activity_state import is_lifecycle_dead
 from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.agent_discovery import SendFailedError
@@ -72,6 +76,7 @@ from imbue.chat.harnesses.binding import resolve_binding
 from imbue.chat.harnesses.claude import auth_endpoints
 from imbue.chat.harnesses.interrupt import restart_drain
 from imbue.chat.harnesses.lanes import HARNESS_LABEL
+from imbue.chat.harnesses.message_display import split_background_task_reports
 from imbue.chat.harnesses.model import InvalidModelPickError
 from imbue.chat.harnesses.model import ModelIdentity
 from imbue.chat.harnesses.model import ModelOption
@@ -137,6 +142,7 @@ from imbue.chat.models import StopAgentResponse
 from imbue.chat.models import SwitchChatRequest
 from imbue.chat.models import SwitchChatResponse
 from imbue.chat.models import parse_subagent_key
+from imbue.chat.naming import canonical_agent_name
 from imbue.chat.presence import PresenceReport
 from imbue.chat.primitives import AGENT_ID_PATTERN
 from imbue.chat.primitives import CHAT_APP_NAME
@@ -147,6 +153,9 @@ from imbue.chat.request_helpers import handle_unhandled_exception
 from imbue.chat.request_helpers import json_response
 from imbue.chat.request_helpers import parse_json_object_body
 from imbue.chat.request_helpers import parse_request_body
+from imbue.chat.secret_requests import ChatLookup
+from imbue.chat.secret_requests import NoticeDeliveryError
+from imbue.chat.secret_requests import SecretRequestChatBridge
 from imbue.chat.shell_client import post_to_shell
 from imbue.chat.shell_client import shell_base_url
 from imbue.chat.state import ChatAppState
@@ -158,6 +167,7 @@ from imbue.chat.wsgi import build_sock
 from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.pure import pure
+from imbue.mngr.errors import AgentNotFoundError
 from imbue.mngr.errors import MngrError
 from imbue.mngr.primitives import AgentId
 
@@ -462,7 +472,8 @@ def _revive_and_retry_send(
 def _deliver_message(state: ChatAppState, agent_info: AgentInfo, text: str, message_id: str) -> SendOutcome:
     """Deliver one message to an agent the way the message route does, revival included.
 
-    Raises ``SendFailedError`` with the harness's own words when it refused. Shared with the
+    Raises ``SendFailedError`` with the harness's own words when it refused, and can raise
+    mngr's ``AgentNotFoundError`` when mngr no longer lists the agent. Shared with the
     handoff (its summary request and the sends it held), so every message a chat's agent
     receives takes one path.
     """
@@ -490,14 +501,41 @@ def _deliver_message(state: ChatAppState, agent_info: AgentInfo, text: str, mess
             outcome = _revive_and_retry_send(
                 agent_info, agent_manager, session, SendMessageRequest(message=text, message_id=message_id), message_id
             )
-    # A delivered send means the agent is up: mngr's own send auto-starts a stopped
-    # file-harness agent (``is_start_desired``), and the observe stream would not see that
-    # revival for minutes. Reflect it now, as the codex revive above does, so the UI's
-    # liveness unblocks with the send and a handoff's summary wait and stop step read a
-    # lifecycle that is true rather than one that says the agent they just messaged is dead.
-    if outcome is SendOutcome.OK:
-        agent_manager.note_agent_alive(agent_info.id)
+        # A delivered send means the agent is up: mngr's own send auto-starts a stopped
+        # file-harness agent (``is_start_desired``), and the observe stream would not see that
+        # revival for minutes. Reflect it now, as the codex revive above does, so the UI's
+        # liveness unblocks with the send and a handoff's summary wait and stop step read a
+        # lifecycle that is true rather than one that says the agent they just messaged is dead.
+        # Inside the connecting scope, so the chat never reads as stopped and not connecting,
+        # which would let the stopped-chat release drop the watcher of the chat it revived.
+        if outcome is SendOutcome.OK:
+            agent_manager.note_agent_alive(agent_info.id)
     return outcome
+
+
+class _ServerSecretRequestBridge(SecretRequestChatBridge):
+    """The router's side of the secret-request routes: chats resolved, and notices sent through the ordinary send path."""
+
+    def lookup_chat(self, chat_id: str) -> ChatLookup:
+        if not get_state().agent_manager.is_agent_list_known():
+            return ChatLookup.NOT_READY
+        if _find_active_agent(chat_id) is None:
+            return ChatLookup.UNKNOWN
+        return ChatLookup.KNOWN
+
+    def deliver_notice(self, chat_id: str, text: str) -> None:
+        message_id = uuid4().hex
+        accepted = _send_to_chat(
+            get_state(),
+            ChatId(chat_id),
+            SendMessageRequest(message=text, message_id=message_id),
+            message_id,
+            # The notice answers a request the agent itself filed, so it reaches the agent whatever
+            # account it runs on.
+            is_refused_on_signed_out_account=False,
+        )
+        if isinstance(accepted, Response):
+            raise NoticeDeliveryError(accepted.get_json()["detail"])
 
 
 def _build_handoff_capabilities(state: ChatAppState) -> HandoffCapabilities:
@@ -517,12 +555,45 @@ class _SendAccepted(FrozenModel):
     held_phase: HandoffPhase | None = Field(description="The phase the send was held in; None when it was delivered")
 
 
+def _consider_naming_chat(state: ChatAppState, chat_id: ChatId, message: str) -> None:
+    """Hand a message the user sent to a chat to the namer, which names a chat still called "Chat N" from it."""
+    if state.chat_namer is not None:
+        state.chat_namer.consider_message(chat_id, message)
+
+
+# The send-failure kind a chat whose account was signed out answers with. The composer already
+# offers "Choose a provider" in place of the input from the account list, so only a page whose
+# list has not caught up with the sign-out sends and meets this.
+ACCOUNT_SIGNED_OUT_SEND_FAILURE_KIND: Final[str] = "account_signed_out"
+
+
+def _is_account_signed_out(agent_info: AgentInfo) -> bool:
+    """Whether the agent's ``account`` label names an account no longer signed in (a chat from before accounts has none).
+
+    An index that cannot be read says nothing about this account, so the send goes through.
+    """
+    account_id = agent_info.labels.get("account", "")
+    if account_id == "":
+        return False
+    try:
+        return not account_exists(account_id)
+    except AccountError as e:
+        logger.warning("Could not check whether account {} is still signed in: {}", account_id, e)
+        return False
+
+
 def _send_to_chat(
-    state: ChatAppState, chat_id: ChatId, send_message_request: SendMessageRequest, message_id: str
+    state: ChatAppState,
+    chat_id: ChatId,
+    send_message_request: SendMessageRequest,
+    message_id: str,
+    # A chat whose account was signed out takes no more of the user's messages until it moves to
+    # another provider: its agent still holds the credential it loaded, and would keep using it.
+    is_refused_on_signed_out_account: bool,
 ) -> _SendAccepted | Response:
-    """The ordinary send path, shared by the message route and the intake: hold the send while the chat converges,
-    else deliver it to the active agent; either way record the client's activity and the chat's last message. A
-    send that could not be taken answers the route's own failure response."""
+    """The ordinary send path, shared by the message route, the intake, and the secret-request notice: hold the send
+    while the chat converges, else deliver it to the active agent; either way record the client's activity and the
+    chat's last message. A send that could not be taken answers the route's own failure response."""
     agent_manager: AgentManager = state.agent_manager
     # While the chat converges on a new agent every send is held for it (spec 5.7): accepted,
     # persisted on the record, and delivered in order once the successor runs.
@@ -536,8 +607,15 @@ def _send_to_chat(
         agent_info = _find_active_agent(str(chat_id))
         if agent_info is None:
             return _chat_not_found_response(str(chat_id))
+        if is_refused_on_signed_out_account and _is_account_signed_out(agent_info):
+            detail = "You signed out of the account this chat runs on. Choose a provider to continue it on."
+            return json_response({"detail": detail, "kind": ACCOUNT_SIGNED_OUT_SEND_FAILURE_KIND}, status_code=409)
         try:
             outcome = _deliver_message(state, agent_info, send_message_request.message, message_id)
+        except AgentNotFoundError as e:
+            # Destroyed while the send was in flight: the chat is gone, not refusing.
+            logger.info("Agent {} was destroyed while a message to it was in flight: {}", agent_info.name, e)
+            return _chat_not_found_response(str(chat_id))
         except SendFailedError as send_failure:
             # The harness said why it refused, in words written for the person who has to fix it
             # ("the agent is in shell mode with an unsubmitted command"). Pass that through rather
@@ -577,7 +655,12 @@ def _send_message_endpoint(chat_id: str) -> Response:
 
     send_message_request = SendMessageRequest.model_validate(request.get_json())
     message_id = send_message_request.message_id or uuid4().hex
-    accepted = _send_to_chat(state, ChatId(chat_id), send_message_request, message_id)
+    # Alongside the delivery rather than after it, which can take seconds: the name should land
+    # while the agent is still answering.
+    _consider_naming_chat(state, ChatId(chat_id), send_message_request.message)
+    accepted = _send_to_chat(
+        state, ChatId(chat_id), send_message_request, message_id, is_refused_on_signed_out_account=True
+    )
     if isinstance(accepted, Response):
         return accepted
     # A 202 tells the page to keep its "Sending" placeholder and the script that nothing needs
@@ -1075,12 +1158,15 @@ def _drain_to_composer_endpoint(chat_id: str) -> Response:
     Dispatches through the harness's registered interrupt-to-composer implementation (the base
     restart-drain by default; native overrides for pi, codex, and claude's empty-queue chord),
     which returns the concatenated block the frontend drops into the composer for the user to
-    edit and send, rather than resent. Unlike the flush there is NO empty-queue short-circuit: a
-    stop mid-turn with nothing queued still interrupts (block comes back empty). The endpoint
-    binds the harness-neutral capabilities -- watcher, restart, activity-settle, and the native
-    cancel keypress (routed through mngr's locked message API, like the tap) -- and the
-    implementation uses whichever it needs. Returns 404 for an unknown agent, 400 for the primary
-    services agent, 500 if the interrupt fails, 200 with ``{block}`` otherwise.
+    edit and send, rather than resent. A background-task report in the block is the exception: it
+    is the agent's, not the user's, so it is sent straight back to the agent, which starts its next
+    turn, and reaches the composer only if that send fails. Unlike the flush there is NO
+    empty-queue short-circuit: a stop mid-turn with nothing queued still interrupts (block comes
+    back empty). The endpoint binds the harness-neutral capabilities -- watcher, restart,
+    activity-settle, and the native cancel keypress (routed through mngr's locked message API,
+    like the tap) -- and the implementation uses whichever it needs. Returns 404 for an unknown
+    agent, 400 for the primary services agent, 500 if the interrupt fails, 200 with ``{block}``
+    otherwise.
     """
     agent_info = _find_active_agent(chat_id)
     if agent_info is None:
@@ -1101,7 +1187,29 @@ def _drain_to_composer_endpoint(chat_id: str) -> Response:
         error = ErrorResponse(detail=f"Failed to record the interrupt for agent '{agent_info.name}'")
         return json_response(error.model_dump(), status_code=500)
 
-    return json_response(DrainToComposerResponse(block=block).model_dump())
+    composer_block, reports = split_background_task_reports(block)
+    undelivered = [report for report in reports if not _resend_background_task_report(agent_info, report)]
+    # A report the agent could not take goes to the composer rather than nowhere: it is the
+    # only copy of that command's result.
+    return json_response(
+        DrainToComposerResponse(block="\n".join(part for part in (*undelivered, composer_block) if part)).model_dump()
+    )
+
+
+def _resend_background_task_report(agent_info: AgentInfo, report: str) -> bool:
+    """Deliver a report taken off the queue by a Stop straight back to its agent; whether it landed."""
+    try:
+        outcome = _deliver_message(get_state(), agent_info, report, uuid4().hex)
+    except AgentNotFoundError as e:
+        logger.info("Could not re-send a background-task report to {}, which no longer exists: {}", agent_info.name, e)
+        return False
+    except SendFailedError as send_failure:
+        logger.warning("Could not re-send a background-task report to {}: {}", agent_info.name, send_failure.detail)
+        return False
+    if outcome is not SendOutcome.OK:
+        logger.warning("Could not re-send a background-task report to {}: {}", agent_info.name, outcome)
+        return False
+    return True
 
 
 def _switch_chat_endpoint(chat_id: str) -> Response:
@@ -1310,7 +1418,7 @@ def _run_create_chat() -> CreatedChat | Response:
     With ``should_wait`` the answer comes once the create has finished: the chat's identity
     as before when it landed, a 500 carrying the create's own reason when it failed, and a
     504 when it is still running at the wait's ceiling. That is how a caller outside the
-    workspace (the Minds app's assist and update chats, through
+    workspace (the Imbue Studio app's assist and update chats, through
     ``system/scripts/message_chat.py --create``) holds its "starting..." state until the
     chat exists, without polling.
     """
@@ -1328,8 +1436,8 @@ def _run_create_chat() -> CreatedChat | Response:
     created = _created_chat_or_refusal(
         lambda: agent_manager.create_chat(
             create_request.name,
-            # A client asks for no templates: the manager adds `welcome` and `fast` itself,
-            # from the message and the workspace's fast-mode limit (``launch_role_templates``).
+            # A client asks for no templates: the manager adds `fast` itself, from the
+            # workspace's fast-mode limit (``launch_role_templates``).
             extra_role_templates=(),
             project_id=project_id,
             account_id=create_request.account_id,
@@ -1342,6 +1450,7 @@ def _run_create_chat() -> CreatedChat | Response:
     )
     if isinstance(created, Response):
         return created
+    _consider_naming_chat(get_state(), created.chat_id, create_request.message)
     if not create_request.should_wait:
         return created
     outcome = agent_manager.wait_for_chat_creation(created.chat_id, CHAT_CREATION_WAIT_TIMEOUT_SECONDS)
@@ -1363,13 +1472,31 @@ def _create_chat() -> Response:
     return json_response(response.model_dump(), status_code=201)
 
 
+def _awaiting_chat_for_empty_list() -> Response:
+    """``POST /api/chats/awaiting``: the chat a chat list with none to show opens on, waiting for its first send.
+
+    Nothing is written until that send launches it, so a list that shows it and is closed leaves no chat behind
+    after a restart of this app. Answers the chat's id and name pair; 503 until the agent list has been read.
+    """
+    agent_manager: AgentManager = get_state().agent_manager
+    if not agent_manager.is_agent_list_known():
+        return _agent_list_not_known_response()
+    provisional = agent_manager.awaiting_chat_for_empty_list()
+    response = CreateChatResponse(
+        chat_id=provisional.chat_id,
+        name=canonical_agent_name(provisional.name),
+        display_name=provisional.name,
+    )
+    return json_response(response.model_dump())
+
+
 def _seed_chat() -> Response:
-    """``POST /api/chats/seed``: open a chat on the turns the Mind app had before the workspace existed.
+    """``POST /api/chats/seed``: open a chat on the turns the Imbue Studio app had before the workspace existed.
 
     The body is a :class:`SeedChatRequest`. Answers 201 with the chat's id and name pair; the
     chat is listed at once as a provisional chat awaiting the user's first message, with the
     turns as its transcript (``chat_seed.py``). Like every create, 503 until the agent list has
-    been read from mngr once, so the Mind app's seeding retries rather than being refused; a
+    been read from mngr once, so the Imbue Studio app's seeding retries rather than being refused; a
     title with no usable characters answers 400 and one already taken 409, as a launch's
     requested name would.
     """
@@ -1454,7 +1581,8 @@ def _deliver_intake_send(state: ChatAppState, chat_id: ChatId, intake: IntakeReq
     send_message_request = SendMessageRequest(
         message=intake.message, message_id=message_id, client_id=intake.client_id, desktop_id=intake.desktop_id
     )
-    accepted = _send_to_chat(state, chat_id, send_message_request, message_id)
+    _consider_naming_chat(state, chat_id, intake.message)
+    accepted = _send_to_chat(state, chat_id, send_message_request, message_id, is_refused_on_signed_out_account=True)
     return accepted if isinstance(accepted, Response) else None
 
 
@@ -1530,6 +1658,7 @@ def _intake_into_new_chat(state: ChatAppState, intake: IntakeRequest) -> Respons
         )
         if isinstance(created, Response):
             return created
+        _consider_naming_chat(state, created.chat_id, intake.message)
         return json_response(IntakeResponse(path=intake_path(created.chat_id, None)).model_dump())
     minted = agent_manager.mint_awaiting_chat(account or "")
     token = state.pending_intakes.mint(intake, minted.chat_id, needs_pick=False)
@@ -1924,7 +2053,7 @@ def _run_ws_broadcast_loop(websocket: Any, agent_manager: AgentManager) -> None:
         # list. The list comes last on purpose -- it is how a page knows the replay is over,
         # so a record it still holds that this process did not replay (a create the previous
         # process was running) can be dropped rather than waited on forever.
-        for provisional in agent_manager.get_provisional_chats():
+        for provisional in agent_manager.get_provisional_chats_as_shown():
             websocket.send(json.dumps(provisional_chat_created_message(provisional)))
         websocket.send(json.dumps(chats_updated_message(agent_manager.get_chat_snapshots())))
         shutdown = False
@@ -2004,6 +2133,7 @@ def create_application(state: ChatAppState) -> Flask:
     application.add_url_rule("/api/chats", view_func=_list_chats_endpoint, methods=["GET"])
     application.add_url_rule("/api/chats/create", view_func=_create_chat, methods=["POST"])
     application.add_url_rule("/api/chats/seed", view_func=_seed_chat, methods=["POST"])
+    application.add_url_rule("/api/chats/awaiting", view_func=_awaiting_chat_for_empty_list, methods=["POST"])
     application.add_url_rule("/api/chats/intake", view_func=_intake_chat, methods=["POST"])
     application.add_url_rule("/api/chats/intakes/<token>", view_func=_get_pending_intake, methods=["GET"])
     application.add_url_rule("/api/chats/intakes/<token>/apply", view_func=_apply_pending_intake, methods=["POST"])
@@ -2048,6 +2178,9 @@ def create_application(state: ChatAppState) -> Flask:
     auth_endpoints.register_routes(application)
     accounts_endpoints.register_routes(application)
     latchkey_endpoints.register_routes(application)
+    focus_chat.register_routes(application)
+    state.secret_request_bridge = _ServerSecretRequestBridge()
+    secret_requests_endpoints.register_routes(application)
 
     application.add_url_rule("/<path:path>", view_func=_serve_file_or_document, methods=["GET"])
 

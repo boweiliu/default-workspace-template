@@ -28,14 +28,14 @@ from playwright.sync_api import Frame
 from playwright.sync_api import FrameLocator
 from playwright.sync_api import Locator
 from playwright.sync_api import Page
+from playwright.sync_api import ViewportSize
 from playwright.sync_api import expect
 
 from imbue.chat.accounts import account_dir
 from imbue.chat.agent_discovery import MngrMessenger
 from imbue.chat.auto_open import chat_root_path
-from imbue.chat.auto_open import navigate_pinned_op_body
-from imbue.chat.auto_open import open_chat_op_body
-from imbue.chat.auto_open import restore_pinned_op_body
+from imbue.chat.harnesses.harness_type import HarnessType
+from imbue.chat.harnesses.registry import get_model_state_path
 from imbue.chat.models import ChatSnapshot
 from imbue.chat.primitives import CHAT_APP_NAME
 from imbue.chat.primitives import ChatId
@@ -66,7 +66,7 @@ def _frontends_built() -> bool:
 
 
 pytestmark = [
-    pytest.mark.release,
+    pytest.mark.browser,
     pytest.mark.skipif(not _playwright_browsers_installed(), reason="Playwright browsers not installed"),
     pytest.mark.skipif(
         not _frontends_built(),
@@ -287,22 +287,19 @@ def _navigate_chat_window(server: RunningWorkspace, client_id: str, path: str) -
 
 
 def _open_fixture_chat_by_op(server: RunningWorkspace, client_id: str) -> None:
-    """Show the fixture chat the way the agent-side auto-open does: the desktop ``navigate`` op pointing the app's
-    pinned window at the chat for the client, then ``restore`` of it; with no pinned window on the desktop (this
-    server registers the chat without its pin) the ``open`` op instead, as the reactor falls back. Retried until the
-    shell has registered the client."""
-    chat_id = ChatId(FIXTURE_AGENT_ID)
-
-    def _attempt() -> bool:
-        navigated = _post_op(server, navigate_pinned_op_body(chat_id, client_id))
-        if navigated == 404:
-            return _post_op(server, open_chat_op_body(chat_id, client_id)) == 200
-        if navigated != 200:
-            return False
-        _post_op(server, restore_pinned_op_body(client_id))
-        return True
-
-    wait_for(_attempt, timeout=15.0, poll_interval=0.2, error_message="the open op never succeeded")
+    """Open the chat root on the fixture chat on the client's active desktop with the desktop ``open`` op, as an
+    agent does, whatever other desktops show. Retried until the shell has registered the client."""
+    body = {
+        "op": "open",
+        "args": {"app": CHAT_APP_NAME, "path": _FIXTURE_ROOT_PATH, "client": client_id},
+        "requester": None,
+    }
+    wait_for(
+        lambda: _post_op(server, body) == 200,
+        timeout=15.0,
+        poll_interval=0.2,
+        error_message="the open op never succeeded",
+    )
 
 
 def _taskbar_entry(page: Page, window_id: str) -> Locator:
@@ -373,6 +370,52 @@ def test_composer_bar_survives_a_shorter_window(e2e_server: RunningWorkspace, pa
         timeout=10.0,
         error_message="the composer's model bar stayed below the bottom of the shortened window",
     )
+
+
+def _box(locator: Locator) -> dict[str, float]:
+    box = locator.bounding_box()
+    assert box is not None, f"{locator} is not laid out"
+    return {"left": box["x"], "top": box["y"], "right": box["x"] + box["width"], "bottom": box["y"] + box["height"]}
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_composer_buttons_move_under_text_that_wraps(e2e_server: RunningWorkspace, page: Page) -> None:
+    """Text that fits on one line keeps the composer's buttons beside it. Text that needs a second line, by
+    wrapping or by a line break, gets the composer's full width, with the buttons in a row at the bottom
+    right under it, and they come back beside it once the text fits on one line again."""
+    page.set_viewport_size({"width": 1200, "height": 900})
+    _open_fixture_chat(page, e2e_server)
+    chat = _chat(page)
+    textarea = chat.locator(".message-input-textbox")
+    expect(textarea).to_be_visible(timeout=15000)
+    row = chat.locator(".message-input-row")
+    toolbar = chat.locator(".message-input-toolbar")
+
+    def assert_buttons_beside_text() -> None:
+        expect(row).not_to_have_attribute("data-stacked", "")
+        text_box, toolbar_box = _box(textarea), _box(toolbar)
+        assert toolbar_box["left"] >= text_box["right"] - 1
+        assert toolbar_box["top"] < text_box["bottom"]
+
+    def assert_buttons_under_text() -> None:
+        expect(row).to_have_attribute("data-stacked", "")
+        row_box, text_box, toolbar_box = _box(row), _box(textarea), _box(toolbar)
+        assert text_box["right"] - text_box["left"] >= row_box["right"] - row_box["left"] - 1
+        assert toolbar_box["top"] >= text_box["bottom"] - 1
+        assert abs(toolbar_box["bottom"] - row_box["bottom"]) <= 1
+        assert abs(toolbar_box["right"] - row_box["right"]) <= 1
+
+    textarea.fill("short message")
+    assert_buttons_beside_text()
+
+    textarea.fill("a long message that wraps " * 20)
+    assert_buttons_under_text()
+
+    textarea.fill("first line\nsecond line")
+    assert_buttons_under_text()
+
+    textarea.fill("short message")
+    assert_buttons_beside_text()
 
 
 _TOOL_CALL_SESSION_EVENTS: list[dict[str, Any]] = [
@@ -669,8 +712,8 @@ def test_switching_desktops_preserves_chat_transcript(tmp_path: Path, page: Page
     """A chat window shown again by a desktop switch still shows its own transcript.
 
     Windows belong to a desktop: opening the chat on a second desktop (through the agent's open
-    op, the way the auto-open lands a chat on the client's active desktop) is a window of its own
-    there, and switching back shows the first desktop's window, whose page was held hidden.
+    op) is a window of its own there, and switching back shows the first desktop's window, whose
+    page was held hidden.
     """
     with _running_e2e_server(tmp_path) as server:
         _open_fixture_chat(page, server)
@@ -731,6 +774,10 @@ def test_a_draft_intake_navigated_into_the_shown_chat_lands_in_its_composer_and_
         expect(_chat(page).locator(".message-input-textbox")).to_have_value(draft)
 
 
+# Flaky: the second navigate to the same /send path is sometimes dropped by the shell. The page's report of
+# leaving it (after Escape) and the navigate back can land in one reconcile, where the shell's stale-snapshot
+# guard (livePages.ts follow(), pendingReport.fromPath) takes the deliberate navigate for a stale snapshot.
+@pytest.mark.flaky
 @pytest.mark.timeout(120, func_only=False)
 def test_a_chat_selector_intake_offers_the_picker_and_sends_the_text_to_the_chat_picked(
     tmp_path: Path, page: Page
@@ -794,6 +841,17 @@ def test_a_chat_selector_intake_with_one_chat_sends_to_it_on_the_server_and_the_
 
 
 @pytest.mark.timeout(120, func_only=False)
+def test_the_chat_list_opened_with_nothing_selected_shows_the_most_recent_chat(tmp_path: Path, page: Page) -> None:
+    """The chat list is never open empty: at ``/`` it selects the most recent chat and reports that selection."""
+    with _running_e2e_server(tmp_path) as server:
+        _land(page, server, "?" + urllib.parse.urlencode({"open": f"{CHAT_APP_NAME}:/"}))
+        expect(page.locator("iframe[data-live-page]")).to_have_count(1, timeout=15000)
+        _wait_for_chat_window_path(server, lambda path: path == _FIXTURE_ROOT_PATH, "the most recent chat's selection")
+        expect(_chat_root(page).locator("iframe.chat-root-frame:visible")).to_have_count(1, timeout=15000)
+        expect(_chat_root(page).locator(".chat-root-empty")).to_have_count(0)
+
+
+@pytest.mark.timeout(120, func_only=False)
 def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_own_window(
     tmp_path: Path, page: Page
 ) -> None:
@@ -802,9 +860,11 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_ow
     will be rather than on the shell; no agent is created until an account is chosen (post-launch-paths plan
     section 4.6)."""
     with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
-        _start_new_chat(page, server)
+        chat_frame = _start_new_chat(page, server)
         root = _chat_root(page)
         expect(root.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+        # Under the chooser, the composer's provider row already says there is no provider to start on.
+        expect(chat_frame.locator(".model-selector-not-connected")).to_have_text("Not connected", timeout=15000)
         # The shell itself renders no chooser: the sign-in lives in the chat's page.
         assert page.locator('[data-e2e="provider-chooser"]').count() == 0
         assert [str(chat.chat_id) for chat in server.chat_state.agent_manager.get_chat_snapshots()] == [
@@ -822,23 +882,95 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_ow
         expect(_chat_root(page).locator(".chat-root")).to_be_visible(timeout=15000)
 
 
+# Installed in every frame before its scripts run: records each placeholder screen or text the chat page ever
+# draws, however briefly, into ``window.__placeholdersSeen``.
+_RECORD_PLACEHOLDERS_SEEN_SCRIPT = """
+(() => {
+  const texts = ["No conversation data", "Loading terminal output", "Starting the chat", "Loading events",
+    "No events yet", "Send a message to start this chat"];
+  const seen = new Set();
+  window.__placeholdersSeen = [];
+  const check = () => {
+    const root = document.documentElement;
+    if (!root) return;
+    if (document.querySelector(".message-list-not-found") && !seen.has("not-found")) seen.add("not-found");
+    const body = root.innerText || "";
+    for (const text of texts) if (body.includes(text)) seen.add(text);
+    window.__placeholdersSeen = [...seen];
+  };
+  new MutationObserver(check).observe(document, { childList: true, subtree: true, characterData: true });
+})();
+"""
+
+
 @pytest.mark.timeout(120, func_only=False)
-def test_a_new_chat_with_an_account_starts_at_once_and_shows_its_composer_when_it_lands(
-    tmp_path: Path, page: Page
+def test_a_new_chat_with_an_account_is_a_blank_ready_chat_from_the_start(
+    tmp_path: Path, page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With an account signed in the intake creates the chat at once on it; the page says so while the
-    create runs, and the composer arrives when the agent registers. The launcher's launch points the chat's
-    pinned window at the new chat's path, so the create can land before the notice is looked for: either is
-    accepted, and the composer is what must arrive."""
+    """With an account signed in the intake creates the chat at once on it, and the page is an empty chat with its composer
+    ready from the first frame: no placeholder text while the agent is created, and none once it lands -- not even
+    for a single frame, which is how a flash of a "not found" or "loading" screen shows up."""
+    release_create = tmp_path / "release-create"
+    monkeypatch.setenv("FAKE_MNGR_CREATE_RELEASE_FILE", str(release_create))
+    page.add_init_script(_RECORD_PLACEHOLDERS_SEEN_SCRIPT)
     with _running_e2e_server(tmp_path) as server:
-        chat = _start_new_chat(page, server)
-        creating_or_landed = chat.locator(".message-list-creating, .message-input-textbox")
-        expect(creating_or_landed.first).to_be_visible(timeout=15000)
-        if chat.locator(".message-list-creating").count() > 0:
-            expect(chat.locator(".message-list-creating")).to_contain_text("Starting the chat")
-        expect(chat.locator(".message-input-textbox")).to_be_visible(timeout=15000)
+        try:
+            chat = _start_new_chat(page, server)
+            # The long wait only covers the chat page's socket, which in CI has taken about twenty seconds to
+            # connect and bring the provisional record; the create itself is held until released below.
+            expect(chat.locator(".message-list-creating")).to_have_count(1, timeout=45000)
+            expect(chat.locator(".message-input-textbox")).to_be_editable()
+            expect(chat.locator(".message-list-creating")).to_have_text("")
+            # The provider row is there before the agent is: it names the account the chat starts on.
+            expect(chat.locator(".model-selector-provisional")).to_have_text("Anthropic")
+            composer_while_starting = chat.locator(".message-input-textbox").bounding_box()
+            assert chat.locator('[data-e2e="provider-chooser"]').count() == 0
+        finally:
+            release_create.touch()
+
+        expect(chat.locator(".message-list-empty")).to_have_count(1, timeout=15000)
+        expect(chat.locator(".message-list-empty")).to_have_text("")
+        expect(chat.locator(".message-input-textbox")).to_be_editable()
+        # The agent's own menu takes the row over without moving the composer above it.
+        expect(chat.locator(".model-selector-trigger")).to_be_visible()
+        assert chat.locator(".message-input-textbox").bounding_box() == composer_while_starting
+        seen = [text for frame in page.frames for text in frame.evaluate("window.__placeholdersSeen || []")]
+        assert seen == [], "a new chat showed placeholder screens while it started: {}".format(seen)
+
+
+@pytest.mark.timeout(120, func_only=False)
+def test_a_message_sent_while_a_new_chat_starts_stays_where_it_is_and_is_the_chats_first(
+    tmp_path: Path, page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A message typed while the chat is being created sits where the transcript will put it, and
+    stays there when the chat lands; it reaches the new agent as its first message, with nothing
+    sent ahead of it."""
+    release_create = tmp_path / "release-create"
+    monkeypatch.setenv("FAKE_MNGR_CREATE_RELEASE_FILE", str(release_create))
+    messenger = RecordingMngrMessenger()
+    with running_workspace(tmp_path, find_free_port(), find_free_port(), messenger=messenger) as server:
+        try:
+            chat = _start_new_chat(page, server)
+            # The create is held until released below, so the long wait only covers the chat page's socket,
+            # which in CI has taken about twenty seconds to connect and bring the provisional record.
+            expect(chat.locator(".message-list-creating")).to_have_count(1, timeout=45000)
+            chat.locator(".message-input-textbox").fill("hello")
+            chat.locator(".message-input-textbox").press("Enter")
+            bubble = chat.locator(".outgoing-message")
+            expect(bubble).to_be_visible(timeout=5000)
+            assert messenger.sent == [], "the create is still running, so nothing can have been delivered"
+            box_while_starting = bubble.bounding_box()
+            assert box_while_starting is not None
+        finally:
+            release_create.touch()
+
+        wait_for(lambda: len(messenger.sent) > 0, timeout=30.0, error_message="the message never reached the agent")
         expect(chat.locator(".message-list-creating")).to_have_count(0, timeout=15000)
-        assert chat.locator('[data-e2e="provider-chooser"]').count() == 0
+
+        assert [message for _agent_id, message in messenger.sent] == ["hello"]
+        box_once_landed = bubble.bounding_box()
+        assert box_once_landed is not None
+        assert box_once_landed["y"] == box_while_starting["y"]
 
 
 # Flaky: in CI the chat page's socket has twice taken about twenty seconds to connect while the create failed at
@@ -1300,3 +1432,166 @@ def test_a_failed_switch_shows_its_reason_and_retries_on_a_third_account(
         provider_row = chat.locator('[data-menu-row="providers"]')
         expect(provider_row).to_contain_text("Google")
         expect(provider_row).not_to_contain_text("next:")
+
+
+# the phone layout (plan-phone-interface.md, "The chat app")
+
+
+_PHONE_VIEWPORT: ViewportSize = {"width": 393, "height": 852}
+
+
+def _open_phone_chat_root(page: Page, server: RunningWorkspace, path: str = _FIXTURE_ROOT_PATH) -> None:
+    """Open the chat root at a phone's width, at the chat app's own URL: its layout follows its own width whatever
+    frames it, so the shell's phone layout is not what is under test here."""
+    page.set_viewport_size(_PHONE_VIEWPORT)
+    page.goto(f"{server.chat_url}{path}")
+    expect(page.locator('.chat-root[data-compact="true"]')).to_be_visible(timeout=15000)
+
+
+def _dismiss_drawer_by_its_scrim(page: Page) -> None:
+    """Tap the scrim where the drawer's panel does not cover it: the strip at the right edge."""
+    page.mouse.click(_PHONE_VIEWPORT["width"] - 10, _PHONE_VIEWPORT["height"] // 2)
+
+
+def _shown_chat_of_root(page: Page) -> FrameLocator:
+    """The chat page the root opened at the chat app's own URL shows."""
+    return page.frame_locator("iframe.chat-root-frame:not([hidden])")
+
+
+def _selection_of(url: str) -> str | None:
+    """The chat the root's URL selects."""
+    return urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("chat", [None])[0]
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_the_phone_layout_keeps_the_chat_list_in_a_drawer_over_the_chat(
+    e2e_server: RunningWorkspace, page: Page
+) -> None:
+    """With nothing selected the drawer is open over an empty transcript that says to pick or start a chat; its rows
+    are a finger's height (44px), picking one shows that chat under a header naming it and closes the drawer, the list
+    button opens it again, and a tap on the scrim or a drag to the left dismisses it."""
+    _open_phone_chat_root(page, e2e_server, "/")
+    drawer = page.locator("[data-chat-drawer]")
+    expect(drawer).to_be_visible()
+    expect(page.locator(".chat-root-empty")).to_have_text("Pick a chat, or start a new one.")
+    expect(drawer.locator(".chat-rail-new")).to_have_attribute("aria-label", "New chat")
+
+    _dismiss_drawer_by_its_scrim(page)
+    expect(drawer).to_have_count(0)
+    expect(page.locator(".chat-header-title")).to_have_text("Chats")
+
+    page.locator("[data-chat-header-list]").click()
+    row = drawer.locator(f'.chat-rail-row[data-chat-id="{FIXTURE_AGENT_ID}"]')
+    row_box = row.bounding_box()
+    assert row_box is not None and row_box["height"] >= 44, row_box
+    row.click()
+    expect(drawer).to_have_count(0)
+    expect(page.locator(".chat-header-title")).to_have_text("test-agent")
+    expect(_shown_chat_of_root(page).locator(".message-user").first).to_contain_text("Hello agent!", timeout=15000)
+
+    page.locator("[data-chat-header-list]").click()
+    expect(drawer).to_be_visible()
+    panel = page.locator(".chat-drawer-panel").bounding_box()
+    assert panel is not None
+    y = panel["y"] + panel["height"] / 2
+    page.mouse.move(panel["x"] + panel["width"] - 40, y)
+    page.mouse.down()
+    page.mouse.move(panel["x"] + 40, y, steps=10)
+    page.mouse.up()
+    expect(drawer).to_have_count(0)
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_the_phone_header_kebab_renames_the_chat_on_screen(e2e_server: RunningWorkspace, page: Page) -> None:
+    """The header's kebab offers the row menu's verbs for the chat on screen, and its Rename is typed in place of the
+    title and lands on the chat."""
+    _open_phone_chat_root(page, e2e_server)
+    expect(page.locator(".chat-header-title")).to_have_text("test-agent")
+
+    page.locator("[data-chat-header-menu]").click()
+    menu = page.locator(".chat-header-menu")
+    expect(menu.locator("[data-menu-row]")).to_have_text(["Rename", "Stop chat", "Delete chat"])
+    menu.locator('[data-menu-row="rename"]').click()
+    field = page.locator(".chat-header .chat-rail-rename-input")
+    expect(field).to_be_focused()
+    field.fill("Phone rename")
+    field.press("Enter")
+
+    expect(page.locator(".chat-header-title")).to_have_text("Phone rename", timeout=15000)
+    snapshot = e2e_server.chat_state.agent_manager.get_chat_snapshot(FIXTURE_AGENT_ID)
+    assert snapshot is not None and snapshot.title == "Phone rename"
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_a_drawer_row_kebab_stops_that_chat(tmp_path: Path, page: Page) -> None:
+    """Each row in the drawer carries a kebab with the right-click menu's verbs; its Stop chat stops that row's chat,
+    not the one on screen, and picks nothing."""
+    with _running_e2e_server(tmp_path, additional_agents=((_SECOND_AGENT_ID, "Second-chat"),)) as server:
+        _open_phone_chat_root(page, server)
+        page.locator("[data-chat-header-list]").click()
+        page.locator(f'[data-chat-row-menu="{_SECOND_AGENT_ID}"]').click()
+        menu = page.locator(".chat-rail-menu")
+        expect(menu.locator("[data-menu-row]")).to_have_text(["Rename", "Stop chat", "Delete chat"])
+
+        with page.expect_response(
+            lambda response: response.request.method == "POST" and "/stop" in response.url
+        ) as stopped:
+            menu.locator('[data-menu-row="stop"]').click()
+        assert stopped.value.url.endswith(f"/api/chats/{_SECOND_AGENT_ID}/stop")
+        assert stopped.value.status == 200
+        expect(page.locator("[data-chat-drawer]")).to_be_visible()
+        assert _selection_of(page.url) == FIXTURE_AGENT_ID
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_the_phone_composer_settings_button_opens_the_model_menu_with_effort_segments_and_source_view(
+    e2e_server: RunningWorkspace, page: Page
+) -> None:
+    """On a phone the model chip leaves the under-bar for a settings button at the composer's left; its menu carries
+    the effort as segments, whose press sets the chat's effort, the Source view switch as a row, and submenus that
+    slide in over the card and back."""
+    model_state = get_model_state_path(HarnessType.CLAUDE, e2e_server.agent_info.agent_state_dir)
+    model_state.write_text(json.dumps({"model": "claude-opus-5-5", "effort": "high", "fast": False}))
+    e2e_server.chat_state.agent_manager.refresh_model_choice(FIXTURE_AGENT_ID)
+    _open_phone_chat_root(page, e2e_server)
+    chat = _shown_chat_of_root(page)
+    expect(chat.locator(".message-input-textbox")).to_be_visible(timeout=15000)
+    expect(chat.locator(".composer-under-bar .model-selector-trigger")).to_have_count(0)
+    expect(chat.locator(".composer-under-bar .terminal-view-toggle")).to_have_count(0)
+
+    chat.locator("[data-composer-settings]").click()
+    menu = chat.locator(".model-provider-menu--compact")
+    expect(menu).to_be_visible()
+    segments = menu.locator('[role="radiogroup"][aria-label="Reasoning effort"] [data-effort-level]')
+    expect(segments).to_have_text(["Low", "Medium", "High", "Xhigh", "Max"])
+    expect(menu.locator('[data-effort-level="high"]')).to_have_attribute("aria-checked", "true")
+    expect(menu.locator('[data-menu-row="source-view"] [role="switch"]')).to_have_attribute("aria-checked", "false")
+    expect(menu.locator('input[type="range"]')).to_have_count(0)
+
+    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/model")) as picked:
+        menu.locator('[data-effort-level="max"]').click()
+    assert json.loads(picked.value.post_data or "{}")["effort"] == "max"
+
+    menu.locator('[data-menu-row="providers"]').click()
+    expect(menu.locator("[data-menu-track]")).to_have_attribute("data-menu-track", "submenu")
+    expect(menu.locator("text=+ Add a provider")).to_be_visible()
+    menu.locator("[data-menu-track-back]").click()
+    expect(menu.locator("[data-menu-track]")).to_have_attribute("data-menu-track", "menu")
+
+    menu.locator('[data-menu-row="source-view"] [role="switch"]').click()
+    expect(menu).to_have_count(0)
+    expect(chat.locator(".composer-under-bar .terminal-view-toggle")).to_have_attribute("aria-checked", "true")
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_a_draft_typed_on_the_phone_is_back_after_a_reload(e2e_server: RunningWorkspace, page: Page) -> None:
+    """An unsent message survives the page going away, which is what lets the phone mount only the window it shows."""
+    _open_phone_chat_root(page, e2e_server)
+    textbox = _shown_chat_of_root(page).locator(".message-input-textbox")
+    expect(textbox).to_be_visible(timeout=15000)
+    textbox.fill("Half a thought, typed on a phone")
+
+    page.reload()
+    expect(_shown_chat_of_root(page).locator(".message-input-textbox")).to_have_value(
+        "Half a thought, typed on a phone", timeout=15000
+    )

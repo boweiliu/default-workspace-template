@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_WINDOW_PATH_LENGTH,
   appLaunchesOf,
+  appShortcutOf,
   fillParamOf,
   freeTextParams,
   freeTextRowsOf,
-  chatPath,
-  isPathShowingChat,
   launchPathOf,
   launchRowKindOf,
   orderAppLaunches,
@@ -76,6 +75,25 @@ describe("launch paths of an app", () => {
     expect(launchPathOf(docs, "new")?.label).toBe("New docs");
     expect(launchPathOf(docs, "other")).toBeNull();
   });
+
+  it("gives an app one desktop shortcut by the shell's seeding rule, preferring a launch path taking no text", () => {
+    expect(appShortcutOf(notes)).toEqual({ launch: "new", mode: "focus" });
+    // A declared default shortcut stands even when its launch path takes text; one the app does not offer gives none.
+    expect(appShortcutOf(appRecord("chatty", { launch_paths: docs.launch_paths }))).toEqual({
+      launch: "new",
+      mode: "focus",
+    });
+    expect(appShortcutOf(appRecord("gone", { default_shortcut: { launch: "missing", mode: "new" } }))).toBeNull();
+    const undeclared = { default_shortcut: null, launch_paths: buddy.launch_paths };
+    expect(appShortcutOf(appRecord("own", undeclared))).toEqual({ launch: "root", mode: "focus" });
+    // With no declared default and every launch path taking text, the first is still the app's shortcut.
+    expect(appShortcutOf(appRecord("asker", { default_shortcut: null, launch_paths: docs.launch_paths }))).toEqual({
+      launch: "new",
+      mode: "focus",
+    });
+    expect(appShortcutOf(appRecord("preview-1", { ...undeclared, program: "" }))).toBeNull();
+    expect(appShortcutOf(hidden)).toBeNull();
+  });
 });
 
 describe("the free-text params", () => {
@@ -112,18 +130,5 @@ describe("the free-text params", () => {
   it("never stands a POST launch path down for length, and stands one with no text param down outright", () => {
     expect(textRowDisabledReason(drafting, "x".repeat(5000))).toBeNull();
     expect(textRowDisabledReason(launchPathRecord(), "hi")).toBe("No app on this machine can start a chat");
-  });
-});
-
-describe("the path a chat is shown at", () => {
-  it("reads the chat's own page and its subagent views as showing it, and nothing else", () => {
-    expect(chatPath("chat-7")).toBe("/chat-7");
-    expect(isPathShowingChat("/chat-7", "chat-7")).toBe(true);
-    expect(isPathShowingChat("/chat-7.agent-2.sess-3", "chat-7")).toBe(true);
-    expect(isPathShowingChat("/chat-7?draft=hi", "chat-7")).toBe(true);
-    // The chat list, another chat, and a chat whose id merely starts with this one are not it.
-    expect(isPathShowingChat("/", "chat-7")).toBe(false);
-    expect(isPathShowingChat("/chat-8", "chat-7")).toBe(false);
-    expect(isPathShowingChat("/chat-70", "chat-7")).toBe(false);
   });
 });

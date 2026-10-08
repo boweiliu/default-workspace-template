@@ -7,7 +7,7 @@
  * every page a launch opens; nothing here builds a URL.
  */
 
-import type { AppRecord, LaunchPath } from "./records";
+import type { AppRecord, DefaultShortcut, LaunchPath } from "./records";
 
 /** One launch path of one app: what a launcher row runs. */
 export interface AppLaunch {
@@ -24,6 +24,8 @@ export const TEXT_TOO_LONG_REASON = "Too long to send from here";
 
 /** Why a text cannot be started anywhere: no app declares a launch path that takes typed text. */
 export const NO_TEXT_APP_REASON = "No app on this machine can start a chat";
+/** Why a page's ``shell:draft-text`` went nowhere. */
+export const NO_DRAFT_APP_REASON = "No app on this machine can take a draft";
 
 /** Every launch path of every openable app, in registry and manifest order. */
 export function appLaunchesOf(apps: readonly AppRecord[]): AppLaunch[] {
@@ -71,21 +73,29 @@ export function freeTextRowsOf(apps: readonly AppRecord[]): AppLaunch[] {
   );
 }
 
+/** The draft rows of the machine (element-reference-menu plan section 6): the free-text rows whose launch path
+ *  takes text to be drafted rather than sent, in launcher order. */
+export function draftRowsOf(apps: readonly AppRecord[]): AppLaunch[] {
+  return freeTextRowsOf(apps).filter((launch) => launch.launchPath.draft_param !== null);
+}
+
 /** The launch path of ``app`` with ``launchId``, or null when the app declares none by that id. */
 export function launchPathOf(app: AppRecord, launchId: string): LaunchPath | null {
   return app.launch_paths.find((candidate) => candidate.id === launchId) ?? null;
 }
 
-/** The path the chat app serves a chat at: one page per chat, at ``/<chat-id>``. */
-export function chatPath(chatId: string): string {
-  return `/${chatId}`;
-}
-
-/** Whether ``path`` is showing the chat ``chatId``: the chat's own page, or one of its subagent
- *  views (``/<chat-id>.<agent-id>.<session-id>``). Any query string is ignored. */
-export function isPathShowingChat(path: string, chatId: string): boolean {
-  const withoutQuery = path.split("?")[0];
-  return withoutQuery === chatPath(chatId) || withoutQuery.startsWith(`${chatPath(chatId)}.`);
+/** The app's one desktop shortcut, by the rule the shell seeds desktops with (desktop-interface plan section 3.6):
+ *  its ``default_shortcut`` when that names a launch path it offers, whether or not that path takes text; else, for
+ *  an app a program runs, its first launch path taking no text, or its first when every one takes text, focusing. An
+ *  internal app has none, and so does a row with no program (a preview frame, an isolated test server) that declares
+ *  none. */
+export function appShortcutOf(app: AppRecord): DefaultShortcut | null {
+  if (app.internal) return null;
+  const declared = app.default_shortcut;
+  if (declared !== null) return launchPathOf(app, declared.launch) === null ? null : declared;
+  if (app.program === "") return null;
+  const first = app.launch_paths.find((launchPath) => fillParamOf(launchPath) === null) ?? app.launch_paths[0];
+  return first === undefined ? null : { launch: first.id, mode: "focus" };
 }
 
 /** The params a free-text row launches with: the text as its fill param; none for empty text. */

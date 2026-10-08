@@ -1,7 +1,7 @@
 /**
  * Record factories for the frontend tests: an app as the shell lists it (and one shaped like the
- * chat's manifest), a desktop, a window, a placement, a launch path, a client record, a layout, the
- * avatar state, the theme metrics, a connected user, and the update notice as the shell sends it.
+ * chat's manifest), a desktop, a shortcut, a window, a placement, a launch path, a client record, a layout,
+ * the avatar state, the theme metrics, a connected user, and the update notice as the shell sends it.
  * Each takes overrides so a test spells only what it is about.
  */
 
@@ -9,6 +9,8 @@ import type {
   AppRecord,
   ClientRecord,
   Desktop,
+  DesktopShortcut,
+  GridCell,
   LaunchPath,
   Layout,
   Placement,
@@ -61,10 +63,12 @@ export function appRecord(name: string, overrides: Partial<AppRecord> = {}): App
     internal: false,
     program: name,
     critical: false,
+    stop_when_no_windows: false,
     launch_paths: [launchPathRecord({ label: `New ${name}` })],
     default_shortcut: { launch: "new", mode: "focus" },
     launcher_rank: null,
     pin: null,
+    message_handlers: [],
     is_running: true,
     ...overrides,
   };
@@ -145,6 +149,11 @@ export function desktopRecord(id: string, overrides: Partial<Desktop> = {}): Des
   };
 }
 
+/** A focus-mode shortcut for an app's ``new`` launch path, in the cell given. */
+export function shortcutRecord(app: string, cell: GridCell, launch = "new"): DesktopShortcut {
+  return { target: { kind: "launch", app, launch }, mode: "focus", cell };
+}
+
 /** A connected client on no desktop yet, with no entry presentations. */
 export function clientRecord(id: string, overrides: Partial<ClientRecord> = {}): ClientRecord {
   return {
@@ -153,6 +162,7 @@ export function clientRecord(id: string, overrides: Partial<ClientRecord> = {}):
     last_seen: "2026-09-19T00:00:00Z",
     is_connected: true,
     entries: {},
+    shown_history: [],
     ...overrides,
   };
 }
@@ -174,7 +184,14 @@ export function layoutRecord(placements: readonly Placement[], updatedAt: string
 
 /** A shown, normal placement at the first cascade frame. */
 export function placementRecord(windowId: string, overrides: Partial<Placement> = {}): Placement {
-  return { window_id: windowId, frame: cascadeFrame(0), state: "NORMAL", is_minimized: false, ...overrides };
+  return {
+    window_id: windowId,
+    frame: cascadeFrame(0),
+    state: "NORMAL",
+    is_minimized: false,
+    is_detached: false,
+    ...overrides,
+  };
 }
 
 /** A non-owner with one open tab, an email at example.com, and neither a display name nor a profile picture. */
@@ -206,7 +223,7 @@ export function noticeWire(apps: string[], overrides: Partial<UpdateNoticeWire> 
   };
 }
 
-/** The theme metrics at the contract's default (non-compact) values. */
+/** The theme metrics at the contract's default (non-touch) values. */
 export function themeMetricsRecord(overrides: Partial<ThemeMetrics> = {}): ThemeMetrics {
   return {
     titleBarHeight: 36,

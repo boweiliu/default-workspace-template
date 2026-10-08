@@ -24,14 +24,14 @@ export const PINNED_ENTRY_ATTRIBUTE = "data-pinned-entry";
 /** Marks an element (a menu button) whose press must not start a drag. */
 export const NO_DRAG_ATTRIBUTE = "data-no-drag";
 
-const LONG_PRESS_MS = 500;
+export const LONG_PRESS_MS = 500;
 const PRIMARY_BUTTON = 0;
 
 /** What a press landed on, as the data attributes name it. */
 export type GestureBinding =
   | { readonly kind: "window-move"; readonly windowId: string }
   | { readonly kind: "window-resize"; readonly windowId: string; readonly edge: ResizeEdge }
-  | { readonly kind: "shortcut"; readonly app: string; readonly launch: string; readonly element: HTMLElement }
+  | { readonly kind: "shortcut"; readonly app: string; readonly launch: string }
   /** A taskbar entry never drags, but a long press on it asks for its menu. */
   | { readonly kind: "taskbar-entry"; readonly windowId: string }
   /** A floating pinned entry: a drag moves it, a long press asks for its menu. */
@@ -40,7 +40,7 @@ export type GestureBinding =
 export interface GestureListener {
   /** The distance a press travels before it is a drag, in pixels. */
   thresholdPx(): number;
-  /** Whether a binding may start a drag right now (compact mode turns window drags off). */
+  /** Whether a binding may start a drag right now. */
   isDraggable(binding: GestureBinding): boolean;
   /** A press landed on a handle, before it is known to be a drag. The live pages go inert from here:
    *  only a move the root sees crosses the threshold, and a handle sits close enough to a page that
@@ -81,12 +81,7 @@ export function bindingForTarget(target: Element): GestureBinding | null {
     const key = shortcut.getAttribute(SHORTCUT_ATTRIBUTE) ?? "";
     const separator = key.indexOf(":");
     if (separator <= 0) return null;
-    return {
-      kind: "shortcut",
-      app: key.substring(0, separator),
-      launch: key.substring(separator + 1),
-      element: shortcut,
-    };
+    return { kind: "shortcut", app: key.substring(0, separator), launch: key.substring(separator + 1) };
   }
   const edge = target.closest<HTMLElement>(`[${RESIZE_EDGE_ATTRIBUTE}]`);
   const windowElement = target.closest<HTMLElement>(`[${WINDOW_ID_ATTRIBUTE}]`);

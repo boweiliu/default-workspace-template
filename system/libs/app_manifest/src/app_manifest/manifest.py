@@ -18,16 +18,19 @@ from app_manifest.errors import InvalidManifestValueError
 from app_manifest.errors import ManifestLoadError
 from app_manifest.primitives import AppName
 from app_manifest.primitives import DisplayName
+from app_manifest.primitives import EnvVarName
 from app_manifest.primitives import ExcludeGlob
 from app_manifest.primitives import IconPath
 from app_manifest.primitives import LaunchParamName
 from app_manifest.primitives import LaunchPathId
 from app_manifest.primitives import LaunchPathValue
+from app_manifest.primitives import MessageType
 from app_manifest.primitives import PreviewName
 from app_manifest.primitives import PriorityName
 from app_manifest.primitives import ProgramName
 from app_manifest.primitives import ReferenceNote
 from app_manifest.primitives import ReferencePath
+from app_manifest.primitives import SecretFileName
 from app_manifest.primitives import is_path_covered_by
 
 MANIFEST_FILENAME: Final[str] = "app.toml"
@@ -179,6 +182,14 @@ class LaunchPath(FrozenModel):
         return self
 
 
+class MessageHandler(FrozenModel):
+    """A message an app takes, and the route under its own origin the shell posts each one to
+    (desktop-interface contracts.md section 2)."""
+
+    type: MessageType = Field(description="The message type the app handles")
+    path: LaunchPathValue = Field(description="The route under the app origin the shell POSTs the message to")
+
+
 class AppReference(FrozenModel):
     """An artifact outside the app's own directory that belongs to the app."""
 
@@ -204,6 +215,25 @@ class WiringRules(FrozenModel):
         description="Program names whose [program:<name>] blocks belong to the app, such as a "
         "display server that exists only for it",
     )
+
+
+class SecretDeclaration(FrozenModel):
+    """One data/.secrets/<file>.env the app runs under (through with_secrets.py), so a
+    published template can ask an adopter for exactly those variables."""
+
+    file: SecretFileName = Field(description="The <file> of data/.secrets/<file>.env")
+    variables: tuple[EnvVarName, ...] = Field(description="The variables the file must set; at least one")
+    note: ReferenceNote | None = Field(
+        default=None, description="One line for the adopter: what the value is and where to get it"
+    )
+
+    @model_validator(mode="after")
+    def _check_variables(self) -> Self:
+        if not self.variables:
+            raise InvalidManifestValueError(f"secret {str(self.file)!r} must list at least one variable")
+        if len(set(self.variables)) != len(self.variables):
+            raise InvalidManifestValueError(f"secret {str(self.file)!r} lists a variable twice")
+        return self
 
 
 class DefaultShortcut(FrozenModel):
@@ -310,7 +340,16 @@ class AppManifest(FrozenModel):
     name: AppName = Field(description="The registered app name")
     display_name: DisplayName = Field(description="What users see")
     icon: IconPath | None = Field(default=None, description="The icon file, relative to the manifest; required unless internal")
-    critical: bool = Field(default=False, description="No Stop verb; snapshot-and-rollback target in the update apply")
+    critical: bool = Field(
+        default=False,
+        description="No Quit verb; never stopped or parked by the shell; snapshot-and-rollback target in the "
+        "update apply",
+    )
+    stop_when_no_windows: bool = Field(
+        default=False,
+        description="Whether the shell may stop the app's program once no window on any desktop shows it "
+        "(docs/system/specs/stop-when-no-windows.md); a critical app never is",
+    )
     priority: PriorityName = Field(default=DEFAULT_PRIORITY, description="The memory-shedding band name")
     program: ProgramName = Field(description="The supervisord program that runs the app (defaults to the name)")
     internal: bool = Field(default=False, description="Hidden from every open surface")
@@ -330,6 +369,10 @@ class AppManifest(FrozenModel):
         description="The path under the app's origin the shell posts to when a window of the app closes; "
         "an app whose resources live as long as their windows sweeps on it",
     )
+    message_handlers: tuple[MessageHandler, ...] = Field(
+        default=(),
+        description="The messages the app takes, each posted by the shell to a route under the app's origin",
+    )
     references: tuple[AppReference, ...] = Field(
         default=(), description="The artifacts outside the app's directory that belong to it"
     )
@@ -338,6 +381,9 @@ class AppManifest(FrozenModel):
     )
     wiring: WiringRules = Field(
         default_factory=WiringRules, description="The extra supervisord programs the app owns"
+    )
+    secrets: tuple[SecretDeclaration, ...] = Field(
+        default=(), description="The secret files the app runs under, for publish-template to aggregate"
     )
     handles: dict[str, Any] = Field(default_factory=dict, description="Reserved; must be absent or empty")
     preview: PreviewSpec = Field(description="How a throwaway instance boots for a preview (the scaffold convention by default)")
@@ -364,6 +410,8 @@ class AppManifest(FrozenModel):
     def _check_cross_field_rules(self) -> Self:
         if self.icon is None and not self.internal:
             raise InvalidManifestValueError("icon is required unless internal = true")
+        if self.critical and self.stop_when_no_windows:
+            raise InvalidManifestValueError("a critical app cannot declare stop_when_no_windows = true")
         if self.handles:
             raise InvalidManifestValueError("handles must be absent or empty in this release")
         reference_paths = [reference.path for reference in self.references]
@@ -378,6 +426,9 @@ class AppManifest(FrozenModel):
             raise InvalidManifestValueError(
                 f"wiring programs must not repeat the app's own program {str(self.program)!r}"
             )
+        message_types = [handler.type for handler in self.message_handlers]
+        if len(set(message_types)) != len(message_types):
+            raise InvalidManifestValueError(f"message handler types must be unique, got {message_types}")
         launch_path_ids = [launch_path.id for launch_path in self.launch_paths]
         if len(set(launch_path_ids)) != len(launch_path_ids):
             raise InvalidManifestValueError(f"launch path ids must be unique, got {launch_path_ids}")
@@ -385,6 +436,9 @@ class AppManifest(FrozenModel):
             raise InvalidManifestValueError(
                 f"launch path id {str(OPEN_LAUNCH_PATH_ID)!r} is reserved for the synthesized root launch path"
             )
+        secret_files = [secret.file for secret in self.secrets]
+        if len(set(secret_files)) != len(secret_files):
+            raise InvalidManifestValueError(f"secret files must be unique, got {secret_files}")
         if self.default_shortcut is not None:
             allowed_launch_ids = set(launch_path_ids) if launch_path_ids else {OPEN_LAUNCH_PATH_ID}
             if self.default_shortcut.launch not in allowed_launch_ids:

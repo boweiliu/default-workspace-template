@@ -19,7 +19,7 @@ from imbue.chat.agent_manager import AgentManager
 from imbue.chat.auto_open import AutoOpenLedger
 from imbue.chat.auto_open import AutoOpenReactor
 from imbue.chat.auto_open import LEDGER_FILENAME
-from imbue.chat.auto_open import ShellLayoutClient
+from imbue.chat.chat_naming import ChatNamer
 from imbue.chat.chat_records import CHAT_RECORDS_DIRNAME
 from imbue.chat.chat_records import FileChatRecordStore
 from imbue.chat.chat_settings import ChatSettingsStore
@@ -30,9 +30,15 @@ from imbue.chat.event_queues import AgentEventQueues
 from imbue.chat.harnesses.auth_flows import AuthFlowService
 from imbue.chat.harnesses.auth_flows import reap_orphaned_auth_processes
 from imbue.chat.harnesses.claude.auth import ClaudeAuthService
+from imbue.chat.harnesses.registry import build_one_shot_completion
 from imbue.chat.message_stamps import MessageStampStore
 from imbue.chat.message_stamps import STAMPS_FILENAME
+from imbue.chat.secret_requests import DEFAULT_SECRETS_DIRECTORY
+from imbue.chat.secret_requests import SECRET_REQUESTS_DIRNAME
+from imbue.chat.secret_requests import SecretRequestStore
 from imbue.chat.server import create_application
+from imbue.chat.shell_client import DisconnectedShell
+from imbue.chat.shell_client import ShellLayoutClient
 from imbue.chat.shell_client import shell_base_url
 from imbue.chat.state import ChatAppState
 from imbue.chat.state import state_of
@@ -117,18 +123,18 @@ def build_production_state(
     """
     broadcaster = WebSocketBroadcaster()
     data_dir = config.chat_data_dir
+    # The one client of the shell's layout, shared by the auto-open reactor and the routes; a secondary has none.
+    shell = DisconnectedShell() if is_secondary else ShellLayoutClient(shell_url=shell_base_url())
     chat_settings = ChatSettingsStore(path=data_dir / SETTINGS_FILENAME)
     chat_records_root = data_dir / CHAT_RECORDS_DIRNAME
     agent_manager = AgentManager.build(
         broadcaster,
         message_stamps=MessageStampStore(path=data_dir / STAMPS_FILENAME),
-        # The window of a chat the Mind app starts is opened through the shell, and which chats
+        # The window of a chat the Imbue Studio app starts is opened through the shell, and which chats
         # have had theirs is remembered beside the stamps so a restart never re-pops one.
         auto_open=None
         if is_secondary
-        else AutoOpenReactor(
-            ledger=AutoOpenLedger(path=data_dir / LEDGER_FILENAME), shell=ShellLayoutClient(shell_url=shell_base_url())
-        ),
+        else AutoOpenReactor(ledger=AutoOpenLedger(path=data_dir / LEDGER_FILENAME), shell=shell),
         # Which agents each chat has run on, for the chats that have had a handoff.
         chat_record_store=FileChatRecordStore(root=chat_records_root),
         chat_files_root=chat_records_root,
@@ -149,6 +155,18 @@ def build_production_state(
         is_secondary=is_secondary,
         chat_settings=chat_settings,
         event_queues=event_queues,
+        chat_namer=None
+        if is_secondary
+        else ChatNamer(
+            chat_files_root=chat_records_root,
+            get_active_agent_info=agent_manager.get_active_agent_info,
+            resolve_chat_account_binding=agent_manager.resolve_chat_account_binding,
+            show_automatic_title=agent_manager.show_automatic_title,
+            clear_automatic_title=agent_manager.clear_automatic_title,
+            has_placeholder_name=agent_manager.has_placeholder_name,
+            rename_placeholder_named_chat=agent_manager.rename_placeholder_named_chat,
+            build_one_shot_completion=build_one_shot_completion,
+        ),
         # One long-lived service per app: it holds the in-flight sign-in PTY between the
         # start call and the polls that advance it. A successful re-auth restarts the agents
         # bound to that account -- they do not pick up a swapped credential on their own.
@@ -160,11 +178,16 @@ def build_production_state(
         # separate one for the latchkey catalog proxy.
         http_client=httpx.Client(follow_redirects=False, timeout=30.0),
         latchkey_http_client=httpx.Client(timeout=30.0),
+        shell=shell,
+        secret_requests=SecretRequestStore(
+            requests_directory=data_dir / SECRET_REQUESTS_DIRNAME, secrets_directory=DEFAULT_SECRETS_DIRECTORY
+        ),
     )
     # Eviction wiring: when the manager sees an agent destroyed or its lifecycle
     # transition into a dead state, the state drops that agent's watcher -- the
     # resident transcript, watch thread, and inotify watches go with it.
     agent_manager.set_watcher_eviction_callback(state.stop_and_remove_watcher)
+    agent_manager.set_unviewed_transcript_release(state.release_unviewed_stopped_transcripts)
     return state
 
 
@@ -231,7 +254,7 @@ def main() -> None:
     same observer and tracks the same agents, but withholds the writes a second instance
     must not make (the account reconcile, the memory scores, the registration, the
     automatic compaction, the switches, the window auto-opening, the client-activity
-    reports to the shell).
+    reports to the shell, the answers to secret cards).
     """
     args = _parse_args(None)
     config = load_config()
