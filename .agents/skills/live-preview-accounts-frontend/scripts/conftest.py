@@ -35,9 +35,15 @@ def workspace(tmp_path: Path) -> Workspace:
     return Workspace(root, tmp_path / "mngr")
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def browser():
-    """One headless Fortress browser for every browser test (launching costs seconds under gVisor)."""
+    """One headless Fortress browser per test module (launching costs seconds under gVisor).
+
+    Module, not session, scope: Playwright's sync API runs an event loop on the
+    main thread for as long as it is open, so a session-wide browser left that
+    loop running under every later test in a root-suite run, and each of their
+    ``asyncio.run`` calls failed with "cannot be called from a running event loop".
+    """
     if not FORTRESS.exists():
         pytest.skip("the Fortress browser is not installed")
     with sync_playwright() as playwright:
