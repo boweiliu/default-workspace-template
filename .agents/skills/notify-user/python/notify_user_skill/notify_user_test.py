@@ -14,8 +14,6 @@ import pytest
 
 from notify_user_skill import notify_user
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "notify_user.py"
-
 _GATEWAY_ENV = {
     "LATCHKEY_GATEWAY": "http://gateway.invalid:1234/",
     "LATCHKEY_GATEWAY_PASSWORD": "pw",
