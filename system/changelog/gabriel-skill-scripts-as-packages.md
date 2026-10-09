@@ -1,6 +1,6 @@
 This release turns the workspace's scripts into packages. An existing workspace's own skills, services and docs are migrated during the update by following `.agents/skills/update-self/references/python-packaging-migration.md`.
 
-- `system/scripts` is one uv project with two packages. `workspace_bare_scripts` runs under the system `python3` with no venv and imports only the standard library. `workspace_scripts` (the changelog gate, the docs viewer, the auth migration, the view refresh and the app smoketest) runs from the root venv.
+- `system/scripts` is one uv project with two packages. `workspace_bare_scripts` runs under the system `python3` with no venv and imports only the standard library (and the stdlib-only libraries its hook stubs put on `sys.path`). `workspace_scripts` (the changelog gate, the docs viewer, the auth migration, the view refresh and the app smoketest) runs from the root venv.
 
 - Every existing script path stays as a thin entry file that imports its package. Only the five hook entry files that reach the `tk_command_parsing` or `oom_priority` source tree still edit `sys.path`, along with the skill entry files that run with no venv (update-self's, and publish-template's two manifest tools).
 
