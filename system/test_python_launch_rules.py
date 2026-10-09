@@ -86,14 +86,21 @@ def _shell_command_string(arguments: list[str]) -> str | None:
     """The command string a shell runs from its ``arguments``, if they pass one with ``-c``.
 
     ``-c`` may sit in a cluster of short options (``-lc``, ``-ec``) or after long ones
-    (``--login -c``); the string is the first argument after the options.
+    (``--login -c``), and ``-o`` / ``-O`` take the next word as their value (``-o pipefail``,
+    ``-euo pipefail``); the string is the first argument after the options.
     """
     takes_command = False
-    for argument in arguments:
-        if not argument.startswith("-"):
+    words = iter(arguments)
+    for argument in words:
+        if not argument.startswith(("-", "+")):
             return argument if takes_command else None
-        if not argument.startswith("--") and "c" in argument[1:]:
+        if argument.startswith("--"):
+            continue
+        letters = argument[1:]
+        if "c" in letters:
             takes_command = True
+        for _ in range(letters.count("o") + letters.count("O")):
+            next(words, None)
     return None
 
 
@@ -267,6 +274,9 @@ def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> No
     (dropins / "login.conf").write_text(
         '[program:login]\ncommand=bash -lc "exec uv run --no-sync login"\n'
     )
+    (dropins / "pipefail.conf").write_text(
+        '[program:pipefail]\ncommand=bash -euo pipefail -c "exec uv run --no-sync pipefail"\n'
+    )
     (dropins / "fine.conf").write_text(
         '[program:fine]\ncommand=bash -c "uv sync --all-packages --frozen && exec .venv/bin/fine"\n'
     )
@@ -276,6 +286,7 @@ def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> No
     assert [offender.split(" ", 1)[0] for offender in offenders] == [
         "direct.conf",
         "login.conf",
+        "pipefail.conf",
         "spaced.conf",
         "tagged.conf",
     ]
