@@ -77,6 +77,28 @@ def test_an_entry_point_loads_no_undeclared_heavy_module(entry: Path) -> None:
     )
 
 
+def _stale_heavy_declarations(entry: Path) -> set[str]:
+    """The heavy modules ``entry`` declares but no longer loads at import."""
+    return set(
+        declared_heavy_imports(entry)
+        - _loaded_modules(entry, bare=is_bare_entry(entry))
+    )
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    "entry",
+    [entry for entry in all_entry_points() if declared_heavy_imports(entry)],
+    ids=lambda path: str(path.relative_to(REPO_ROOT)),
+)
+def test_every_declared_heavy_import_is_still_loaded(entry: Path) -> None:
+    stale = _stale_heavy_declarations(entry)
+    assert not stale, (
+        f"{entry.relative_to(REPO_ROOT)} declares heavy-imports {sorted(stale)} that it no longer "
+        "loads at import; drop them from its project's pyproject.toml so a later regression is caught"
+    )
+
+
 def _skill_scripts(tmp_path: Path, module_source: str, pyproject: str = "") -> Path:
     """A skill laid out as the built-in ones are: its project in ``python/``, its stub in ``scripts/``.
 
@@ -117,6 +139,19 @@ def test_a_declared_heavy_import_passes(tmp_path: Path) -> None:
     )
 
     assert _undeclared_heavy_imports(entry, bare=False) == set()
+
+
+@pytest.mark.timeout(60)
+def test_a_declared_heavy_import_the_entry_no_longer_loads_is_stale(
+    tmp_path: Path,
+) -> None:
+    entry = _skill_scripts(
+        tmp_path,
+        "def main() -> None:\n    pass\n",
+        '[tool.workspace-template.entry-points."probe.py"]\nheavy-imports = ["pydantic"]\n',
+    )
+
+    assert _stale_heavy_declarations(entry) == {"pydantic"}
 
 
 @pytest.mark.timeout(60)
