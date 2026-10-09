@@ -1,1 +1,1 @@
-`bootstrap` is started from `.venv/bin` by its window after a `--frozen` sync instead of under `uv run`, and runs the env-converge fast phase with `uv run --no-sync`.
+`bootstrap` runs the env-converge fast phase with `uv run --no-sync`. In a newly created workspace, its window starts it from `.venv/bin` after a `--frozen` sync instead of under `uv run`; a workspace created earlier keeps the `uv run bootstrap` window mngr recorded when it created it.
