@@ -1267,8 +1267,8 @@ def test_the_script_imports_under_an_isolated_stdlib_only_interpreter() -> None:
     result = subprocess.run(
         [
             sys.executable,
+            "-I",
             "-S",
-            "-s",
             "-c",
             f"import sys; sys.path.insert(0, {str(_SCRIPT.parent)!r}); from workspace_bare_scripts import forward_port; print(forward_port.DEFAULT_APPS_FILE)",
         ],
