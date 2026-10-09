@@ -204,6 +204,10 @@ python3 .agents/skills/update-self/scripts/update_self.py \
     run-status verdict NEEDS_RECREATION --detail "System Python too old to update in place."
 ```
 
+A copy older than minds-v0.4.3 has no `run-status` subcommand and rejects it
+as an invalid choice; it recorded no run in Step 1 either, so skip the verdict
+then.
+
 Then tell the user as "Migration-required updates" below says, and release the
 `updating workspace` lease (`tk close "$UPDATE_LEASE_ID" "Update pass
 finished."`). There is no history bridge or tracking ticket to clean up yet.
