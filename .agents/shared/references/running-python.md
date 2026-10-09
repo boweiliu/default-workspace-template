@@ -21,9 +21,11 @@ both and leaves about 40 ms of uv over running the entry point directly.
 
 The venv stays current without those per-call syncs:
 
-- each session starts with a `--frozen` sync
-  (`system/scripts/session_start_sync.sh`), which also regenerates a drifted
-  lock once and says so;
+- the workspace syncs `--frozen` at boot, and each claude session starts with
+  a `--frozen` sync (`system/scripts/session_start_sync.sh`), which also
+  regenerates a drifted lock once and says so; other harnesses have no
+  session-start hook, so on them run `uv sync --all-packages --frozen` yourself
+  when a `pyproject.toml` or `uv.lock` changed since the workspace booted;
 - after you change a dependency yourself, run `uv lock` and then
   `uv sync --all-packages`, and commit the new `uv.lock` with the change.
 - after you merge a branch that changed a `pyproject.toml` or `uv.lock`
