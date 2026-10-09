@@ -10,8 +10,9 @@ Each rule is checked against the real tree and against a planted violation:
 - A ``python3 <path>.py`` written into an agent-facing file names a bare entry point: the
   system ``python3`` has no venv, so a venv-tier script run that way fails at its first
   third-party import.
-- Only the bare entry stubs that need a library outside their scripts directory edit
-  ``sys.path``; everything else imports packages.
+- Only entry files that run with no workspace venv, and update-self's banding module,
+  edit ``sys.path`` to reach code outside their own directory; everything else imports
+  packages.
 """
 
 from __future__ import annotations
