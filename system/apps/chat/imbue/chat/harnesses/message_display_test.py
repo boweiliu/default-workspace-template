@@ -22,6 +22,7 @@ from imbue.chat.harnesses.message_display import classify_user_message
 from imbue.chat.harnesses.message_display import format_secret_resolution_notice
 from imbue.chat.harnesses.message_display import is_non_turn_tail
 from imbue.chat.harnesses.message_display import split_background_task_reports
+from imbue.chat.harnesses.tool_output import _UV_RUN_PASSTHROUGH_FLAGS
 
 _SEED_BLOCK = f"<{SEED_CONTEXT_TAG}>\nthe conversation so far\n</{SEED_CONTEXT_TAG}>"
 
@@ -377,6 +378,14 @@ def test_a_background_task_report_is_a_notice_showing_only_its_summary() -> None
     assert decision.display_label == "Background task"
     assert decision.display_body == "Wait for the background agent (finished)"
     assert is_non_turn_tail(report) is False
+
+
+def test_the_uv_run_options_skipped_before_a_command_are_the_secrets_guards() -> None:
+    """The tool-output reader unwraps ``uv run`` past the options the secrets guard lets through; the guard
+    cannot import this package, so its copy of the set is pinned here."""
+    module = _load_system_script("agent_secrets_guard_check.py")
+
+    assert module._UV_RUN_PASSTHROUGH_FLAGS == _UV_RUN_PASSTHROUGH_FLAGS
 
 
 def _compose_report(description: str, command: Sequence[str] = ("make",), output: str = "built\n") -> str:
