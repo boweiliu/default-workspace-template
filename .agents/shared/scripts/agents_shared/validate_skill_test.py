@@ -302,6 +302,26 @@ def test_check_runnable_reports_an_entry_that_cannot_import(tmp_path: Path) -> N
     assert "missing_dependency" in error
 
 
+@pytest.mark.timeout(120)
+def test_check_runnable_catches_a_broken_import_through_real_uv(tmp_path: Path) -> None:
+    skill = _write_skill(tmp_path, "s", include_scripts=True)
+    (skill / "scripts" / "run.py").write_text(
+        "import this_module_definitely_does_not_exist_xyz\n"
+    )
+    subprocess.run(
+        ["uv", "lock", "--quiet"],
+        cwd=skill / "python",
+        check=True,
+        timeout=60,
+    )
+
+    error = validate_skill.check_runnable(skill)
+
+    assert error is not None
+    assert "run.py --help" in error
+    assert "this_module_definitely_does_not_exist_xyz" in error
+
+
 def test_check_runnable_timeout(tmp_path: Path) -> None:
     skill = _write_skill(tmp_path, "s", include_scripts=True)
 
