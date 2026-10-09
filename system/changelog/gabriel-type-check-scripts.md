@@ -9,3 +9,5 @@
 - The `bootstrap` window puts the root venv's `bin` dir first on `PATH` and sets `VIRTUAL_ENV` before it starts supervisord, as `uv run bootstrap` used to. Without that, programs that name a console script by bare name (an app scaffolded by build-app) could not find it. A root test runs the window's command and checks this.
 
 - The workspace-app contract (`contracts.md` section 14) now says a pre-manifest app and the background services run from `.venv/bin/<name>`, not under `uv run`, matching the launch rule.
+
+- `AGENTS.md`'s lockfile rule now says a `uv.lock` change that follows from a `pyproject.toml` change (a dependency, a new skill `python/` project, or the regeneration the session-start sync reports) is committed, so it no longer contradicts that sync's note.
