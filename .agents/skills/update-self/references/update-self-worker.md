@@ -321,6 +321,12 @@ in your report.
   skill whose `scripts/` still holds PEP 723 scripts, which the root import-cost
   and type checks reject) is fixed by following
   `references/python-packaging-migration.md`.
+  Separately, before any suite or boot below runs, sync the venv
+  (`uv sync --all-packages --frozen`) whenever the merge changed a
+  `pyproject.toml` or `uv.lock` at all, merged or pulled in
+  (`git diff --name-only "$MERGE^1" "$MERGE" -- '*pyproject.toml' '*uv.lock'`
+  lists one, `$MERGE` as below): everything below runs `uv run --no-sync`,
+  which never syncs, so it would otherwise run on the pre-merge environment.
 - **Suites, lint, ratchets** for what the merged set, the update's changes to
   your creations, 4a's impacted consumers, and your own edits can reach, and
   for nothing else (with none of them, no suite runs at all). The test

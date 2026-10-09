@@ -4,7 +4,7 @@
 
 - **Migration reference:** a new section on fixing ty errors in a workspace's own scripts, and the command rewrites also cover the user's scheduled jobs in `data/.state/cron.d/`, which no check scans.
 
-- **Syncing after a merge:** after merging a worker's branch that changed a `pyproject.toml` or `uv.lock` (such as a newly crystallized skill's `python/` project), the lead now runs `uv sync --all-packages --frozen`, so the new package is installed before anything runs it with `uv run --no-sync`. `running-python.md` lists this case.
+- **Syncing after a merge:** after merging a worker's branch that changed a `pyproject.toml` or `uv.lock` (such as a newly crystallized skill's `python/` project), the lead now runs `uv sync --all-packages --frozen`, so the new package is installed before anything runs it with `uv run --no-sync`. `running-python.md` lists this case. The update-self worker does the same before its validation suites and boots whenever the merge changed a `pyproject.toml` or `uv.lock`, including one only upstream changed, since those suites run `uv run --no-sync`.
 
 - **Harnesses without a session-start sync:** `running-python.md` now says only claude sessions sync at start, and that agents on other harnesses sync themselves after a `pyproject.toml` or `uv.lock` change.
 
