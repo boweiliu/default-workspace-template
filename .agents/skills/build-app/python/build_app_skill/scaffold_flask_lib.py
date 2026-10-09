@@ -237,7 +237,7 @@ name = "{name}"
 version = "0.1.0"
 description = "{description}"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     {deps_block},
 ]

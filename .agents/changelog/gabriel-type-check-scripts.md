@@ -11,3 +11,5 @@
 - **Ledger pointers:** publish-template, update-installed-template and update-published-template point at `update-self`'s `python/update_self_skill/update_ledger.py` for the exact `VERSION_HISTORY.md` starter block, instead of the `scripts/update_self.py` entry stub.
 
 - **Migration reference:** the command rewrites also cover the user's scheduled jobs in `data/.state/cron.d/`, which no check scans.
+
+- **New apps at the 3.12 floor:** build-app's scaffold writes `requires-python = ">=3.12"` into a new app's `pyproject.toml`.
