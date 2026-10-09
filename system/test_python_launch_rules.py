@@ -29,7 +29,6 @@ from entry_points_testing import (
     REPO_ROOT,
     STANDALONE_BARE_DIRS,
     is_bare_entry,
-    is_test_file,
 )
 from imbue.mngr.interfaces.host import NamedCommand
 
@@ -534,7 +533,6 @@ def _sys_path_editors(repo_root: Path) -> list[str]:
         for relative in tracked
         if relative
         and "vendor" not in PurePosixPath(relative).parts
-        and not is_test_file(Path(relative))
         and not (repo_root / relative).parent in STANDALONE_BARE_DIRS
         and relative not in _ALLOWED_SYS_PATH_EDITS
         and (repo_root / relative).is_file()
