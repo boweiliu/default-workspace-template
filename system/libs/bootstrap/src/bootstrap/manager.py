@@ -578,8 +578,9 @@ def _sync_workspace_venv() -> None:
     provisioning) while the working tree is a landing-time artifact (the
     create's git-mirror checkout) -- and on docker and pool-lease hosts nothing
     re-runs the sync at create, so the two can disagree whenever the baked
-    image lags the landed branch, and every one-off runs ``uv run --no-sync``,
-    so nothing later reconciles them.
+    image lags the landed branch. One-offs run ``uv run --no-sync`` and never
+    sync, and the syncs that do (an agent's session start, a program's start)
+    run only once that agent or service is already starting.
 
     The ``bootstrap`` window runs this same sync before starting this process,
     so here it is normally a no-op; it stays so a boot that reached bootstrap
