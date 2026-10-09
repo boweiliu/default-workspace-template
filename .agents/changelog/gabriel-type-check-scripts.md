@@ -7,3 +7,5 @@
 - **Syncing after a merge:** after merging a worker's branch that changed a `pyproject.toml` or `uv.lock` (such as a newly crystallized skill's `python/` project), the lead now runs `uv sync --all-packages --frozen`, so the new package is installed before anything runs it with `uv run --no-sync`. `running-python.md` lists this case.
 
 - **Harnesses without a session-start sync:** `running-python.md` now says only claude sessions sync at start, and that agents on other harnesses sync themselves after a `pyproject.toml` or `uv.lock` change.
+
+- **Ledger pointers:** publish-template, update-installed-template and update-published-template point at `update-self`'s `python/update_self_skill/update_ledger.py` for the exact `VERSION_HISTORY.md` starter block, instead of the `scripts/update_self.py` entry stub.
