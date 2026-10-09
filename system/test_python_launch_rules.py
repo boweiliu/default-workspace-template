@@ -46,7 +46,20 @@ _EXEMPT_PARTS = frozenset({"changelog", "vendor", "fixtures"})
 _EXEMPT_PREFIXES = ("docs/system/blueprint/", "docs/system/specs/", "docs/specs/")
 _EXEMPT_NAMES = frozenset({"CHANGELOG.md", "UNABRIDGED_CHANGELOG.md"})
 
-_UV_RUN_RE = re.compile(r"\buv run\b")
+# uv's global options that take a separate value word; any of them, or a flag, may come
+# between ``uv`` and its ``run`` subcommand.
+_UV_GLOBAL_OPTIONS_WITH_VALUES = (
+    "--directory",
+    "--project",
+    "--config-file",
+    "--cache-dir",
+    "--color",
+)
+_UV_RUN_RE = re.compile(
+    r"\buv(?:\s+(?:(?:"
+    + "|".join(_UV_GLOBAL_OPTIONS_WITH_VALUES)
+    + r")(?:=|\s+)\S+|--?[a-z][\w-]*))*\s+run\b"
+)
 # Options after which ``uv run`` neither syncs the workspace venv nor touches uv.lock.
 _NON_SYNCING_OPTIONS = frozenset({"--no-sync", "--no-project"})
 # uv run options that take a separate value word.
@@ -104,11 +117,25 @@ def _shell_command_string(arguments: list[str]) -> str | None:
     return None
 
 
+def _uv_subcommand(arguments: list[str]) -> str | None:
+    """The subcommand ``uv`` runs from ``arguments``, past its global options."""
+    words = iter(arguments)
+    for argument in words:
+        if not argument.startswith("-"):
+            return argument
+        if argument in _UV_GLOBAL_OPTIONS_WITH_VALUES:
+            next(words, None)
+    return None
+
+
 def _runs_uv_run(command: str) -> bool:
     """Whether a program command executes ``uv run``, directly or inside a ``bash -c`` string."""
     words = shlex.split(command)
     for index, word in enumerate(words):
-        if PurePosixPath(word).name == "uv" and words[index + 1 : index + 2] == ["run"]:
+        if (
+            PurePosixPath(word).name == "uv"
+            and _uv_subcommand(words[index + 1 :]) == "run"
+        ):
             return True
         if PurePosixPath(word).name in _SHELL_PROGRAMS:
             shell_command = _shell_command_string(words[index + 1 :])
@@ -277,6 +304,9 @@ def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> No
     (dropins / "pipefail.conf").write_text(
         '[program:pipefail]\ncommand=bash -euo pipefail -c "exec uv run --no-sync pipefail"\n'
     )
+    (dropins / "quiet.conf").write_text(
+        '[program:quiet]\ncommand=bash -c "uv --directory /srv -q run --no-sync quiet"\n'
+    )
     (dropins / "fine.conf").write_text(
         '[program:fine]\ncommand=bash -c "uv sync --all-packages --frozen && exec .venv/bin/fine"\n'
     )
@@ -287,6 +317,7 @@ def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> No
         "direct.conf",
         "login.conf",
         "pipefail.conf",
+        "quiet.conf",
         "spaced.conf",
         "tagged.conf",
     ]
@@ -327,10 +358,12 @@ def test_the_plain_uv_run_scan_catches_a_planted_command_and_skips_mentions() ->
             "Then `uv run --no-sync tk start x`; never wrap a service in `uv run`.",
             "uv run --no-project --with 'pydantic>=2' python check.py",
             "uv run --frozen --package app-manifest app-manifest footprint",
+            "uv --quiet run pytest; uv --directory /srv run --no-sync tk ls",
+            "Check `uv --version` to run the right one.",
         ]
     )
 
-    assert [number for number, _ in _plain_uv_runs(text)] == [1, 2, 5]
+    assert [number for number, _ in _plain_uv_runs(text)] == [1, 2, 5, 6]
 
 
 def test_changelogs_and_fixtures_are_not_scanned() -> None:
