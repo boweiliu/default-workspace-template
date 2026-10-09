@@ -21,6 +21,7 @@ import configparser
 import re
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path, PurePosixPath
 
 from entry_points_testing import (
@@ -29,6 +30,7 @@ from entry_points_testing import (
     is_bare_entry,
     is_test_file,
 )
+from imbue.mngr.interfaces.host import NamedCommand
 
 _SUPERVISORD_DIR = REPO_ROOT / "system"
 
@@ -203,6 +205,51 @@ def test_no_supervisord_program_runs_under_uv_run() -> None:
         'relock the workspace. Use `bash -c "uv sync --all-packages --frozen && exec .venv/bin/<name>"` '
         "(see .agents/shared/references/running-python.md):\n" + "\n".join(offenders)
     )
+
+
+def _bootstrap_window_command() -> str:
+    """The command mngr types into the ``bootstrap`` window of every workspace agent."""
+    settings = tomllib.loads((REPO_ROOT / ".mngr" / "settings.toml").read_text())
+    windows = [
+        NamedCommand.from_string(window)
+        for window in settings["create_templates"]["main"]["extra_window"]
+    ]
+    (bootstrap,) = [window for window in windows if window.window_name == "bootstrap"]
+    return str(bootstrap.command)
+
+
+def test_the_bootstrap_window_starts_supervisord_with_the_venv_on_path(
+    tmp_path: Path,
+) -> None:
+    command = _bootstrap_window_command()
+    assert not _runs_uv_run(command)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "uv").write_text("#!/bin/sh\nexit 0\n")
+    workspace = tmp_path / "workspace"
+    venv_bin = workspace / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "bootstrap").write_text(
+        '#!/bin/sh\nprintf "%s\\n%s\\n" "$PATH" "$VIRTUAL_ENV"\n'
+    )
+    for script in (fake_bin / "uv", venv_bin / "bootstrap"):
+        script.chmod(0o755)
+
+    # mngr types the command into the window's shell, which runs in the work dir.
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=workspace,
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+
+    path, virtual_env = result.stdout.splitlines()
+    assert Path(path.split(":")[0]).resolve() == venv_bin.resolve()
+    assert str(fake_bin) in path.split(":")
+    assert Path(virtual_env).resolve() == (workspace / ".venv").resolve()
 
 
 def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> None:
