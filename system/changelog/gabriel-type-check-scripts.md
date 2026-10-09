@@ -7,3 +7,5 @@
 - A worker's provision-time sync is `--frozen`, so a lock that drifted from `pyproject.toml` is regenerated only by the worker's SessionStart hook, which tells the agent to commit it. The root launch rules also read supervisord program lines the way supervisord does (`command = ...`, `bash -lc "..."`), and a bare-tier file that imports venv-tier first-party code (such as `workspace_scripts`) now fails a root test.
 
 - The `bootstrap` window puts the root venv's `bin` dir first on `PATH` and sets `VIRTUAL_ENV` before it starts supervisord, as `uv run bootstrap` used to. Without that, programs that name a console script by bare name (an app scaffolded by build-app) could not find it. A root test runs the window's command and checks this.
+
+- The workspace-app contract (`contracts.md` section 14) now says a pre-manifest app and the background services run from `.venv/bin/<name>`, not under `uv run`, matching the launch rule.
