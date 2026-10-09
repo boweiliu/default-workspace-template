@@ -349,6 +349,13 @@ _SKILLS_WITH_PYTHON = sorted(
 )
 
 
+@pytest.mark.parametrize("skill", _SKILLS_WITH_PYTHON, ids=lambda path: path.name)
+def test_every_built_in_skill_with_python_names_its_project_and_package(
+    skill: Path,
+) -> None:
+    assert validate_skill._validate_python_project(skill, skill.name) is None
+
+
 # Real `uv lock --check` and `uv run --no-sync <entry> --help` runs against the workspace:
 # a cold lock check resolves git sources, far past the suite's 10s default.
 @pytest.mark.timeout(300)
