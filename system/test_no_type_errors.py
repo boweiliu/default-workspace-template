@@ -168,7 +168,7 @@ def test_the_bare_tier_type_checks_against_the_standard_library_alone(
 
 
 @pytest.mark.timeout(600)
-def test_the_bare_check_rejects_a_third_party_import_and_accepts_the_floor_syntax(
+def test_the_bare_check_rejects_a_third_party_import_and_holds_to_the_floor(
     tmp_path: Path,
 ) -> None:
     scripts = tmp_path / "scripts"
@@ -180,13 +180,19 @@ def test_the_bare_check_rejects_a_third_party_import_and_accepts_the_floor_synta
     modern.write_text(
         "type Pair = tuple[int, int]\n\n\ndef first(pair: Pair) -> int:\n    return pair[0]\n"
     )
+    newer = scripts / "newer.py"
+    # base64.z85encode exists only from Python 3.13, past the floor.
+    newer.write_text(
+        "import base64\n\n\ndef encode(data: bytes) -> bytes:\n    return base64.z85encode(data)\n"
+    )
 
-    result = _check_bare([leaky, modern], (scripts,), tmp_path)
+    result = _check_bare([leaky, modern, newer], (scripts,), tmp_path)
 
     assert result.returncode != 0
     assert "unresolved-import" in result.stdout
     assert "leaky.py" in result.stdout
     assert "modern.py" not in result.stdout
+    assert "has no member `z85encode`" in result.stdout
 
 
 def test_the_bare_tier_imports_only_the_stdlib_and_bare_code() -> None:
