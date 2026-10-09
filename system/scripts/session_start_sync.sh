@@ -12,7 +12,7 @@ if ! uv lock --check >/dev/null 2>&1; then
     if uv lock --quiet; then
         echo "Note for your next commit (no action needed now): uv.lock was out of date with pyproject.toml and has been regenerated; include it in your next commit."
     else
-        echo "Note (no action needed now): uv.lock is out of date with pyproject.toml and \`uv lock\` failed to regenerate it; the environment was synced from the existing lock. Run \`uv lock\` to see why before relying on a dependency change."
+        echo "Note (no action needed now): uv.lock is out of date with pyproject.toml and \`uv lock\` failed to regenerate it, so this hook syncs from the existing lock instead. Run \`uv lock\` to see why before relying on a dependency change."
     fi
 fi
 uv sync --all-packages --frozen
