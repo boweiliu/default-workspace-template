@@ -69,8 +69,8 @@ must keep tolerating older pre-merge trees: guarded imports (the
 wholesale when it lacks any attribute the apply reads), no assumptions about
 the pre-merge layout, and a skill directory that is staged and run as one unit
 (the entry scripts put the skill's own `python/` on `sys.path` and import the
-`update_self_skill` package from there, so the staged copy never reaches the
-workspace's own tree or venv).
+`update_self_skill` package from there, so the staged copy's own code never
+resolves from the workspace's tree or venv).
 
 ## Trust
 
