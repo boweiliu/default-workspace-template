@@ -164,7 +164,7 @@ def test_a_heavy_import_inside_a_subcommand_passes(tmp_path: Path) -> None:
 
 
 @pytest.mark.timeout(60)
-def test_a_bare_entry_is_probed_without_site_packages(tmp_path: Path) -> None:
+def test_a_bare_entry_is_held_to_the_expensive_stdlib_list(tmp_path: Path) -> None:
     entry = _skill_scripts(
         tmp_path, "import asyncio\n\n\ndef main() -> None:\n    pass\n"
     )
