@@ -60,7 +60,10 @@ program picks it up on its next restart.
 
 ## Commands in the user's docs
 
-In the user's own SKILL.md files, references, prompts and scripts:
+In the user's own SKILL.md files, references, prompts and scripts, and in the
+command each scheduled job's line in `data/.state/cron.d/*` runs (untracked, so no
+check sees it; after editing one, re-install it live with
+`install -m 0644 data/.state/cron.d/<job> /etc/cron.d/<job>`):
 
 - a plain `uv run X` becomes `uv run --no-sync X` (keep `uv run --no-project`
   as it is);
