@@ -21,27 +21,13 @@ import pytest
 from entry_points_testing import (
     IMPORT_PROBE,
     REPO_ROOT,
-    STANDALONE_BARE_DIRS,
-    STANDALONE_BARE_SCRIPTS,
+    all_entry_points,
     declared_heavy_imports,
-    entry_files,
     is_bare_entry,
-    scripts_dirs,
 )
 
 _HEAVY_VENV_MODULES = frozenset({"pydantic", "loguru", "click", "tenacity", "httpx"})
 _HEAVY_STDLIB_MODULES = frozenset({"asyncio"})
-
-
-def _all_entry_points() -> list[Path]:
-    entries = [
-        entry for directory in scripts_dirs() for entry in entry_files(directory)
-    ]
-    entries += [
-        path for directory in STANDALONE_BARE_DIRS for path in entry_files(directory)
-    ]
-    entries += list(STANDALONE_BARE_SCRIPTS)
-    return entries
 
 
 def _loaded_modules(entry: Path, *, bare: bool) -> frozenset[str]:
@@ -75,7 +61,7 @@ def _undeclared_heavy_imports(entry: Path, *, bare: bool) -> set[str]:
 
 @pytest.mark.timeout(60)
 @pytest.mark.parametrize(
-    "entry", _all_entry_points(), ids=lambda path: str(path.relative_to(REPO_ROOT))
+    "entry", all_entry_points(), ids=lambda path: str(path.relative_to(REPO_ROOT))
 )
 def test_an_entry_point_loads_no_undeclared_heavy_module(entry: Path) -> None:
     bare = is_bare_entry(entry)

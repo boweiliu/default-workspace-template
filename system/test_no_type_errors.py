@@ -20,22 +20,21 @@ import pytest
 from entry_points_testing import (
     BARE_PACKAGES,
     REPO_ROOT,
-    STANDALONE_BARE_DIRS,
     STANDALONE_BARE_SCRIPTS,
-    entry_files,
+    SYSTEM_SCRIPTS,
+    UPDATE_SELF_SCRIPTS,
+    all_entry_points,
     entry_package,
     is_bare_entry,
     is_test_file,
     project_dir,
-    scripts_dirs,
 )
 
 _TY = Path(sys.executable).parent / "ty"
 _FLOOR_PYTHON_VERSION = "3.12"
 
-_SYSTEM_SCRIPTS = REPO_ROOT / "system" / "scripts"
-_UPDATE_SELF_SCRIPTS = REPO_ROOT / ".agents" / "skills" / "update-self" / "scripts"
-_UPDATE_SELF_PYTHON = REPO_ROOT / ".agents" / "skills" / "update-self" / "python"
+_UPDATE_SELF_DIR = UPDATE_SELF_SCRIPTS.parent
+_UPDATE_SELF_PYTHON = _UPDATE_SELF_DIR / "python"
 _TK_COMMAND_PARSING_SRC = REPO_ROOT / "system" / "libs" / "tk_command_parsing" / "src"
 _OOM_PRIORITY_SRC = REPO_ROOT / "system" / "services" / "oom_priority" / "src"
 
@@ -43,14 +42,12 @@ _OOM_PRIORITY_SRC = REPO_ROOT / "system" / "services" / "oom_priority" / "src"
 # directory), update-self's python/ and the stdlib-only library trees, which the stubs and
 # update-self put on sys.path.
 _BARE_SEARCH_PATHS = (
-    _SYSTEM_SCRIPTS,
+    SYSTEM_SCRIPTS,
     _UPDATE_SELF_PYTHON,
     _TK_COMMAND_PARSING_SRC,
     _OOM_PRIORITY_SRC,
 )
 
-
-_UPDATE_SELF_DIR = _UPDATE_SELF_SCRIPTS.parent
 
 # The first-party modules each bare runtime context has on sys.path. update-self runs as a
 # staged copy that puts only its own python/ there (and loads oom_priority off the target
@@ -97,16 +94,7 @@ def _bare_packages(stubs: list[Path]) -> set[Path]:
 
 
 def _bare_files() -> list[Path]:
-    stubs = [
-        entry
-        for directory in scripts_dirs()
-        for entry in entry_files(directory)
-        if is_bare_entry(entry)
-    ]
-    stubs += [
-        entry for directory in STANDALONE_BARE_DIRS for entry in entry_files(directory)
-    ]
-    stubs += STANDALONE_BARE_SCRIPTS
+    stubs = [entry for entry in all_entry_points() if is_bare_entry(entry)]
     packages = _bare_packages(stubs)
     assert {package.name for package in packages} == BARE_PACKAGES
     trees = [*packages, _TK_COMMAND_PARSING_SRC, _OOM_PRIORITY_SRC]
@@ -167,8 +155,8 @@ def test_the_bare_tier_type_checks_against_the_standard_library_alone(
     tmp_path: Path,
 ) -> None:
     files = _bare_files()
-    assert _SYSTEM_SCRIPTS / "forward_port.py" in files
-    assert _UPDATE_SELF_SCRIPTS / "update_self.py" in files
+    assert SYSTEM_SCRIPTS / "forward_port.py" in files
+    assert UPDATE_SELF_SCRIPTS / "update_self.py" in files
     assert set(STANDALONE_BARE_SCRIPTS) <= set(files)
 
     result = _check_bare(files, _BARE_SEARCH_PATHS, tmp_path)

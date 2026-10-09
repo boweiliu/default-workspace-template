@@ -16,6 +16,8 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SYSTEM_SCRIPTS = REPO_ROOT / "system" / "scripts"
+UPDATE_SELF_SCRIPTS = REPO_ROOT / ".agents" / "skills" / "update-self" / "scripts"
 
 # The packages the system python3 runs: stdlib only, no venv.
 BARE_PACKAGES = frozenset({"workspace_bare_scripts", "update_self_skill"})
@@ -60,6 +62,18 @@ def is_test_file(path: Path) -> bool:
 
 def entry_files(scripts_dir: Path) -> list[Path]:
     return sorted(path for path in scripts_dir.glob("*.py") if not is_test_file(path))
+
+
+def all_entry_points() -> list[Path]:
+    """Every entry point, venv and bare: the scripts directories' and the standalone bare ones."""
+    entries = [
+        entry for directory in scripts_dirs() for entry in entry_files(directory)
+    ]
+    entries += [
+        path for directory in STANDALONE_BARE_DIRS for path in entry_files(directory)
+    ]
+    entries += STANDALONE_BARE_SCRIPTS
+    return entries
 
 
 def project_dir(entry: Path) -> Path:

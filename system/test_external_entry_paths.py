@@ -15,28 +15,30 @@ import sys
 from pathlib import Path
 
 import pytest
-from entry_points_testing import IMPORT_PROBE, REPO_ROOT
-
-_SYSTEM_SCRIPTS = REPO_ROOT / "system" / "scripts"
-_UPDATE_SELF_SCRIPTS = REPO_ROOT / ".agents" / "skills" / "update-self" / "scripts"
+from entry_points_testing import (
+    IMPORT_PROBE,
+    REPO_ROOT,
+    SYSTEM_SCRIPTS,
+    UPDATE_SELF_SCRIPTS,
+)
 
 # (path, arguments) for each bare path an outside caller runs; every one is harmless.
 _BARE_CALLS: tuple[tuple[Path, tuple[str, ...]], ...] = (
-    (_SYSTEM_SCRIPTS / "seed_welcome_chat.py", ("--help",)),
-    (_SYSTEM_SCRIPTS / "message_chat.py", ("--help",)),
-    (_SYSTEM_SCRIPTS / "forward_port.py", ("--help",)),
-    (_SYSTEM_SCRIPTS / "provision_backups.py", ("--help",)),
-    (_SYSTEM_SCRIPTS / "set_mngr_pin.py", ("--help",)),
-    (_SYSTEM_SCRIPTS / "run_in_background.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "seed_welcome_chat.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "message_chat.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "forward_port.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "provision_backups.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "set_mngr_pin.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "run_in_background.py", ("--help",)),
     # Outside a workspace (no agent id in the environment) the gate lets everything through.
-    (_SYSTEM_SCRIPTS / "require_create_account.py", ()),
-    (_UPDATE_SELF_SCRIPTS / "update_self.py", ("--help",)),
-    (_UPDATE_SELF_SCRIPTS / "run_in_background.py", ("--help",)),
+    (SYSTEM_SCRIPTS / "require_create_account.py", ()),
+    (UPDATE_SELF_SCRIPTS / "update_self.py", ("--help",)),
+    (UPDATE_SELF_SCRIPTS / "run_in_background.py", ("--help",)),
 )
 
 # Imported without letting the __main__ block act (a run would collect a real bug report), which
 # still resolves every import a real run makes at startup.
-_BARE_IMPORTS = (_SYSTEM_SCRIPTS / "collect_bug_report_diagnostics.py",)
+_BARE_IMPORTS = (SYSTEM_SCRIPTS / "collect_bug_report_diagnostics.py",)
 
 _VENV_CALLS: tuple[tuple[Path, tuple[str, ...]], ...] = (
     (
@@ -109,7 +111,7 @@ def test_the_secrets_wrapper_runs_a_command_without_the_venv(tmp_path: Path) -> 
             sys.executable,
             "-S",
             "-s",
-            str(_SYSTEM_SCRIPTS / "with_secrets.py"),
+            str(SYSTEM_SCRIPTS / "with_secrets.py"),
             "data/.secrets/probe.env",
             "--",
             "sh",
