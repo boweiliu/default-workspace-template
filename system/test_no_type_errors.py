@@ -50,15 +50,30 @@ _BARE_SEARCH_PATHS = (
 )
 
 
-# The stdlib-only libraries the bare stubs and update-self put on sys.path.
-_BARE_LIBRARIES = frozenset({"tk_command_parsing", "oom_priority"})
+_UPDATE_SELF_DIR = _UPDATE_SELF_SCRIPTS.parent
+
+# The first-party modules each bare runtime context has on sys.path. update-self runs as a
+# staged copy that puts only its own python/ there (and loads oom_priority off the target
+# tree); everything else runs beside system/scripts with the stdlib-only library trees.
+_UPDATE_SELF_IMPORTABLE = frozenset({"update_self_skill", "oom_priority"})
+_SYSTEM_IMPORTABLE = frozenset(
+    {"workspace_bare_scripts", "tk_command_parsing", "oom_priority"}
+)
 
 
-def _imports_outside_the_bare_tier(path: Path) -> list[str]:
-    """Top-level modules ``path`` imports (anywhere, lazily included) that the bare tier cannot.
+def _bare_importable(path: Path) -> frozenset[str]:
+    """The first-party modules on ``sys.path`` in the bare runtime context ``path`` runs in."""
+    if path.is_relative_to(_UPDATE_SELF_DIR):
+        return _UPDATE_SELF_IMPORTABLE
+    return _SYSTEM_IMPORTABLE
+
+
+def _imports_outside_the_bare_tier(path: Path, importable: frozenset[str]) -> list[str]:
+    """Top-level modules ``path`` imports (anywhere, lazily included) beyond the stdlib and ``importable``.
 
     ty alone does not catch a first-party one: it resolves a sibling package such as the
-    venv-tier ``workspace_scripts`` relative to the importing file, so it never reports it.
+    venv-tier ``workspace_scripts`` relative to the importing file, and it checks every bare
+    file against every bare search path, so it never reports either.
     """
     imported: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
@@ -66,8 +81,7 @@ def _imports_outside_the_bare_tier(path: Path) -> list[str]:
             imported.update(alias.name.split(".")[0] for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             imported.add(node.module.split(".")[0])
-    allowed = sys.stdlib_module_names | BARE_PACKAGES | _BARE_LIBRARIES
-    return sorted(imported - allowed)
+    return sorted(imported - sys.stdlib_module_names - importable)
 
 
 def _is_test_support(path: Path) -> bool:
@@ -191,7 +205,7 @@ def test_the_bare_tier_imports_only_the_stdlib_and_bare_code() -> None:
     offenders = {
         str(path.relative_to(REPO_ROOT)): outside
         for path in _bare_files()
-        if (outside := _imports_outside_the_bare_tier(path))
+        if (outside := _imports_outside_the_bare_tier(path, _bare_importable(path)))
     }
     assert offenders == {}, (
         "Bare-tier files import modules the system python3 cannot load with no venv: "
@@ -206,4 +220,21 @@ def test_the_bare_import_rule_rejects_a_lazy_venv_tier_import(tmp_path: Path) ->
         "    from workspace_scripts import docs_viewer\n\n    return json.dumps(str(docs_viewer))\n"
     )
 
-    assert _imports_outside_the_bare_tier(module) == ["workspace_scripts"]
+    assert _imports_outside_the_bare_tier(module, _bare_importable(module)) == [
+        "workspace_scripts"
+    ]
+
+
+def test_the_bare_import_rule_keeps_update_self_to_its_staged_copy(
+    tmp_path: Path,
+) -> None:
+    module = tmp_path / "mirror.py"
+    module.write_text(
+        "from workspace_bare_scripts import tool_env\n\ntool_env.main()\n"
+    )
+    update_self_module = _UPDATE_SELF_PYTHON / "update_self_skill" / "update_self.py"
+
+    assert _imports_outside_the_bare_tier(
+        module, _bare_importable(update_self_module)
+    ) == ["workspace_bare_scripts"]
+    assert _imports_outside_the_bare_tier(module, _bare_importable(module)) == []
