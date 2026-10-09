@@ -26,6 +26,8 @@ The venv stays current without those per-call syncs:
   lock once and says so;
 - after you change a dependency yourself, run `uv lock` and then
   `uv sync --all-packages`, and commit the new `uv.lock` with the change.
+- after you merge a branch that changed a `pyproject.toml` or `uv.lock`
+  (a worker's new skill or dependency), run `uv sync --all-packages --frozen`.
 
 `--no-sync` is a no-op for a script carrying inline (PEP 723) metadata: uv
 always runs those in their own environment.
