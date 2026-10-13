@@ -197,24 +197,40 @@ def _plain_uv_runs(text: str) -> list[tuple[int, str]]:
     ]
 
 
+def _resolves_to_exempt_content(path: Path, repo_root: Path) -> bool:
+    """Whether a tracked file is a symlink to content outside the repo or in an exempt dir.
+
+    ``docs/system/style_guide.md`` points into the gitignored, build-fetched
+    ``system/vendor/mngr-assets/``, so its tracked path alone does not show it is vendored.
+    """
+    resolved = path.resolve()
+    if not resolved.is_relative_to(repo_root.resolve()):
+        return True
+    return bool(
+        _EXEMPT_PARTS.intersection(resolved.relative_to(repo_root.resolve()).parts)
+    )
+
+
 def _agent_facing_files(
     suffixes: tuple[str, ...] = _AGENT_FACING_SUFFIXES,
+    repo_root: Path = REPO_ROOT,
 ) -> list[Path]:
     tracked = subprocess.run(
         ["git", "ls-files", "-z"],
-        cwd=REPO_ROOT,
+        cwd=repo_root,
         capture_output=True,
         text=True,
         check=True,
     ).stdout.split("\0")
     return [
-        REPO_ROOT / relative
+        repo_root / relative
         for relative in tracked
         if relative.endswith(suffixes)
         and not _EXEMPT_PARTS.intersection(PurePosixPath(relative).parts)
         and not relative.startswith(_EXEMPT_PREFIXES)
         and PurePosixPath(relative).name not in _EXEMPT_NAMES
-        and (REPO_ROOT / relative).is_file()
+        and (repo_root / relative).is_file()
+        and not _resolves_to_exempt_content(repo_root / relative, repo_root)
     ]
 
 
@@ -378,6 +394,28 @@ def test_changelogs_and_fixtures_are_not_scanned() -> None:
     )
     assert not any("fixtures" in Path(path).parts for path in scanned)
     assert "AGENTS.md" in scanned
+
+
+def test_a_tracked_symlink_into_vendored_content_is_not_scanned(
+    tmp_path: Path,
+) -> None:
+    vendored = tmp_path / "system" / "vendor" / "assets"
+    vendored.mkdir(parents=True)
+    (vendored / "guide.md").write_text("uv run python scripts/build.py\n")
+    (tmp_path / ".gitignore").write_text("system/vendor/assets/\n")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").symlink_to("../system/vendor/assets/guide.md")
+    (docs / "real.md").write_text("uv run pytest\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    scanned = {
+        str(path.relative_to(tmp_path))
+        for path in _agent_facing_files(repo_root=tmp_path)
+    }
+
+    assert scanned == {"docs/real.md"}
 
 
 # ``python3 [flags] <path>.py``, the path optionally quoted (JSON escapes its quotes).
