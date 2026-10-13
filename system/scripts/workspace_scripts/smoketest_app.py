@@ -248,4 +248,3 @@ def main() -> None:
 
     if args.marker:
         print(f"Marker confirmed: {args.marker!r}")
-

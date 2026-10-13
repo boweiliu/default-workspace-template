@@ -1026,4 +1026,3 @@ def main() -> None:
                 )
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
-
