@@ -224,7 +224,7 @@ services restart) and will never finish. The service records such a tick as
 `tick_abandoned` when it starts again, and the wait for a triggered tick skips that
 record and reports the restarted service's first tick instead, which backs up again.
 
-`uv run host-backup-now --check` triggers nothing and waits for nothing: it reads
+`uv run --no-sync host-backup-now --check` triggers nothing and waits for nothing: it reads
 the newest tick outcomes back from the log (from the last rotated file too, while
 the current one holds no success yet), prints them as JSON (`newest_outcome`,
 `newest_success_at`, `age_seconds`, `max_age_seconds`, `inflight_tick_id`), and
