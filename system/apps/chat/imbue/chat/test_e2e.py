@@ -50,7 +50,13 @@ from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import DEFAULT_STATIC_DIRECTORY as SHELL_STATIC_DIRECTORY
 from imbue.system_interface.shell.desktops import DEFAULT_DESKTOP_NAME
 from imbue.system_interface.shell.desktops import slugify_desktop_name
+from imbue.system_interface.shell.testing import DUFS_BINARY
+from imbue.system_interface.shell.testing import file_viewer_registry_row
+from imbue.system_interface.shell.testing import message_handling_app
+from imbue.system_interface.shell.testing import registry_row_toml
+from imbue.system_interface.shell.testing import running_file_viewer
 from imbue.system_interface.testing import find_free_port
+from imbue.system_interface.testing import serve_app
 
 
 def _playwright_browsers_installed() -> bool:
@@ -122,6 +128,7 @@ def _running_e2e_server(
     session_events: list[dict[str, Any]] | None = None,
     is_account_signed_in: bool = True,
     additional_agents: Sequence[tuple[str, str]] = (),
+    extra_rows: Sequence[str] = (),
 ) -> AbstractContextManager[RunningWorkspace]:
     """The two-server workspace, the shell and the chat each on a free port of their own."""
     return running_workspace(
@@ -131,6 +138,7 @@ def _running_e2e_server(
         session_events=session_events,
         additional_agents=additional_agents,
         is_account_signed_in=is_account_signed_in,
+        extra_rows=extra_rows,
     )
 
 
@@ -704,6 +712,42 @@ def test_a_minimized_chat_preserves_its_scroll_window(tmp_path: Path, page: Page
         )
 
 
+# watching
+
+
+@pytest.mark.timeout(90, func_only=False)
+def test_a_chat_page_watches_its_chat_only_while_shown_and_focused(e2e_server: RunningWorkspace, page: Page) -> None:
+    """The watchers route lists the chat's page while its window shows it and its document has focus, and drops it
+    when the focus moves to the chat list beside it or the window is minimized."""
+    _open_fixture_chat(page, e2e_server)
+    watchers_url = f"{e2e_server.chat_url}/api/chats/{FIXTURE_AGENT_ID}/watchers"
+
+    def wait_for_watcher_count(count: int, described: str) -> None:
+        wait_for(
+            lambda: len(_get_json(watchers_url)["watched_by"]) == count,
+            timeout=15.0,
+            poll_interval=0.1,
+            error_message=f"the watchers route never showed {described}",
+        )
+
+    composer = _chat(page).locator(".message-input-textbox")
+    composer.click()
+    wait_for_watcher_count(1, "the focused chat page watching")
+
+    # A press on the chat list takes the focus into the root's own document, out of the chat page.
+    _chat_root(page).locator(f'.chat-rail-row[data-chat-id="{FIXTURE_AGENT_ID}"]').click()
+    wait_for_watcher_count(0, "the blurred chat page stop watching")
+
+    composer.click()
+    wait_for_watcher_count(1, "the refocused chat page watching again")
+
+    # A click on the focused window's taskbar entry minimizes it: the page is hidden in place.
+    entry = _taskbar_entry(page, _the_chat_window(e2e_server)["id"])
+    entry.click()
+    expect(entry).to_have_attribute("data-minimized", "true")
+    wait_for_watcher_count(0, "the hidden chat page stop watching")
+
+
 # desktops
 
 
@@ -856,17 +900,17 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_ow
     tmp_path: Path, page: Page
 ) -> None:
     """The window opens either way: with no account the chat app mints a chat that waits for its first send and
-    holds the intake, and the chat root offers the provider chooser over it, so signing in happens where the chat
-    will be rather than on the shell; no agent is created until an account is chosen (post-launch-paths plan
+    holds the intake, and that chat's page offers the provider chooser, so signing in happens where the chat will be
+    rather than on the shell or the chat list; no agent is created until an account is chosen (post-launch-paths plan
     section 4.6)."""
     with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
         chat_frame = _start_new_chat(page, server)
-        root = _chat_root(page)
-        expect(root.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+        expect(chat_frame.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
         # Under the chooser, the composer's provider row already says there is no provider to start on.
         expect(chat_frame.locator(".model-selector-not-connected")).to_have_text("Not connected", timeout=15000)
-        # The shell itself renders no chooser: the sign-in lives in the chat's page.
+        # Neither the shell nor the chat list draws a chooser of its own: the chat's page is the one place it opens.
         assert page.locator('[data-e2e="provider-chooser"]').count() == 0
+        assert _chat_root(page).locator('[data-e2e="provider-chooser"]').count() == 0
         assert [str(chat.chat_id) for chat in server.chat_state.agent_manager.get_chat_snapshots()] == [
             FIXTURE_AGENT_ID
         ]
@@ -880,6 +924,60 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_ow
         page.reload()
         expect(page.locator("iframe[data-live-page]")).to_have_count(1, timeout=15000)
         expect(_chat_root(page).locator(".chat-root")).to_be_visible(timeout=15000)
+        expect(_shown_chat(page).locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+
+
+@pytest.mark.timeout(120, func_only=False)
+def test_the_new_chat_button_with_nothing_signed_in_opens_a_chat_that_asks_for_a_provider(
+    tmp_path: Path, page: Page
+) -> None:
+    """With nothing signed in the New chat button opens the chat awaiting its first send, and that chat's page asks
+    for a provider, the same as any chat with none to start on."""
+    with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
+        _open_fixture_chat_root(page, server)
+        root = _chat_root(page)
+        root.locator(".chat-rail-new").first.click()
+        expect(_shown_chat(page).locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+        awaiting = server.chat_state.agent_manager.get_provisional_chats()
+        assert [chat.phase.value for chat in awaiting] == ["awaiting_first_send"]
+
+
+@pytest.mark.timeout(120, func_only=False)
+def test_a_chat_awaiting_its_first_send_with_nothing_signed_in_offers_a_provider_in_place_of_the_composer(
+    tmp_path: Path, page: Page
+) -> None:
+    """A message typed before a provider is connected could not be sent, so with the chooser dismissed the composer
+    stays in view but disabled, under a sentence and a button that opens the same chooser again."""
+    with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
+        chat_frame = _start_new_chat(page, server)
+        expect(chat_frame.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+        chat_frame.locator('[data-e2e="provider-chooser"] [aria-label="Close"]').click()
+        expect(chat_frame.locator(".message-input-no-provider")).to_contain_text(
+            "Connect an AI provider to start chatting.", timeout=15000
+        )
+        expect(chat_frame.locator(".message-input-textbox")).to_be_disabled()
+        chat_frame.locator(".message-input-choose-provider").click()
+        expect(chat_frame.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+
+
+@pytest.mark.timeout(120, func_only=False)
+def test_a_first_message_sent_with_nothing_signed_in_waits_in_the_chat_composer(tmp_path: Path, page: Page) -> None:
+    """A message sent from the launcher with nothing signed in raises no dialog: it waits in the new chat's disabled
+    composer while the chat asks for a provider, ready to send once one is signed in."""
+    dialogs: list[str] = []
+    page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+    with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
+        _land(page, server)
+        page.locator("[data-launcher-field] textarea").fill("Plan my week")
+        menu = page.locator("[data-launcher-overlay]")
+        expect(menu).to_be_visible(timeout=10000)
+        menu.locator(f'[data-launch="{CHAT_APP_NAME}:new"]').click()
+        expect(page.locator("iframe[data-live-page]")).to_have_count(1, timeout=15000)
+        chat_frame = _chat(page, None)
+        expect(chat_frame.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
+        expect(chat_frame.locator(".message-input-textbox")).to_have_value("Plan my week", timeout=15000)
+        expect(chat_frame.locator(".message-input-textbox")).to_be_disabled()
+        assert dialogs == []
 
 
 # Installed in every frame before its scripts run: records each placeholder screen or text the chat page ever
@@ -1232,7 +1330,7 @@ def test_a_chat_changes_account_in_place_from_the_page(tmp_path: Path, page: Pag
         dialog.locator("select.switch-dialog-effort").select_option("high")
         dialog.get_by_role("button", name="Switch this chat").click()
         expect(chat.locator(".message-input-switch-strip")).to_contain_text(
-            "Your next message switches this chat to Anthropic 2 (Claude Code), Haiku 4.5 · High"
+            "Your next message switches this chat to Anthropic 2 (Claude Code), Haiku 5.5 · High"
         )
 
         chat.locator(".message-input-textbox").fill("Carry on on the other account")
@@ -1434,18 +1532,244 @@ def test_a_failed_switch_shows_its_reason_and_retries_on_a_third_account(
         expect(provider_row).not_to_contain_text("next:")
 
 
+def _question_and_reply_events(uuid_prefix: str, question: str, reply: str) -> list[dict[str, Any]]:
+    """A session of one user question and the assistant's finished reply to it."""
+    return [
+        {
+            "type": "user",
+            "uuid": f"{uuid_prefix}-1",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "message": {"role": "user", "content": question},
+        },
+        {
+            "type": "assistant",
+            "uuid": f"{uuid_prefix}-2",
+            "timestamp": "2026-01-01T00:00:01Z",
+            "message": {
+                "role": "assistant",
+                "model": "claude-opus-4-6",
+                "content": [{"type": "text", "text": reply}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        },
+    ]
+
+
+# A reply that links a file of the workspace and a service running in it (the workspace link routing plan), served
+# with the real File Viewer (dufs over a folder of the test's own) and a stand-in for the app that opens URLs.
+_LINKED_FILE_HREF = "/notes/plan%201.md"
+_LINKED_SERVICE_URL = "http://localhost:3000/preview"
+_OPEN_URL_HANDLER_PATH = "/api/open-url"
+_LINKING_SESSION_EVENTS = _question_and_reply_events(
+    "uuid-link",
+    "Where are the plan and the preview?",
+    f"The plan is [the plan file]({_LINKED_FILE_HREF}) and the preview is [the preview]({_LINKED_SERVICE_URL}).",
+)
+
+
+def _app_windows(server: RunningWorkspace, app: str) -> list[dict[str, Any]]:
+    desktop = next(candidate for candidate in _desktops(server) if candidate["id"] == _HOME_DESKTOP_ID)
+    return [window for window in desktop["windows"] if window["app"] == app]
+
+
+def _open_fixture_chat_with_shell(page: Page, server: RunningWorkspace) -> None:
+    """Open the fixture chat and wait until its page has the shell's handshake, before which a click on a link is the
+    browser's rather than the workspace's. The page's first presence report goes out as that handshake arrives."""
+    with page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith(f"/api/chats/{FIXTURE_AGENT_ID}/presence"),
+        timeout=15000,
+    ):
+        _open_fixture_chat(page, server)
+
+
+def _bring_the_chat_over(page: Page, server: RunningWorkspace, client_id: str, covering_window_id: str) -> None:
+    """Raise the chat window over the one that opened on top of it, as an agent's ``focus`` op does, so its links can
+    be clicked again."""
+    focus = {"op": "focus", "args": {"window": _the_chat_window(server)["id"], "client": client_id}}
+    assert _post_op(server, {**focus, "requester": None}) == 200
+    expect(page.locator(f'[data-window-id="{covering_window_id}"]')).to_have_attribute(
+        "data-focused", "false", timeout=15000
+    )
+
+
+@pytest.mark.skipif(DUFS_BINARY is None, reason="dufs is not installed (the workspace image installs it)")
+@pytest.mark.timeout(120, func_only=False)
+def test_a_replys_file_link_opens_in_the_file_viewer_and_its_local_link_goes_to_the_app_that_opens_urls(
+    tmp_path: Path, page: Page
+) -> None:
+    """Clicking a reply's file link opens the file on its view page in a File Viewer window, and clicking it again
+    (with a modifier) raises that window rather than opening another; a middle click on a local address sends it,
+    with the client, to the app registered for ``open:url``. The chat never navigates and no browser window
+    opens."""
+    root = tmp_path / "viewer-root"
+    (root / "notes").mkdir(parents=True)
+    (root / "notes" / "plan 1.md").write_text("# The plan\n")
+    opened_urls: list[dict[str, Any]] = []
+    with (
+        running_file_viewer(root) as viewer_url,
+        serve_app(message_handling_app(opened_urls, _OPEN_URL_HANDLER_PATH, 200)) as url_opener,
+    ):
+        rows = (
+            file_viewer_registry_row(viewer_url),
+            registry_row_toml("browser", url_opener.http_url, message_handlers=[("open:url", _OPEN_URL_HANDLER_PATH)]),
+        )
+        with _running_e2e_server(tmp_path, session_events=_LINKING_SESSION_EVENTS, extra_rows=rows) as server:
+            _open_fixture_chat_with_shell(page, server)
+            chat = _chat(page)
+            file_link = chat.get_by_role("link", name="the plan file")
+            expect(file_link).to_be_visible(timeout=15000)
+            chat_url = _chat_frame(page).url
+
+            file_link.click()
+            wait_for(
+                lambda: [window["path"] for window in _app_windows(server, "files")] == ["/notes/plan%201.md?view"],
+                timeout=15.0,
+                poll_interval=0.1,
+                error_message="no File Viewer window opened on the linked file's view page",
+            )
+            (viewer,) = _app_windows(server, "files")
+            client_id = _client_id(page)
+            _bring_the_chat_over(page, server, client_id, viewer["id"])
+            file_link.click(modifiers=["ControlOrMeta"])
+            expect(page.locator(f'[data-window-id="{viewer["id"]}"]')).to_have_attribute(
+                "data-focused", "true", timeout=15000
+            )
+            assert [window["id"] for window in _app_windows(server, "files")] == [viewer["id"]]
+
+            _bring_the_chat_over(page, server, client_id, viewer["id"])
+            chat.get_by_role("link", name="the preview").click(button="middle")
+            wait_for(
+                lambda: len(opened_urls) == 1,
+                timeout=15.0,
+                poll_interval=0.1,
+                error_message="the app registered for open:url was never posted the link",
+            )
+            assert opened_urls == [{"type": "open:url", "client_id": client_id, "url": _LINKED_SERVICE_URL}]
+            assert _chat_frame(page).url == chat_url
+            assert page.context.pages == [page]
+
+
+_NEWS_LABEL = "news-ab12cd34"
+
+
+@pytest.mark.timeout(120, func_only=False)
+@pytest.mark.parametrize("is_label_host_link", [False, True], ids=["backend_port", "label_host"])
+def test_a_replys_link_to_a_registered_app_opens_that_apps_window_not_the_browser(
+    tmp_path: Path, page: Page, is_label_host_link: bool
+) -> None:
+    """A reply's link to an app, either by the port-less ``http://<label>.localhost/`` address ``workspace-layout
+    list`` gives an agent or by its backend's ``http://localhost:<port>`` URL, opens the app's own window at the
+    link's path and query, and nothing is posted to the app that opens URLs."""
+    opened_urls: list[dict[str, Any]] = []
+    with (
+        serve_app(message_handling_app([], "/unused", 200)) as news,
+        serve_app(message_handling_app(opened_urls, _OPEN_URL_HANDLER_PATH, 200)) as url_opener,
+    ):
+        rows = (
+            registry_row_toml("news", news.http_url, label=_NEWS_LABEL),
+            registry_row_toml("browser", url_opener.http_url, message_handlers=[("open:url", _OPEN_URL_HANDLER_PATH)]),
+        )
+        origin = f"http://{_NEWS_LABEL}.localhost" if is_label_host_link else f"http://localhost:{news.port}"
+        session_events = _question_and_reply_events(
+            "uuid-app-link", "Where is the story?", f"It is in [the news app]({origin}/story/7?ref=chat)."
+        )
+        with _running_e2e_server(tmp_path, session_events=session_events, extra_rows=rows) as server:
+            _open_fixture_chat_with_shell(page, server)
+            chat = _chat(page)
+            app_link = chat.get_by_role("link", name="the news app")
+            expect(app_link).to_be_visible(timeout=15000)
+            chat_url = _chat_frame(page).url
+
+            app_link.click()
+            wait_for(
+                lambda: [window["path"] for window in _app_windows(server, "news")] == ["/story/7?ref=chat"],
+                timeout=15.0,
+                poll_interval=0.1,
+                error_message="no news window opened at the linked path",
+            )
+            assert opened_urls == []
+            assert _chat_frame(page).url == chat_url
+
+
+# A folder whose name holds characters a URL spells in different ways: a space, parentheses, an apostrophe.
+_ODD_FOLDER_NAME = "q4 (final)'s"
+_FOLDER_LINK_SESSION_EVENTS = _question_and_reply_events(
+    "uuid-folder", "Where did the report go?", f"It is in [the report folder](</{_ODD_FOLDER_NAME}>)."
+)
+
+
+@pytest.mark.skipif(DUFS_BINARY is None, reason="dufs is not installed (the workspace image installs it)")
+@pytest.mark.timeout(120, func_only=False)
+def test_a_folder_link_raises_the_file_viewer_window_that_reached_the_folder_through_its_own_listing(
+    tmp_path: Path, page: Page
+) -> None:
+    """A File Viewer window that walked into a folder through dufs's own listing is at the path as dufs spells it;
+    a chat link to that folder spells it the shell's way, and the two must agree so the link raises that window
+    rather than opening a second one."""
+    root = tmp_path / "viewer-root"
+    (root / _ODD_FOLDER_NAME).mkdir(parents=True)
+    with running_file_viewer(root) as viewer_url:
+        rows = (file_viewer_registry_row(viewer_url),)
+        with _running_e2e_server(tmp_path, session_events=_FOLDER_LINK_SESSION_EVENTS, extra_rows=rows) as server:
+            _open_fixture_chat_with_shell(page, server)
+            client_id = _client_id(page)
+            opened = {"op": "open", "args": {"app": "files", "path": "/", "client": client_id}, "requester": None}
+            assert _post_op(server, opened) == 200
+            wait_for(
+                lambda: len(_app_windows(server, "files")) == 1,
+                timeout=15.0,
+                poll_interval=0.1,
+                error_message="the File Viewer window never opened",
+            )
+            (viewer,) = _app_windows(server, "files")
+            listing = page.frame_locator(f'iframe[data-live-page="{viewer["id"]}"]')
+            listing.get_by_role("link", name=_ODD_FOLDER_NAME, exact=True).click()
+            wait_for(
+                lambda: _app_windows(server, "files")[0]["path"] != "/",
+                timeout=15.0,
+                poll_interval=0.1,
+                error_message="the File Viewer window never reported the folder it walked into",
+            )
+            listed_path = _app_windows(server, "files")[0]["path"]
+
+            _bring_the_chat_over(page, server, client_id, viewer["id"])
+            _chat(page).get_by_role("link", name="the report folder").click()
+
+            expect(page.locator(f'[data-window-id="{viewer["id"]}"]')).to_have_attribute(
+                "data-focused", "true", timeout=15000
+            )
+            assert [(window["id"], window["path"]) for window in _app_windows(server, "files")] == [
+                (viewer["id"], listed_path)
+            ]
+
+
 # the phone layout (plan-phone-interface.md, "The chat app")
 
 
 _PHONE_VIEWPORT: ViewportSize = {"width": 393, "height": 852}
 
 
-def _open_phone_chat_root(page: Page, server: RunningWorkspace, path: str = _FIXTURE_ROOT_PATH) -> None:
-    """Open the chat root at a phone's width, at the chat app's own URL: its layout follows its own width whatever
-    frames it, so the shell's phone layout is not what is under test here."""
+def _open_narrow_chat_root(page: Page, server: RunningWorkspace, path: str = _FIXTURE_ROOT_PATH) -> None:
+    """Open the chat root at a phone's size, at the chat app's own URL: its layout follows its own size whatever frames
+    it, so the shell's phone layout is not what is under test here. With no touch emulated it is under a mouse."""
     page.set_viewport_size(_PHONE_VIEWPORT)
     page.goto(f"{server.chat_url}{path}")
     expect(page.locator('.chat-root[data-compact="true"]')).to_be_visible(timeout=15000)
+
+
+def _emulate_touchscreen(page: Page) -> None:
+    """Make the page's primary pointer a finger, which is what ``(pointer: coarse)`` reads."""
+    page.context.new_cdp_session(page).send(
+        "Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1}
+    )
+
+
+def _open_phone_chat_root(page: Page, server: RunningWorkspace, path: str = _FIXTURE_ROOT_PATH) -> None:
+    """Open the chat root at a phone's size on a touchscreen, which gives the drawer its finger's form; under a mouse
+    it holds the rail's (``_open_narrow_chat_root``)."""
+    _emulate_touchscreen(page)
+    _open_narrow_chat_root(page, server, path)
 
 
 def _dismiss_drawer_by_its_scrim(page: Page) -> None:
@@ -1502,15 +1826,65 @@ def test_the_phone_layout_keeps_the_chat_list_in_a_drawer_over_the_chat(
 
 
 @pytest.mark.timeout(60, func_only=False)
+def test_a_narrow_window_under_a_mouse_opens_the_rail_in_the_drawer_at_its_dragged_width(
+    e2e_server: RunningWorkspace, page: Page
+) -> None:
+    """Dragging the rail's edge in a wide window widens it and keeps the width; narrowed to a phone's width under a
+    mouse, the list button opens the rail as it was, dense rows and "New chat" spelled out, at that width."""
+    page.set_viewport_size({"width": 1200, "height": 800})
+    page.goto(f"{e2e_server.chat_url}{_FIXTURE_ROOT_PATH}")
+    rail = page.locator(".chat-rail")
+    expect(rail).to_be_visible(timeout=15000)
+    handle = page.locator(".chat-rail-resize").bounding_box()
+    assert handle is not None
+    x, y = handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 120, y, steps=10)
+    page.mouse.up()
+    expect(rail).to_have_attribute("style", "width: 300px;")
+
+    _open_narrow_chat_root(page, e2e_server)
+    page.locator("[data-chat-header-list]").click()
+    drawer = page.locator("[data-chat-drawer]")
+    expect(drawer).to_be_visible()
+    expect(drawer.locator(".chat-rail-new")).to_have_text("New chat")
+    expect(drawer.locator("[data-chat-row-menu]")).to_have_count(0)
+    panel = page.locator(".chat-drawer-panel").bounding_box()
+    row = drawer.locator(f'.chat-rail-row[data-chat-id="{FIXTURE_AGENT_ID}"]').bounding_box()
+    # The panel's box is measured in fractional pixels.
+    assert panel is not None and abs(panel["width"] - 300) < 1, panel
+    assert row is not None and row["height"] < 44, row
+
+
+@pytest.mark.timeout(60, func_only=False)
+def test_a_touchscreen_keeps_the_phone_layout_sideways_where_a_mouse_gets_the_rail(
+    e2e_server: RunningWorkspace, page: Page
+) -> None:
+    """A phone turned sideways is wider than a mouse's narrow layout reaches, but it keeps the phone layout, by the
+    shell's phone rule; the same window under a mouse shows the rail."""
+    landscape: ViewportSize = {"width": _PHONE_VIEWPORT["height"], "height": _PHONE_VIEWPORT["width"]}
+    page.set_viewport_size(landscape)
+    page.goto(f"{e2e_server.chat_url}{_FIXTURE_ROOT_PATH}")
+    expect(page.locator(".chat-root")).to_have_attribute("data-compact", "false", timeout=15000)
+
+    _emulate_touchscreen(page)
+    page.reload()
+    expect(page.locator(".chat-root")).to_have_attribute("data-compact", "true", timeout=15000)
+
+
+@pytest.mark.timeout(60, func_only=False)
 def test_the_phone_header_kebab_renames_the_chat_on_screen(e2e_server: RunningWorkspace, page: Page) -> None:
-    """The header's kebab offers the row menu's verbs for the chat on screen, and its Rename is typed in place of the
-    title and lands on the chat."""
+    """The header's kebab offers what a right-click on the chat's row offers, verbs then reference rows, and its
+    Rename is typed in place of the title and lands on the chat."""
     _open_phone_chat_root(page, e2e_server)
     expect(page.locator(".chat-header-title")).to_have_text("test-agent")
 
     page.locator("[data-chat-header-menu]").click()
     menu = page.locator(".chat-header-menu")
-    expect(menu.locator("[data-menu-row]")).to_have_text(["Rename", "Stop chat", "Delete chat"])
+    expect(menu.locator("[data-menu-row]")).to_have_text(
+        ["Rename", "Stop chat", "Delete chat", "Copy reference", "Explain...", "Modify..."]
+    )
     menu.locator('[data-menu-row="rename"]').click()
     field = page.locator(".chat-header .chat-rail-rename-input")
     expect(field).to_be_focused()

@@ -91,7 +91,7 @@ has offered), `placements/<desktop>/<client>.json`,
 `window_paths/<client>.json` (a client's own paths for independent windows),
 `clients.json`, `users.json` (the desktop made for each visiting user),
 `avatar_selection.json`, and the client-activity
-event log (`events/client_activity/events.jsonl`, what `layout.py context`
+event log (`events/client_activity/events.jsonl`, what `workspace-layout context`
 reads). Wallpapers are listed from `static/wallpapers/` (bundled) and
 `data/.apps/system_interface/wallpapers/` (files the user adds); avatar designs
 an agent registers live in `data/.apps/system_interface/avatars/catalog.json`
@@ -143,7 +143,8 @@ and the profile cache.
   with 409 and the browser refetches. `GET /api/inventory` is
   `{desktops, apps, clients}`, each `app` carrying its `launch_paths`,
   `default_shortcut`, and `is_running`.
-- **The op route** (`shell/layout_ops.py`): an op is `{op, args, requester}`,
+- **The op route** (`shell/desktop_routes.py`, over the request models of
+  the `workspace_layout` library's `ops`): an op is `{op, args, requester}`,
   the requester `{app, marker}` or null; `self` names the requester's app's
   window whose path carries the marker. The document verbs (`open`, `focus`,
   `minimize`, `restore`, `maximize`, `place`, `close`, `navigate`, `load`,
@@ -151,13 +152,15 @@ and the profile cache.
   announced as `desktops_updated` and `placements_updated`; `context` answers every
   client's recent activity, folded from the client-activity log and the live
   socket registrations, and `desktops` and `list` answer the inventory
-  document (`GET /api/inventory`'s `{desktops, apps, clients}`); only
-  `refresh` and `reload_system_interface` reach the browser as `layout_op`
-  messages.
+  document (`GET /api/inventory`'s `{desktops, apps, clients}`);
+  `refresh` and `reload_system_interface` reach the browser only as
+  `layout_op` messages, and `focus`, `show`, and an `open` that is not
+  minimized also send one telling the target client which window they put in
+  front.
 
 The backend is the `imbue/system_interface/shell/` subpackage (inventory and
 liveness, desktops, placements, wallpapers, clients, users and the request
-identity, client activity, layout ops, the pure desktop document editor, the
+identity, client activity, the pure desktop document editor, the
 routes with their shared helpers, state); the package root holds the process
 (`main.py`, `server.py`), the not-built placeholder, and the update-staleness
 check. The frontend
@@ -167,21 +170,45 @@ modules it shares with the app pages live in `system/libs/workspace_ui`, and
 `src/relay.ts` is the shell's side of the embedder relay (it forwards the
 framed pages' `minds:` messages to the minds chrome unchanged).
 
-A message the Imbue Studio chrome sends the shell's page reaches an app another way
-too: an app whose manifest registers its type (`[[message_handlers]]`) has it
-posted, by the shell's page once (never by a solo page, whose client is the
-main window's) and then by the shell's backend
-(`POST /api/embedder-messages`, `shell/embedder_messages.py`), to the route it
-named, with the client whose page received it. The shell reads no payload. An
+A message the shell's page receives, from the Imbue Studio chrome or from an
+app's page (`shell:message`),
+reaches every app whose manifest registers its type (`[[message_handlers]]`):
+the shell's page hands it once to the shell's backend (`POST
+/api/embedder-messages`, `shell/embedder_messages.py`), with the client whose
+page received it. A solo page hands on its apps' messages but never the
+chrome's, which the main window's page already relays. A `path` handler has the
+message posted to the route it named; a `show` handler has the shell build the
+page its template names from the message's fields and show it through the op
+route's `show` below, in-process. A message some app did not take becomes a
+notice carrying that app's reason, and a page shown while the client has only
+pop-outs open becomes a notice to reopen the main window. The shell's page
+also opens links itself: it announces `opensLinks` to the chrome and opens a
+`minds:open-link` (a popup Imbue Studio turned back into the workspace) or a
+page's `shell:open-link` by the shared link classifier (`workspace_ui`'s
+`links.ts`): a `file:` URL as `open:file`, a local URL on an openable app's
+`<label>.localhost` (or `<name>.localhost`) host, or else at its registered
+backend port, as that app's window (`windowAtLocalAppHost` and
+`windowAtBackendUrl` in `frontend/src/model/pageUrl.ts`), any other local URL
+as `open:url`, one of this workspace's app addresses (its addresses on the
+domain the workspace was last shared under included, read off the apps'
+`share_url`) as that app's window, and an external web, `mailto:`, or `tel:`
+link as `open:web`, `open:mailto`, or `open:tel` to the app registered for it,
+or else outside the workspace: back to a chrome that says it opens external
+links (`minds:open-external`), else in a new browser tab. An app's window already
+there that the client has popped out is raised in its own window, and one a
+link opens while the client has only pop-outs open gets the same notice. An
 app that wants a window for what it was told asks the op route's `show`, which
 takes the app, a path, the other paths that count as already showing it, and
 the pages whose windows it may point at the path, and picks the window itself:
 one already showing it (switching desktops if it must), else the frontmost
 window on screen at one of those pages (pointed at the path), else the app's
 pinned window, else a new one. A pulled-out window it settles on stays out, and
-the client stays on its desktop: the shell asks that client's page to have the
-Imbue Studio app raise the window's own desktop window. The shell reads no meaning into
-a path's query string.
+the client stays on its desktop: the shell asks that client's pages to have the
+Imbue Studio app raise the window's own desktop window (the window's own solo
+page asks too, so the raise works with the main window closed). The shell reads
+no meaning into a path's query string. The other ops treat a pulled-out window
+the same way: `focus` raises it, and the ops that would move it back onto the
+desktop are refused unless forced (desktop contracts.md section 8).
 
 ### How the shell learns about apps
 
@@ -393,18 +420,18 @@ that, tokens or not.
 ## Driving the desktop from an agent
 
 An agent inside the workspace arranges the desktop through
-`system/scripts/layout.py` (`context / desktops / list / load / open / focus /
+`uv run --no-sync workspace-layout` (`context / desktops / list / load / open / show / focus /
 minimize / restore / maximize / place / close / navigate / refresh / shortcuts /
 shortcut set / shortcut move / shortcut remove / wallpaper`), which names apps
 and windows (desktop-interface contracts.md section 8):
 
 ```bash
-python3 system/scripts/layout.py desktops
-python3 system/scripts/layout.py context
-python3 system/scripts/layout.py open files --path /home/user/workspace/data/notes/ --desktop Research
-python3 system/scripts/layout.py open terminal
-python3 system/scripts/layout.py place self --zone left
-python3 system/scripts/layout.py navigate win-0123456789abcdef /other/
+uv run --no-sync workspace-layout desktops
+uv run --no-sync workspace-layout context
+uv run --no-sync workspace-layout open files --path /home/user/workspace/data/notes/ --desktop Research
+uv run --no-sync workspace-layout open terminal
+uv run --no-sync workspace-layout place self --state snapped-left
+uv run --no-sync workspace-layout navigate win-0123456789abcdef /other/
 ```
 
 The document ops are applied by the shell to the desktop and to the target

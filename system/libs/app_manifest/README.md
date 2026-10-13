@@ -31,9 +31,13 @@ The models behind a workspace app's two descriptions:
   shell's launch envelope and can name neither a param nor a preset; `open` is
   reserved for the root launch path the shell synthesizes for an app that
   declares none), `LaunchPathMethod`,
-  `MessageHandler` (`type`, a `MessageType`: `minds:` and a lowercase kebab-case
-  name, unique within the manifest; `path`, the route under the app's origin the
-  shell posts each message of that type to, shaped like a launch path),
+  `MessageHandler` (`type`, a `MessageType`: a lowercase prefix, `:`, and a
+  lowercase kebab-case name, never `shell:`, unique within the manifest; and
+  exactly one of `path`, the route under the app's origin the shell posts each
+  message of that type to, shaped like a launch path, or `show`, the
+  `PageTemplate` of the app's page the shell shows for it, with `showing`, the
+  templates of the app's other pages that count as already showing it, only
+  beside `show`),
   `DefaultShortcut`
   (`launch`, `mode`), `ShortcutMode`, `AppReference` (`path`, optional `note`),
   `ScopeRules` (`exclude`), `PreviewSpec` (the optional `[preview]` table: how
@@ -53,7 +57,7 @@ The models behind a workspace app's two descriptions:
   validation is logged and skipped; an unreadable file raises
   `RegistryReadError`), and `registry_path()` (honours `MINDS_APPS_FILE`,
   default `data/.state/apps.toml` relative to the cwd, exactly like
-  `forward_port.py` and `layout.py`). `register_app(manifest_path, app_url)` is
+  `forward_port.py` and `workspace-layout`). `register_app(manifest_path, app_url)` is
   the startup registration every app's entry point calls: it runs
   `system/scripts/forward_port.py --manifest <path> --url <url>` under the
   current interpreter from the repo root, which upserts the app's row from its
@@ -93,6 +97,8 @@ The models behind a workspace app's two descriptions:
 - `app_manifest.primitives`: the validated string types (`AppName`,
   `DisplayName`, `LaunchPathId`, `LaunchParamName`, `LaunchPathValue` (rooted with one
   slash, no query string or fragment, nothing a URL would escape), `MessageType`,
+  `PageTemplate` (a path with `{field}` placeholders, starting with one `/` or a
+  placeholder, optionally ending in a fixed query string, no fragment),
   `PriorityName`, `ProgramName`,
   `RepoRelativePath`, `ReferencePath`, `ExcludeGlob` (no leading `!`: a
   gitignore negation would re-include a built-in exclude), `ReferenceNote`) and
@@ -100,7 +106,12 @@ The models behind a workspace app's two descriptions:
   `system/scripts/forward_port_test.py` keeps them identical), with
   `canonical_name_from_title(title)` (the name a user-facing title registers
   as) and `is_name_conflict(candidate_title, taken_names)` (whether a title
-  would collide with a name already taken) for apps that mint names from titles.
+  would collide with a name already taken) for apps that mint names from titles,
+  and `render_page_template(template, fields)`, the page a `show` handler's
+  template names for a message: each placeholder replaced by its string field,
+  percent-encoded one path segment at a time, a trailing `/` of the value joining
+  the template's following `/` as one slash; it raises `PageTemplateFieldError`
+  when a field is missing or not a string or the page is not a rooted path.
 - The `app-manifest validate-manifest <path> [--repo-root DIR]` command, for the
   build-app scaffold and tests. Without `--repo-root` the reference location
   checks run against the root the `system/apps/<package>/app.toml` layout
@@ -248,6 +259,17 @@ the full root suite too. So does a path in a package the root project's
 than a test file or a frontend path), and a `uv.lock` upgrade the root project
 depends on directly or through one of those packages: the root project's own
 tests, in `system/scripts`, `.agents` and the skills, are its consumers.
+
+A run that can drive a browser comes after `npm ci && npm run build`: an
+own-root suite's run that includes its `browser` tests, or its files named on
+their own (those tests skip when the bundles are missing). An app's pages
+import the shell's built modules (`_static/app_contract.js` and
+`_static/context_menu.js`, in the shell's gitignored `static/`), so when the
+tree lacks them, as a fresh worktree does, the full root suite and every
+root-collected run of an app come after the build too. A tree that has them,
+like the live workspace, gets no build for those runs: the modules change only
+when a frontend does, which selects the build itself, and a build in the live
+workspace rewrites the bundles the running shell serves.
 
 Every change that is not entirely documentation (README and changelog files
 anywhere, and other markdown outside `.agents/` and

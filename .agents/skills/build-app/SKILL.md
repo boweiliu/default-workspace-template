@@ -221,7 +221,9 @@ What gets generated:
   under `[[references]]` with a `note` naming the surface it uses.
 - `system/apps/<package>/pyproject.toml` -- declares
   `[project.scripts] <name> = "<package>.runner:main"`, the entry point
-  the app's own tool environment exposes.
+  the app's own tool environment exposes, and makes the directory its own
+  `ty` project (an empty `[tool.ty]` table and a pinned `ty` dev dependency)
+  for the ratchets' type check.
 - `system/apps/<package>/src/<package>/__init__.py` -- empty.
 - `system/apps/<package>/src/<package>/runner.py` -- sync Flask starter.
   Builds a `Flask` app and serves it with
@@ -243,9 +245,13 @@ What gets generated:
   "Explain...", "Modify...") hand the clicked element to a chat as a
   `REF-<id>.json` attachment an agent can resolve
   (`.agents/shared/references/element-references.md`,
-  `docs/system/blueprint/element-reference-menu/`). Keep the script on
-  every page the app serves. An app that drops it always reopens at its
-  origin and gets the browser's own menu. The runner serves the two modules
+  `docs/system/blueprint/element-reference-menu/`). The connection also
+  opens the page's links where the workspace opens them, so write plain
+  `<a href>` links and no link handling of your own; a `window.open` to any
+  of the workspace's own addresses is routed the same way and returns `null`.
+  Keep the script on every page the app serves. An app that drops it always
+  reopens at its origin, gets the browser's own menu, and has its links
+  navigate its own window. The runner serves the two modules
   the script imports from its own origin at `/_static/app_contract.js` and
   `/_static/context_menu.js` (a module import is a fetch without cookies,
   which the forwarder refuses across origins); keep that route too.
@@ -255,7 +261,7 @@ What gets generated:
   interactive control a stable `id` or a first class that names it, and a
   reference resolves to one thing.
 - `system/apps/<package>/test_<package>_ratchets.py` -- standard ratchets at
-  zero.
+  zero, plus `test_no_type_errors`, which fails on any `ty` error in the app.
 - `system/apps/<package>/README.md` -- one-line description.
 
 What gets updated and installed -- no shared file is authored, which is what
@@ -370,7 +376,7 @@ This is skeleton phase 5 (the cheap throwaway mock). Keep it disposable:
   render *that real data* in the mock so the user judges the UI against real
   content. Otherwise use representative placeholder data that covers the shapes
   the real view will show (including an empty state and a busy/overflow state).
-- `layout.py open` to surface it (see Step 4 for the command and its `--desktop` flag), then loop:
+- `workspace-layout open` to surface it (see Step 4 for the command and its `--desktop` flag), then loop:
   present -> take feedback -> update the mock so the change is *visible* ->
   re-present. Do not accept feedback and move on having only asserted you'll apply
   it.
@@ -494,7 +500,7 @@ launcher -- skip the surfacing step only for services with no UI
 (pure JSON APIs, webhook receivers, etc.).
 
 ```bash
-python3 system/scripts/layout.py open <name> --beside
+uv run --no-sync workspace-layout open <name> --beside
 ```
 
 `--beside` lays it beside the chat that asked for it instead of on top of the
@@ -503,13 +509,15 @@ nudged sideways only if there is no room beside it, and then by the least that
 makes room; it is resized only if it is over half the backdrop wide. Most of the
 time nothing about it changes. Drop the flag
 only for an app the user wanted running rather than shown; with no chat on that
-desktop it is already a no-op.
+desktop it is already a no-op. When the user has popped the chat out into its own
+window, the app opens unpaired where a plain `open` puts it and the summary says
+so; that is fine, and there is no need to `--force` the chat back.
 
 With no `--desktop`, the op edits the desktop the target client is looking
 at, which is where the user expects the new window. (Pass `--desktop <name>`
 to surface it on a different desktop instead; the op edits that desktop and
 switches the client to it.)
-`layout.py` POSTs to a loopback-only shell endpoint that opens the window
+`workspace-layout` POSTs to a loopback-only shell endpoint that opens the window
 on the desktop and writes that client's placement of it (no browser needs
 to be connected) and broadcasts the change, so the client's screen shows the
 new window on top, or brings the window for `<name>` to the front when one is
@@ -522,23 +530,26 @@ To force a reload of an already-open window (e.g. after redeploying the
 service) without prompting the user to click Refresh:
 
 ```bash
-python3 system/scripts/layout.py refresh --app <name>
+uv run --no-sync workspace-layout refresh --app <name>
 ```
 
 You should always `refresh` services after making changes, to make sure the user can see the updates.
 
 For anything beyond `open` / `refresh` -- placing, focusing, minimizing,
 maximizing, navigating a window to another path, reading the desktops -- see
-the `manage-desktop` skill. `layout.py list` is also useful when the user is
+the `manage-desktop` skill. `workspace-layout list` is also useful when the user is
 asking about what is open (it prints every app with its launch paths and
 its windows, and every desktop).
 
 ## Step 5: Finalize in the background (after the user confirms the working site)
 
 The foreground work stops at a usable, surfaced site. The thorough pass --
-extending Playwright coverage, the full test suite and ratchets, review gates
- -- runs in a **background harden worker**, never in the
-main agent. This is skeleton phase 7: the harden pass
+extending Playwright coverage, the full test suite and ratchets over the
+extended tests, review gates -- runs in a **background harden worker**, never
+in the main agent. The test gate AGENTS.md has you run through
+`system/scripts/run_in_background.py` checks the app against the tests it
+already has, so it is not this pass: run it anyway, since the worker may never
+be dispatched. This is skeleton phase 7: the harden pass
 (`.agents/shared/worker/references/harden-creation.md`), here the **crystallize**
 operation with the **app** type -- the scaffolded app is already on
 disk and the user confirmed it live, so nothing needs reconstructing and there
@@ -555,8 +566,8 @@ invalidate.)
 Reading the confirmation signal:
 
 - If the user keeps asking for changes, each one is a **cheap foreground
-  iteration that resets the clock** -- you have run no gates or thorough tests
-  yet, so pivots stay cheap. Do not hand off until their response is a
+  iteration that resets the clock** -- you have run no review gates or thorough
+  tests yet, so pivots stay cheap. Do not hand off until their response is a
   confirmation rather than a change request.
 - If the user starts asking for surface-level (cosmetic) tweaks, or pivots to a
   slightly unrelated task or follow-up, treat that as a sign the core is settled:
@@ -658,6 +669,16 @@ For the full program schema and logging knobs, see the shared
 
 Verification and gotchas references apply identically to this path.
 
+A wrapped tool's pages do not carry the shell page script, so a plain click
+on one of their links to a local service or another app navigates the tool's
+own window. If the tool can serve one more static file from its own origin
+and add a script to its pages (Jupyter's custom JS, a dev server's plugin
+hook), give it the contract: serve
+`system/apps/system_interface/imbue/system_interface/static/_static/app_contract.js`
+at `/_static/app_contract.js` and add
+`<script type="module">import { connectToShell } from "/_static/app_contract.js"; connectToShell({});</script>`
+to its pages. If it can do neither, leave it as it is.
+
 ## `forward_port.py` CLI reference
 
 Used by both paths (the scaffolder generates the call; the escape
@@ -755,10 +776,10 @@ Flags:
 
 ## The shared (public) URL
 
-If the workspace is shared, every registered service is also reachable at
-its own public origin -- the same prefix rule on the share hostname
-(`https://<name>.<workspace-share-host>/`) -- with caveats about where that
-hostname lives and why it isn't in `data/.state/apps.toml`. See
+Once the workspace has been shared, every registered service is also
+reachable at its own public origin -- the same prefix rule on the share
+domain (`https://<label>.<share-domain>/`) -- and
+`uv run --no-sync workspace-layout list` prints it as the app's `link`. See
 [references/public-url.md](references/public-url.md).
 
 ## Cleanup

@@ -597,26 +597,22 @@ def _load_module(module_name: str, path: Path) -> ModuleType:
 
 
 def test_every_carrier_of_the_reserved_name_set_holds_the_same_set() -> None:
-    """Drift guard: three places in this repo carry the reserved-name set, because
-    two of them cannot import the one that owns it -- ``forward_port.py`` is
-    stdlib-only by contract, and ``layout.py`` is an agent-facing script run from
-    any cwd. Comparing the sets is what makes the copies safe; sampling names
-    cannot, since any name absent from the sample is free to diverge. Every
-    carrier this repo owns belongs here: one left out is one free to drift,
-    which is the state this guard was written to end.
+    """Drift guard: two places in this repo carry the reserved-name set, because
+    ``forward_port.py`` is stdlib-only by contract and cannot import the
+    ``app_manifest`` library that owns it. Comparing the sets is what makes the
+    copy safe; sampling names cannot, since any name absent from the sample is
+    free to diverge. Every carrier this repo owns belongs here: one left out is
+    one free to drift, which is the state this guard was written to end.
 
-    A fourth carrier is the mngr repo's: ``SEED_APP_RESERVED_NAMES`` in
+    A third carrier is the mngr repo's: ``SEED_APP_RESERVED_NAMES`` in
     ``apps/minds_evals/imbue/minds_evals/data_types.py``, copied from
     ``validate_service_name`` here so a seeded app's name can be checked before the
     workspace sees it. It lives outside this tree, so only a fix in mngr reaches it.
     """
     forward_port = _load_module("_forward_port_set_drift_check", _SCRIPT)
-    layout = _load_module("_layout_set_drift_check", _SCRIPT.parent / "layout.py")
 
     assert forward_port.RESERVED_NAMES == RESERVED_APP_NAMES
-    assert forward_port.RESERVED_NAMES == layout._RESERVED_APP_NAMES
     assert forward_port.RESERVED_NAME_PREFIXES == RESERVED_APP_NAME_PREFIXES
-    assert forward_port.RESERVED_NAME_PREFIXES == layout._RESERVED_APP_NAME_PREFIXES
 
 
 def test_app_manifest_name_rule_is_identical_to_the_registration_rule() -> None:
@@ -779,6 +775,11 @@ default_mode = "floating"
 [[message_handlers]]
 type = "minds:focus-chat"
 path = "/api/focus-chat"
+
+[[message_handlers]]
+type = "open:file"
+show = "{path}?view"
+showing = ["{path}", "{path}/"]
 """
 
 
@@ -827,7 +828,10 @@ def test_manifest_registration_copies_every_field_onto_the_row(tmp_path: Path) -
         },
     ]
     assert row["pin"] == {"path": "/", "style": "avatar", "scope": "independent", "default_mode": "floating"}
-    assert row["message_handlers"] == [{"type": "minds:focus-chat", "path": "/api/focus-chat"}]
+    assert row["message_handlers"] == [
+        {"type": "minds:focus-chat", "path": "/api/focus-chat"},
+        {"type": "open:file", "show": "{path}?view", "showing": ["{path}", "{path}/"]},
+    ]
 
 
 def test_manifest_registration_copies_only_the_pin_keys_the_manifest_wrote(tmp_path: Path) -> None:
@@ -882,8 +886,23 @@ def test_manifest_registration_copies_only_the_pin_keys_the_manifest_wrote(tmp_p
         ),
         pytest.param(
             '[[message_handlers]]\ntype = "minds:focus-chat"\n',
-            "every message handler needs a string 'type' and 'path'",
-            id="message-handler-without-a-path",
+            "every message handler needs exactly one of a string 'path' or 'show'",
+            id="message-handler-without-a-path-or-show",
+        ),
+        pytest.param(
+            '[[message_handlers]]\ntype = "open:file"\npath = "/api/open"\nshow = "{path}"\n',
+            "every message handler needs exactly one of a string 'path' or 'show'",
+            id="message-handler-with-a-path-and-show",
+        ),
+        pytest.param(
+            '[[message_handlers]]\ntype = "open:file"\nshow = "{path}"\nshowing = "{path}/"\n',
+            "a message handler's showing must be an array of strings",
+            id="message-handler-showing-not-an-array",
+        ),
+        pytest.param(
+            '[[message_handlers]]\ntype = "open:file"\npath = "/api/open"\nshowing = ["{path}/"]\n',
+            "a message handler gives 'showing' only beside 'show'",
+            id="message-handler-showing-beside-a-path",
         ),
         pytest.param(
             '[pin]\nstyle = "avatar"\n',
