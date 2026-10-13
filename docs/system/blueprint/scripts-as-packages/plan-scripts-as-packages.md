@@ -124,7 +124,7 @@
 
 ## Implementation plan
 
-### PR 1 -- `gabriel/python-launch-discipline` (template; base `gabriel/ty-version-bump`)
+### PR 1 -- `gabriel/python-launch-discipline` (template; base `main`)
 
 - **`.mngr/settings.toml`**: `extra_window = ["bootstrap='uv run bootstrap'"]` becomes `bash -c "uv sync --all-packages --frozen; exec .venv/bin/bootstrap"` (`;`, so a failed sync still boots). mngr's `NamedCommand.from_string` strips the outer single quotes and runs the rest as the window command.
 - **`.agents/skills/github-sync/SKILL.md`** (program line at ~174): `uv run github-sync run` becomes the same exec form.
