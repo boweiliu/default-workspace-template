@@ -572,22 +572,16 @@ _UV_SYNC_TIMEOUT_SECONDS = 600.0
 
 
 def _sync_workspace_venv() -> None:
-    """Converge the workspace .venv to the landed lockfile before any agent runs.
+    """Converge the workspace .venv to the lockfile of the tree boot will run.
 
-    The venv is a bake-time artifact (build_workspace.sh at image build / host
-    provisioning) while the working tree is a landing-time artifact (the
-    create's git-mirror checkout) -- and on docker and pool-lease hosts nothing
-    re-runs the sync at create, so the two can disagree whenever the baked
-    image lags the landed branch. Left alone, the FIRST implicit ``uv run``
-    sync reconciles them lazily: mid-boot, concurrent with the services and
-    the initial chat agent, and with root-closure scope rather than
-    --all-packages. Whatever imports from the venv during that rewrite window
-    fails intermittently (ModuleNotFoundError for imbue_common and friends).
-
-    Converging here -- once, up front, before the chat agent exists and before
-    supervisord starts anything -- removes both the race window and the scope
-    gap; every later implicit sync then no-ops. ``--frozen`` asserts the
-    committed lockfile is canonical, matching build_workspace.sh. Best-effort:
+    The bootstrap window syncs ``--frozen`` before this program starts, but
+    against the tree as the container came up. ``_recover_interrupted_update``
+    can then roll a half-applied update back, restoring an older ``uv.lock``,
+    and nothing after this point syncs: every one-off runs ``uv run --no-sync``
+    and every service execs its entry point from ``.venv/bin``. Converging
+    here, before supervisord starts anything and before the chat agent exists,
+    is what puts the venv on the restored lock. ``--frozen`` takes the
+    committed lockfile as canonical, matching build_workspace.sh. Best-effort:
     a failure is logged loudly but never blocks boot.
     """
     try:
