@@ -119,12 +119,6 @@ format-command="uv run --no-sync ruff format --force-exclude --config pyproject.
 # .external_worktrees/) would be checked as part of that project instead.
 [tool.ty]
 
-[tool.pyright]
-venvPath = "."
-venv = ".venv"
-pythonVersion = "3.12"
-strict = ["**/*.py"]
-
 # Ruff config mirrors mngr's pyproject.toml, as the system interface's does.
 [tool.ruff]
 line-length = 119
