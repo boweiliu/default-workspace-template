@@ -10,8 +10,8 @@ Each rule is checked against the real tree and against a planted violation:
 - A ``python3 <path>.py`` written into an agent-facing file names a bare entry point: the
   system ``python3`` has no venv, so a venv-tier script run that way fails at its first
   third-party import.
-- Only the bare entry stubs that need a library outside their scripts directory edit
-  ``sys.path``; everything else imports packages.
+- Code imports packages. Edits to ``sys.path`` and loading a module from a file path are
+  counted, and the counts only go down.
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ import shlex
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from entry_points_testing import STANDALONE_BARE_DIRS, is_bare_entry, is_test_file
+from entry_points_testing import is_bare_entry
+from inline_snapshot import snapshot
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUPERVISORD_DIR = _REPO_ROOT / "system"
@@ -132,17 +133,27 @@ def _plain_uv_runs(text: str) -> list[tuple[int, str]]:
     ]
 
 
-def _agent_facing_files(suffixes: tuple[str, ...] = _AGENT_FACING_SUFFIXES) -> list[Path]:
+def _agent_facing_files(
+    suffixes: tuple[str, ...] = _AGENT_FACING_SUFFIXES, repo_root: Path = _REPO_ROOT
+) -> list[Path]:
+    """The tracked files agents read commands from.
+
+    A link into ``system/vendor/`` is skipped like the vendored tree itself: once the mngr
+    assets are fetched, ``docs/system/style_guide.md`` resolves to mngr's style guide, whose
+    commands are written for the mngr repo.
+    """
     tracked = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, text=True, check=True
     ).stdout.split("\0")
+    vendor_dir = (repo_root / "system" / "vendor").resolve()
     return [
-        _REPO_ROOT / relative
+        repo_root / relative
         for relative in tracked
         if relative.endswith(suffixes)
         and not _EXEMPT_PARTS.intersection(PurePosixPath(relative).parts)
         and PurePosixPath(relative).name not in _EXEMPT_NAMES
-        and (_REPO_ROOT / relative).is_file()
+        and (repo_root / relative).is_file()
+        and vendor_dir not in (repo_root / relative).resolve().parents
     ]
 
 
@@ -227,6 +238,20 @@ def test_changelogs_and_fixtures_are_not_scanned() -> None:
 
     assert not any("/changelog/" in path or path.endswith("CHANGELOG.md") for path in scanned)
     assert "AGENTS.md" in scanned
+
+
+def test_a_link_into_vendored_code_is_not_scanned(tmp_path: Path) -> None:
+    (tmp_path / "system" / "vendor" / "assets").mkdir(parents=True)
+    (tmp_path / "system" / "vendor" / "assets" / "guide.md").write_text("uv run python scripts/build.py\n")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").symlink_to("../system/vendor/assets/guide.md")
+    (tmp_path / "docs" / "own.md").write_text("uv run --no-sync tk ls\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    scanned = {str(path.relative_to(tmp_path)) for path in _agent_facing_files(repo_root=tmp_path)}
+
+    assert scanned == {"docs/own.md"}
 
 
 # ``python3 [flags] <path>.py``, the path optionally quoted (JSON escapes its quotes).
@@ -315,26 +340,6 @@ def test_the_python3_scan_catches_a_venv_script_and_a_stale_path(tmp_path: Path)
     ]
 
 
-# Path edits are how an entry file that runs with no venv reaches code outside its own
-# directory -- a stdlib-only library, or its skill's python/ package -- and update-self's way
-# of reaching the oom_priority of the tree it applies.
-_ALLOWED_SYS_PATH_EDITS = frozenset(
-    {
-        "system/scripts/agent_block_pipe_tail_head_check.py",
-        "system/scripts/agent_latchkey_request_check.py",
-        "system/scripts/agent_rewrite_bash_command.py",
-        "system/scripts/agent_secrets_guard_check.py",
-        "system/scripts/agent_tk_standalone_check.py",
-        # Skill entry files that run with no workspace venv, reaching the package in python/.
-        ".agents/skills/update-self/scripts/update_self.py",
-        ".agents/skills/update-self/scripts/run_in_background.py",
-        ".agents/skills/publish-template/scripts/validate_template.py",
-        ".agents/skills/publish-template/scripts/write_template_manifest.py",
-        ".agents/skills/update-self/python/update_self_skill/update_banding.py",
-    }
-)
-
-
 def _edits_sys_path(source: str) -> bool:
     for node in ast.walk(ast.parse(source)):
         target = node.func.value if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) else None
@@ -347,7 +352,8 @@ def _edits_sys_path(source: str) -> bool:
     return False
 
 
-def _sys_path_editors(repo_root: Path) -> list[str]:
+def _tracked_python_files(repo_root: Path) -> list[str]:
+    """Every tracked ``.py`` file outside vendored code, tests included, except this one (whose planted cases would count)."""
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", "*.py"], cwd=repo_root, capture_output=True, text=True, check=True
     ).stdout.split("\0")
@@ -356,17 +362,22 @@ def _sys_path_editors(repo_root: Path) -> list[str]:
         for relative in tracked
         if relative
         and "vendor" not in PurePosixPath(relative).parts
-        and not is_test_file(Path(relative))
-        and not (repo_root / relative).parent in STANDALONE_BARE_DIRS
-        and relative not in _ALLOWED_SYS_PATH_EDITS
+        and relative != "system/test_python_launch_rules.py"
         and (repo_root / relative).is_file()
-        and _edits_sys_path((repo_root / relative).read_text())
     )
 
 
-def test_only_the_declared_bare_stubs_edit_sys_path() -> None:
+def _sys_path_editors(repo_root: Path) -> list[str]:
+    return [
+        relative
+        for relative in _tracked_python_files(repo_root)
+        if _edits_sys_path((repo_root / relative).read_text())
+    ]
+
+
+def test_prevent_sys_path_edits() -> None:
     offenders = _sys_path_editors(_REPO_ROOT)
-    assert not offenders, (
+    assert len(offenders) <= snapshot(17), (
         "These edit sys.path. Import the package instead: a skill's modules live in its python/ "
         "project and a system script's beside it, all importable from the root venv:\n"
         + "\n".join(offenders)
@@ -379,3 +390,43 @@ def test_the_sys_path_scan_sees_each_form_of_edit() -> None:
     assert _edits_sys_path("import sys\nsys.path[:0] = ['x']\n")
     assert _edits_sys_path("import sys\nsys.path += ['x']\n")
     assert not _edits_sys_path("import sys\nprint(sys.path)\n")
+
+
+# The ways to run a module from a file instead of importing it: each one sidesteps the
+# packages, so what it loads is a second copy of the module under another name.
+_PATH_LOADING_RE = re.compile(r"\b(?:spec_from_file_location|SourceFileLoader|run_path)\(")
+
+
+def _path_loading_lines(text: str) -> list[tuple[int, str]]:
+    return [(number, line) for number, line in enumerate(text.splitlines(), start=1) if _PATH_LOADING_RE.search(line)]
+
+
+def _path_loading_sites(repo_root: Path) -> list[str]:
+    return [
+        f"{relative}:{number}: {line.strip()}"
+        for relative in _tracked_python_files(repo_root)
+        for number, line in _path_loading_lines((repo_root / relative).read_text(errors="replace"))
+    ]
+
+
+def test_prevent_loading_modules_by_file_path() -> None:
+    sites = _path_loading_sites(_REPO_ROOT)
+    assert len(sites) <= snapshot(7), (
+        "These load a module from a file path. Import it instead: a skill's modules live in its "
+        "python/ project and a system script's beside it, all importable from the root venv:\n"
+        + "\n".join(sites)
+    )
+
+
+def test_the_path_loading_scan_sees_each_form() -> None:
+    text = "\n".join(
+        [
+            "spec = importlib.util.spec_from_file_location('m', path)",
+            "loader = importlib.machinery.SourceFileLoader('m', path)",
+            "runpy.run_path(path, run_name='__main__')",
+            "from workspace_bare_scripts import message_chat",
+            "importlib.import_module('pcmflux')",
+        ]
+    )
+
+    assert [number for number, _ in _path_loading_lines(text)] == [1, 2, 3]
