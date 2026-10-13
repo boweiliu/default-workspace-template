@@ -16,7 +16,7 @@ One preview per app at a time: a preview of the same app from a different worktr
 (another pass) is refused rather than hijacked. ``--with`` boots sibling previews
 from the same worktree first, so a shell preview can frame them.
 
-Run from the repo root via ``uv run python3`` (it imports the manifest library from
+Run from the repo root through ``uv run`` (it imports the manifest library from
 the root venv):
 
     uv run python3 .agents/skills/update-app/scripts/preview_app.py up \\

@@ -3,36 +3,55 @@
 Two rules, each checked against the real tree and against a planted violation:
 
 - A long-running program never runs under ``uv run``: supervisord programs (built-in
-  and user-added drop-ins alike) sync ``--frozen`` and then ``exec .venv/bin/<name>``,
-  so no ``uv`` process stays resident as their parent.
-- A one-off written into an agent-facing file runs ``uv run --no-sync``, so following
-  an instruction can never relock or sync the workspace behind the agent's back.
+  and user-added drop-ins alike) and the tmux windows ``.mngr/settings.toml`` opens
+  sync ``--frozen`` and then ``exec .venv/bin/<name>``, so no ``uv`` process stays
+  resident as their parent.
+- A one-off written into an agent-facing file, or into a string or argv in the
+  workspace's Python, runs ``uv run --no-sync``, so following an instruction can
+  never relock or sync the workspace behind the agent's back.
 """
 
 from __future__ import annotations
 
+import ast
+import configparser
 import re
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path, PurePosixPath
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUPERVISORD_DIR = _REPO_ROOT / "system"
+_MNGR_SETTINGS = _REPO_ROOT / ".mngr" / "settings.toml"
 
 _SHELL_PROGRAMS = frozenset({"bash", "sh", "zsh", "dash"})
+_EXTRA_WINDOW_KEYS = frozenset({"extra_window", "extra_window__extend"})
 
 # The file types agents read commands out of (docs, prompts, config, scripts).
 _AGENT_FACING_SUFFIXES = (".md", ".toml", ".sh", ".conf")
-# Path parts whose files are records or test inputs, not instructions.
-_EXEMPT_PARTS = frozenset({"changelog", "blueprint", "specs", "vendor", "fixtures"})
+# Path parts whose files are records, third-party code or test inputs, not instructions.
+_EXEMPT_PARTS = frozenset({"changelog", "vendor", "fixtures"})
 _EXEMPT_NAMES = frozenset({"CHANGELOG.md", "UNABRIDGED_CHANGELOG.md"})
+# Dated design records, which quote the commands of their day. The living contracts
+# among them are what agents are pointed at as the rules, so those are scanned.
+_DESIGN_RECORD_PARTS = frozenset({"blueprint", "specs"})
+_LIVING_CONTRACT_NAME = "contracts.md"
 
 _UV_RUN_RE = re.compile(r"\buv run\b")
 # Options after which ``uv run`` neither syncs the workspace venv nor touches uv.lock.
 _NON_SYNCING_OPTIONS = frozenset({"--no-sync", "--no-project"})
 # uv run options that take a separate value word.
 _OPTIONS_WITH_VALUES = frozenset(
-    {"--package", "--with", "--env-file", "--python", "--directory", "--project", "--group"}
+    {
+        "--package",
+        "--with",
+        "--env-file",
+        "--python",
+        "--directory",
+        "--project",
+        "--group",
+    }
 )
 
 # Deliberate syncing ``uv run`` uses: (repo-relative path, a substring of the line).
@@ -62,32 +81,64 @@ def _runs_uv_run(command: str) -> bool:
     return False
 
 
-def _program_commands(conf: Path) -> list[tuple[str, str]]:
-    """Every ``(section, command)`` a supervisord config file declares, continuation lines joined."""
-    commands: list[tuple[str, str]] = []
-    section = ""
-    lines = conf.read_text().splitlines()
-    for index, line in enumerate(lines):
-        if line.startswith("["):
-            section = line.strip()
-        elif line.startswith("command="):
-            parts = [line.removeprefix("command=")]
-            for continuation in lines[index + 1 :]:
-                if not continuation[:1].isspace() or not continuation.strip():
-                    break
-                parts.append(continuation.strip())
-            commands.append((section, " ".join(parts)))
-    return commands
+def _program_commands(supervisord_dir: Path) -> dict[str, str]:
+    """Every supervisord program's and event listener's command, keyed by its section.
+
+    ``configparser`` reads supervisord's ini format the way supervisord does: it folds
+    continuation lines, skips comments, and accepts ``command = ...`` with spaces.
+    It does not follow ``[include]``, so the drop-ins are read after the main config.
+    Interpolation is off because supervisord's ``%(ENV_x)s`` is not configparser's.
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(supervisord_dir / "supervisord.conf")
+    parser.read(sorted((supervisord_dir / "supervisord.conf.d").glob("*.conf")))
+    return {
+        section: parser[section]["command"]
+        for section in parser.sections()
+        if section.startswith(("program:", "eventlistener:"))
+        and "command" in parser[section]
+    }
 
 
 def _programs_under_uv_run(supervisord_dir: Path) -> list[str]:
-    confs = [supervisord_dir / "supervisord.conf", *sorted((supervisord_dir / "supervisord.conf.d").glob("*.conf"))]
     return [
-        f"{conf.name} {section}: {command}"
-        for conf in confs
-        if conf.is_file()
-        for section, command in _program_commands(conf)
+        f"[{section}]: {command}"
+        for section, command in _program_commands(supervisord_dir).items()
         if _runs_uv_run(command)
+    ]
+
+
+def _window_command(entry: str) -> str:
+    """The command of one ``extra_window`` entry, parsed as mngr's ``NamedCommand.from_string`` does."""
+    name, separator, rest = entry.partition("=")
+    if not separator or not name or " " in name or '"' in name:
+        return entry
+    if len(rest) > 1 and rest[0] == rest[-1] and rest[0] in "'\"":
+        return rest[1:-1]
+    return rest
+
+
+def _extra_window_commands(settings: object) -> list[str]:
+    """Every command an ``extra_window`` setting opens, at any depth of mngr's settings."""
+    if isinstance(settings, list):
+        return [
+            command for item in settings for command in _extra_window_commands(item)
+        ]
+    if not isinstance(settings, dict):
+        return []
+    commands: list[str] = []
+    for key, value in settings.items():
+        if key in _EXTRA_WINDOW_KEYS:
+            commands.extend(_window_command(entry) for entry in value)
+        else:
+            commands.extend(_extra_window_commands(value))
+    return commands
+
+
+def _windows_under_uv_run(settings_toml: Path) -> list[str]:
+    settings = tomllib.loads(settings_toml.read_text())
+    return [
+        command for command in _extra_window_commands(settings) if _runs_uv_run(command)
     ]
 
 
@@ -123,57 +174,146 @@ def _plain_uv_runs(text: str) -> list[tuple[int, str]]:
     ]
 
 
-def _agent_facing_files() -> list[Path]:
+def _argv_runs_plain_uv_run(elements: list[ast.expr]) -> bool:
+    """Whether a list or tuple literal is a ``uv run`` argv whose literal words make it a syncing run."""
+    literals: list[str] = []
+    for element in elements:
+        if not (isinstance(element, ast.Constant) and isinstance(element.value, str)):
+            break
+        literals.append(element.value)
+    if literals[:2] != ["uv", "run"] or len(literals) < 3:
+        return False
+    return not _is_compliant_uv_run(" " + " ".join(literals[2:]))
+
+
+def _python_plain_uv_runs(source: str) -> list[tuple[int, str]]:
+    """Every ``(line number, text)`` in Python source whose string or argv literal holds a plain ``uv run``."""
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.extend((node.lineno, line) for _, line in _plain_uv_runs(node.value))
+        elif isinstance(node, (ast.List, ast.Tuple)) and _argv_runs_plain_uv_run(
+            node.elts
+        ):
+            found.append((node.lineno, ast.unparse(node)))
+    return found
+
+
+def _is_test_source(path: PurePosixPath) -> bool:
+    return (
+        path.name.endswith("_test.py")
+        or path.name.startswith("test_")
+        or path.name in {"conftest.py", "testing.py"}
+    )
+
+
+def _is_scanned(relative: str) -> bool:
+    path = PurePosixPath(relative)
+    if _EXEMPT_PARTS.intersection(path.parts) or path.name in _EXEMPT_NAMES:
+        return False
+    if (
+        _DESIGN_RECORD_PARTS.intersection(path.parts)
+        and path.name != _LIVING_CONTRACT_NAME
+    ):
+        return False
+    if path.suffix == ".py":
+        return not _is_test_source(path)
+    return relative.endswith(_AGENT_FACING_SUFFIXES)
+
+
+def _scanned_files() -> list[Path]:
     tracked = subprocess.run(
-        ["git", "ls-files", "-z"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "-z"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split("\0")
     return [
         _REPO_ROOT / relative
         for relative in tracked
-        if relative.endswith(_AGENT_FACING_SUFFIXES)
-        and not _EXEMPT_PARTS.intersection(PurePosixPath(relative).parts)
-        and PurePosixPath(relative).name not in _EXEMPT_NAMES
-        and (_REPO_ROOT / relative).is_file()
+        if relative and _is_scanned(relative) and (_REPO_ROOT / relative).is_file()
     ]
 
 
 def _plain_uv_run_violations() -> list[tuple[str, str]]:
-    return [
-        (str(path.relative_to(_REPO_ROOT)), line)
-        for path in _agent_facing_files()
-        for _, line in _plain_uv_runs(path.read_text(errors="replace"))
-    ]
+    violations: list[tuple[str, str]] = []
+    for path in _scanned_files():
+        text = path.read_text(errors="replace")
+        found = (
+            _python_plain_uv_runs(text)
+            if path.suffix == ".py"
+            else _plain_uv_runs(text)
+        )
+        violations.extend(
+            (str(path.relative_to(_REPO_ROOT)), line) for _, line in found
+        )
+    return violations
 
 
 def _is_deliberate(relative: str, line: str) -> bool:
-    return any(relative == path and context in line for path, context in _DELIBERATE_SYNCS)
+    return any(
+        relative == path and context in line for path, context in _DELIBERATE_SYNCS
+    )
 
 
 def test_no_supervisord_program_runs_under_uv_run() -> None:
     offenders = _programs_under_uv_run(_SUPERVISORD_DIR)
     assert not offenders, (
         "These supervisord programs run under `uv run`, which stays resident as their parent and can "
-        "relock the workspace. Use `bash -c \"uv sync --all-packages --frozen && exec .venv/bin/<name>\"` "
+        'relock the workspace. Use `bash -c "uv sync --all-packages --frozen && exec .venv/bin/<name>"` '
         "(see .agents/shared/references/running-python.md):\n" + "\n".join(offenders)
     )
 
 
-def test_a_planted_uv_run_program_is_caught_in_either_form(tmp_path: Path) -> None:
+def test_a_planted_uv_run_program_is_caught_in_any_form(tmp_path: Path) -> None:
     dropins = tmp_path / "supervisord.conf.d"
     dropins.mkdir()
     (tmp_path / "supervisord.conf").write_text("[supervisord]\nnodaemon=true\n")
     (dropins / "direct.conf").write_text("[program:direct]\ncommand=uv run direct\n")
+    (dropins / "spaced.conf").write_text(
+        '[program:spaced]\ncommand = bash -c\n    "exec uv run spaced"\n'
+    )
     (dropins / "tagged.conf").write_text(
         "[program:tagged]\ncommand=python3 system/services/oom_priority/bin/oom_tag_service.py "
         'user bash -c "python3 system/scripts/forward_port.py --name t --url http://x && exec uv run tagged"\n'
     )
     (dropins / "fine.conf").write_text(
+        "; never `command=uv run fine`: uv would stay resident as its parent\n"
         '[program:fine]\ncommand=bash -c "uv sync --all-packages --frozen && exec .venv/bin/fine"\n'
     )
 
     offenders = _programs_under_uv_run(tmp_path)
 
-    assert [offender.split(" ", 1)[0] for offender in offenders] == ["direct.conf", "tagged.conf"]
+    assert [offender.split("]", 1)[0] for offender in offenders] == [
+        "[program:direct",
+        "[program:spaced",
+        "[program:tagged",
+    ]
+
+
+def test_no_mngr_window_runs_under_uv_run() -> None:
+    offenders = _windows_under_uv_run(_MNGR_SETTINGS)
+    assert not offenders, (
+        "These tmux windows run under `uv run`, which stays resident as the parent of everything "
+        "they start. Sync `--frozen`, then `exec .venv/bin/<name>`:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_a_planted_uv_run_window_is_caught_at_any_depth(tmp_path: Path) -> None:
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        "[create_templates.main]\n"
+        'extra_window = ["boot=\'bash -c \\"uv sync --frozen; exec uv run --no-sync boot\\"\'"]\n'
+        "[create_templates.worker]\n"
+        'extra_window__extend = ["setup=uv run setup", "fine=\'bash -c \\"exec .venv/bin/fine\\"\'"]\n'
+    )
+
+    assert _windows_under_uv_run(settings) == [
+        'bash -c "uv sync --frozen; exec uv run --no-sync boot"',
+        "uv run setup",
+    ]
 
 
 def test_no_plain_uv_run_in_agent_facing_files() -> None:
@@ -194,9 +334,13 @@ def test_every_deliberate_sync_exception_still_matches_a_line() -> None:
     stale = [
         (path, context)
         for path, context in _DELIBERATE_SYNCS
-        if not any(relative == path and context in line for relative, line in violations)
+        if not any(
+            relative == path and context in line for relative, line in violations
+        )
     ]
-    assert not stale, f"These deliberate-sync exceptions no longer match any line: {stale}"
+    assert not stale, (
+        f"These deliberate-sync exceptions no longer match any line: {stale}"
+    )
 
 
 def test_the_plain_uv_run_scan_catches_a_planted_command_and_skips_mentions() -> None:
@@ -213,8 +357,32 @@ def test_the_plain_uv_run_scan_catches_a_planted_command_and_skips_mentions() ->
     assert [number for number, _ in _plain_uv_runs(text)] == [1, 2, 5]
 
 
-def test_changelogs_and_fixtures_are_not_scanned() -> None:
-    scanned = {str(path.relative_to(_REPO_ROOT)) for path in _agent_facing_files()}
+def test_the_python_scan_catches_strings_and_argv_and_skips_comparisons() -> None:
+    source = "\n".join(
+        [
+            'HINT = "Run `uv run host-backup-heavy-dirs` to see them."',
+            'subprocess.run(["uv", "run", "env-converge", "upgrade"])',
+            'subprocess.run(["uv", "run", "--no-sync", "env-converge", "upgrade"])',
+            'is_uv_run = words[:2] == ("uv", "run")',
+            'subprocess.run(["uv", "run", script, "--help"])',
+            "# uv run app-manifest in a comment is not a string",
+        ]
+    )
 
-    assert not any("/changelog/" in path or path.endswith("CHANGELOG.md") for path in scanned)
+    assert [number for number, _ in _python_plain_uv_runs(source)] == [1, 2]
+
+
+def test_scanning_skips_records_and_tests_but_reaches_living_contracts() -> None:
+    scanned = {str(path.relative_to(_REPO_ROOT)) for path in _scanned_files()}
+
+    assert not any(
+        "/changelog/" in path or path.endswith("CHANGELOG.md") for path in scanned
+    )
+    assert not any(PurePosixPath(path).name.endswith("_test.py") for path in scanned)
+    assert (
+        "docs/system/blueprint/workspace-app-model/plan-workspace-app-model.md"
+        not in scanned
+    )
+    assert "docs/system/blueprint/workspace-app-model/contracts.md" in scanned
+    assert "system/services/host_backup/src/host_backup/runner.py" in scanned
     assert "AGENTS.md" in scanned
