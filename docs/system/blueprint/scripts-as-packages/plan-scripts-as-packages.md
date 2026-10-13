@@ -135,9 +135,10 @@
 - **`SessionStart` sync**:
   - New `system/scripts/session_start_sync.sh`:
     - `uv lock --check`;
-    - on failure, `uv lock` and print one line: "`uv.lock` was out of date with `pyproject.toml` and has been regenerated; include it in your next commit.";
+    - on failure, print one line saying the lock is stale and the environment was synced from the committed lock, for whoever is changing dependencies to relock; never `uv lock` here, since in the shared main tree a drift is usually another agent's change in progress;
     - then `uv sync --all-packages --frozen`.
-  - `.claude/settings.json` `SessionStart` calls it instead of `uv sync --all-packages`.
+  - `.claude/settings.json` and `.codex/hooks.json` `SessionStart` call it (claude instead of `uv sync --all-packages`).
+  - Worker provisioning's `uv sync --all-packages` becomes `--frozen` too.
   - `.codex/hooks.json` has no `SessionStart` sync, so nothing changes there.
 - **`uv run` → `uv run --no-sync`**, everywhere agents call a command, except skill and system script calls (PR 2 rewrites those):
   - `AGENTS.md`, `.mngr/settings.toml` prompts, `SKILL.md`s and references, `.sh` scripts.
@@ -148,10 +149,11 @@
   - Any other option leaves the call unrecognised, so it is blocked.
   - Check `agent_latchkey_request_check.py`, which matches by basename (`word.rsplit("/", 1)[-1]`), and the chat app's `harnesses/tool_output.py` regex, which also matches by basename. Add tests for the `--no-sync` forms; no code change is expected there.
 - **New root test `system/test_python_launch_rules.py`**:
-  - `test_no_supervisord_program_runs_under_uv_run`: parses `system/supervisord.conf` and `system/supervisord.conf.d/*.conf` (including user-added files) and fails on any `command=` that executes `uv run`.
+  - `test_no_supervisord_program_runs_under_uv_run`: parses `system/supervisord.conf` and `system/supervisord.conf.d/*.conf` (including user-added files) with `configparser` and fails on any `command` that executes `uv run`.
+  - `test_no_mngr_window_runs_under_uv_run`: the same check over every `extra_window` entry in `.mngr/settings.toml`.
   - `test_no_plain_uv_run_in_agent_facing_files`:
-    - scans tracked `.md`/`.toml`/`.sh`/`.conf` files for `uv run` not followed by `--no-sync`;
-    - skips `*/changelog/*`, `CHANGELOG.md`, `UNABRIDGED_CHANGELOG.md` and test fixtures;
+    - scans tracked `.md`/`.toml`/`.sh`/`.conf` files, and the string and argv literals of non-test `.py` files, for `uv run` not followed by `--no-sync`;
+    - skips `*/changelog/*`, `CHANGELOG.md`, `UNABRIDGED_CHANGELOG.md`, `vendor/`, test fixtures, and the dated plans and specs under `blueprint/` and `specs/` (but not the living `contracts.md` files there);
     - a small explicit allowlist of (file, context) pairs for deliberate syncs.
 - **New `.agents/shared/references/running-python.md`**:
   - long-running vs one-off;
@@ -300,14 +302,14 @@
   - `uv run --no-sync .../request_secret.py --file ...` and `uv run --frozen --quiet .../with_secrets.py ... -- cmd` are recognised;
   - `uv run --env-file x .../with_secrets.py` and `uv run --with pkg ...` are not, so they're blocked;
   - matching cases in `agent_latchkey_request_check_test.py` and the chat app's tool-output tests.
-- **Program-line rule**: the test fails on a planted `command=... uv run x` conf in a tmp copy and passes on the real tree; it also covers the `oom_tag_service.py ... uv run` wrapping form.
+- **Program-line rule**: the test fails on a planted `command=... uv run x` conf in a tmp copy and passes on the real tree; it also covers the `oom_tag_service.py ... uv run` wrapping form, a spaced `command = ...` line, and a comment that only mentions `uv run`. A planted settings file shows the same for `extra_window` entries at any depth.
 - **Plain-`uv run` rule**:
-  - the test catches a planted plain `uv run` in a `.md`;
-  - it ignores changelogs and fixtures;
+  - the test catches a planted plain `uv run` in a `.md`, and in a Python string and argv, while skipping a `("uv", "run")` comparison and an argv whose program is a variable;
+  - it ignores changelogs, fixtures, tests and dated plans, and reaches `contracts.md`;
   - every allowlisted entry still exists (no stale exceptions).
 - **`session_start_sync.sh`** (in a tmp copy of a minimal uv project):
   - in-sync lock → no output, exit 0;
-  - drifted lock → the lock is regenerated, the one-line message printed, the sync succeeds.
+  - drifted lock → the lock is left as it was, the one-line note printed, the sync succeeds.
 - **Import-cost tests**:
   - prove the probe can fail: a planted `import pydantic` at an entry's top level fails the test;
   - a declared heavy import passes;
