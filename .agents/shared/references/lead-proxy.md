@@ -311,7 +311,7 @@ finishing its task yourself. Re-take whatever preconditions the calling skill
 holds for a pass (a lease, a run record), then send it the decision:
 
 ```bash
-uv run .agents/skills/launch-task/scripts/create_worker.py reply \
+uv run --no-sync .agents/skills/launch-task/scripts/create_worker.py reply \
     --task-file <TASK_FILE> -m "<the user's decision>"
 ```
 
