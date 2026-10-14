@@ -816,7 +816,7 @@ describe("failure toasts", () => {
       502,
       "Docs couldn't open that. Try again. If this persists, report a bug.",
       "HTTP 502\ndocs answered the launch with 503: still loading",
-      false,
+      true,
       true,
     );
     await store.runLaunch("docs", "new", "new");
@@ -828,6 +828,7 @@ describe("failure toasts", () => {
         isLasting: true,
       },
     ]);
+    expect(store.toasts.current()[0].actions.map((action) => action.label)).toEqual(["Report a bug"]);
   });
 
   it("lets a plain reason with nothing behind it go on its own", async () => {

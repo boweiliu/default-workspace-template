@@ -12,7 +12,7 @@ export interface Failure {
   readonly message: string;
   /** What goes behind "See details"; null when there is nothing beyond the sentence. */
   readonly details: string | null;
-  /** The sentence is one of ours that ends by asking for a bug report, so the surface offers "Report a bug". */
+  /** The sentence ends by asking for a bug report, so the surface offers "Report a bug". */
   readonly isReportable: boolean;
 }
 
@@ -31,6 +31,11 @@ const REPORT_A_BUG_ENDING = "Try again. If this persists, report a bug.";
 /** The sentence for a request nothing answered (a gateway status, a dropped connection, a timeout). */
 export function notAnsweredSentence(kind: RequestKind): string {
   return kind === "read" ? READ_NOT_ANSWERED : CHANGE_NOT_ANSWERED;
+}
+
+/** Whether ``sentence`` ends by asking for a bug report, as a server's own sentence may (the shell's failed launch). */
+export function asksForBugReport(sentence: string): boolean {
+  return sentence.endsWith(REPORT_A_BUG_ENDING);
 }
 
 /** The fallback for a failure with no explanation of its own: what failed, then the bug-report ending. */

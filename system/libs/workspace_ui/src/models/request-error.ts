@@ -1,5 +1,6 @@
 import {
   GATEWAY_STATUSES,
+  asksForBugReport,
   fallbackSentence,
   joinDetails,
   nonEmptyString,
@@ -82,7 +83,12 @@ export function describeRequestFailure(error: unknown, kind: RequestKind = "chan
   const reason = nonEmptyString(err.response?.detail) ?? nonEmptyString(err.response?.error);
   const status = err.code === 0 ? null : `HTTP ${err.code}`;
   if (userFacing !== null) {
-    return { message: userFacing, details: joinDetails([status, reason]), isReportable: false, isUserFacing: true };
+    return {
+      message: userFacing,
+      details: joinDetails([status, reason]),
+      isReportable: asksForBugReport(userFacing),
+      isUserFacing: true,
+    };
   }
   if (reason !== null) {
     return { message: reason, details: status, isReportable: false, isUserFacing: false };
