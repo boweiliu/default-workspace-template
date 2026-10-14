@@ -203,10 +203,12 @@ async function startNewChat(): Promise<void> {
   openProviderChooser({ onSignedIn: (signedInAccountId) => void createAndSelect(signedInAccountId) });
 }
 
-/** The phone layout's swipe gesture over the slot: a one-finger drag starts it, a second finger (a pinch) cancels
+/** The phone layout's swipe gesture: a touch inside a frame never reaches a listener on the root's own page
+ *  (`framePool.ts` binds these to each frame's document instead), so these ignore the desktop layout themselves
+ *  rather than relying on being unbound there. A one-finger drag starts it; a second finger (a pinch) cancels
  *  it rather than reading as a swipe. */
-function onSlotTouchStart(event: TouchEvent): void {
-  if (event.touches.length !== 1) {
+function onFrameTouchStart(event: TouchEvent): void {
+  if (!compactQuery.matches || event.touches.length !== 1) {
     swipeStart = null;
     return;
   }
@@ -216,10 +218,10 @@ function onSlotTouchStart(event: TouchEvent): void {
 /** The drag's end: past the threshold in `swipeNav.ts`, it switches chats or, past the newest one, leaves the
  *  "New chat" button showing in its place. Short of the threshold, nothing happens -- including a tap, which
  *  reports no movement at all. */
-function onSlotTouchEnd(event: TouchEvent): void {
+function onFrameTouchEnd(event: TouchEvent): void {
   const start = swipeStart;
   swipeStart = null;
-  if (start === null) return;
+  if (start === null || !compactQuery.matches) return;
   const touch = event.changedTouches[0];
   if (touch === undefined) return;
   const direction = swipeDirectionFromDelta(touch.clientX - start.x, touch.clientY - start.y);
@@ -397,12 +399,7 @@ const ChatRoot: m.Component = {
           : m(ChatRail, rail),
         m(
           "div",
-          {
-            class: "chat-root-slot relative min-h-0 min-w-0 flex-1",
-            // Swipe-between-chats (phone layout only; a mouse drag on the desktop layout is left to the rail).
-            ontouchstart: isCompact ? onSlotTouchStart : undefined,
-            ontouchend: isCompact ? onSlotTouchEnd : undefined,
-          },
+          { class: "chat-root-slot relative min-h-0 min-w-0 flex-1" },
           [
             m("div", {
               class: "chat-root-frames absolute inset-0",
@@ -412,6 +409,9 @@ const ChatRoot: m.Component = {
                 pool.setCompact(isCompact);
                 if (handshake !== null) pool.setHandshake(handshake);
                 pool.setRootShown(isRootShown);
+                // Swipe-between-chats (phone layout only; a mouse drag on the desktop layout is left to the
+                // rail): the gesture happens inside a frame's own document, so the pool binds it there.
+                pool.setSwipeHandlers({ onTouchStart: onFrameTouchStart, onTouchEnd: onFrameTouchEnd });
                 pool.show(selectedChatId);
               },
               onremove: () => {
