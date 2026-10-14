@@ -197,7 +197,9 @@ git merge --no-ff <commit> -m "Provisional merge of <WORKER_NAME> at milestone <
 ```
 
 Then the **provisional go-live**, the minimum needed to use the thing: a skill
-is on disk at `.agents/skills/<name>/` and invocable; an app or service gets
+is on disk at `.agents/skills/<name>/` and invocable (one with a `python/`
+project only after `uv sync --all-packages --frozen`, which installs its package
+and any dependency the merge added into the workspace venv); an app or service gets
 its tab refreshed. You do that refresh -- never hand it to the user. The calling
 skill's end-of-pass work (post-crystallize migration, closing the ticket) still
 waits for `done`.

@@ -17,3 +17,5 @@ Each skill's Python now lives in its own uv project, `.agents/skills/<name>/pyth
   It no longer requires PEP 723 headers.
 
 - **Docs:** `spec-summary.md` and `type-skill.md` describe the layout and the lazy-import rule. `running-python.md` describes the bare and venv tiers.
+
+- **Going live with a merged skill:** a skill with a `python/` project runs from the workspace venv, so `lead-proxy.md`'s provisional go-live and the crystallize, heal and update go-live steps run `uv sync --all-packages --frozen` after the merge.
