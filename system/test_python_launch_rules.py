@@ -352,8 +352,22 @@ def _edits_sys_path(source: str) -> bool:
     return False
 
 
+def _is_in_unpackaged_skill(relative: str, repo_root: Path) -> bool:
+    """Whether a file belongs to a skill with no ``python/`` project: a third-party or plain-scripts skill, not ours to police."""
+    parts = PurePosixPath(relative).parts
+    return (
+        parts[:2] == (".agents", "skills")
+        and len(parts) > 3
+        and not (repo_root / ".agents" / "skills" / parts[2] / "python" / "pyproject.toml").is_file()
+    )
+
+
 def _tracked_python_files(repo_root: Path) -> list[str]:
-    """Every tracked ``.py`` file outside vendored code, tests included, except this one (whose planted cases would count)."""
+    """The template's own tracked ``.py`` files, tests included.
+
+    Vendored code and skills without a ``python/`` project are left out, and so is this file,
+    whose planted cases would count.
+    """
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", "*.py"], cwd=repo_root, capture_output=True, text=True, check=True
     ).stdout.split("\0")
@@ -363,6 +377,7 @@ def _tracked_python_files(repo_root: Path) -> list[str]:
         if relative
         and "vendor" not in PurePosixPath(relative).parts
         and relative != "system/test_python_launch_rules.py"
+        and not _is_in_unpackaged_skill(relative, repo_root)
         and (repo_root / relative).is_file()
     )
 
@@ -382,6 +397,21 @@ def test_prevent_sys_path_edits() -> None:
         "project and a system script's beside it, all importable from the root venv:\n"
         + "\n".join(offenders)
     )
+
+
+def test_a_skill_without_a_python_project_is_not_counted(tmp_path: Path) -> None:
+    edit = "import sys\nsys.path.insert(0, 'x')\n"
+    for skill in ("packaged", "third-party"):
+        (tmp_path / ".agents" / "skills" / skill / "scripts").mkdir(parents=True)
+        (tmp_path / ".agents" / "skills" / skill / "scripts" / "run.py").write_text(edit)
+    (tmp_path / ".agents" / "skills" / "packaged" / "python").mkdir()
+    (tmp_path / ".agents" / "skills" / "packaged" / "python" / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "system").mkdir()
+    (tmp_path / "system" / "tool.py").write_text(edit)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert _sys_path_editors(tmp_path) == [".agents/skills/packaged/scripts/run.py", "system/tool.py"]
 
 
 def test_the_sys_path_scan_sees_each_form_of_edit() -> None:
