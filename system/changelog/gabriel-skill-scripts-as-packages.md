@@ -11,7 +11,7 @@ This release turns the workspace's scripts into packages. An existing workspace'
 - New root checks:
   - `system/test_entry_point_import_cost.py` fails an entry point that loads pydantic, loguru, click, tenacity, httpx or asyncio at import without declaring it.
   - `system/test_external_entry_paths.py` runs every path that Imbue Studio, CI and older update-self releases call by path, with no site-packages.
-  - `system/test_python_launch_rules.py` fails a `python3 <path>.py` that names a venv-tier or missing script. It also counts the code that edits `sys.path` and the code that loads a module from a file path (`spec_from_file_location`, `SourceFileLoader`, `runpy.run_path`), tests included, and fails when either count rises.
+  - `system/test_python_launch_rules.py` fails a `python3 <path>.py` that names a venv-tier or missing script. It also counts, tests included, the code that edits the import path (`sys.path` under any alias, `monkeypatch.syspath_prepend`, `site.addsitedir`, a non-empty `PYTHONPATH` handed to a subprocess, a pytest `pythonpath` setting) and the code that loads a module from a file (`spec_from_file_location`, `spec_from_loader`, the file loaders, `runpy.run_path`, `exec(compile(...))`), and fails when either count rises. Skills without a `python/` project, such as third-party skills, are not counted.
   - The plain-`uv run` check no longer reads files that link into `system/vendor/`. Once the mngr assets were fetched, `docs/system/style_guide.md` resolved to mngr's style guide and failed the check inside a workspace.
   - `system/test_meta_ratchets.py` requires a `pyproject.toml` in every skill `python/` dir. Without one, every `uv` command in the workspace fails.
 

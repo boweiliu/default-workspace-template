@@ -10,8 +10,9 @@ Each rule is checked against the real tree and against a planted violation:
 - A ``python3 <path>.py`` written into an agent-facing file names a bare entry point: the
   system ``python3`` has no venv, so a venv-tier script run that way fails at its first
   third-party import.
-- Code imports packages. Edits to ``sys.path`` and loading a module from a file path are
-  counted, and the counts only go down.
+- Code imports packages. Edits to the import path (``sys.path``, ``PYTHONPATH``, pytest's
+  ``pythonpath``) and loading a module from a file path are counted, and the counts only go
+  down.
 """
 
 from __future__ import annotations
@@ -340,14 +341,53 @@ def test_the_python3_scan_catches_a_venv_script_and_a_stale_path(tmp_path: Path)
     ]
 
 
+# Calls that put a directory on the import path without naming ``sys.path``.
+_IMPORT_PATH_CALLS = frozenset({"syspath_prepend", "addsitedir"})
+
+
+def _is_pythonpath(node: ast.expr | None) -> bool:
+    return isinstance(node, ast.Constant) and node.value == "PYTHONPATH"
+
+
+def _sets_a_path(value: ast.expr) -> bool:
+    """An empty ``PYTHONPATH`` clears the variable for a clean subprocess; anything else adds to it."""
+    return not (isinstance(value, ast.Constant) and value.value == "")
+
+
 def _edits_sys_path(source: str) -> bool:
-    for node in ast.walk(ast.parse(source)):
+    """Whether code changes where imports are looked up: ``sys.path`` under any alias, the calls
+    that prepend to it, or a ``PYTHONPATH`` written into an environment."""
+    tree = ast.parse(source)
+    sys_names = {"sys"} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "sys" and alias.asname
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "sys" and any(a.name == "path" for a in node.names):
+            return True
+        if isinstance(node, ast.Call):
+            called = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+            if called in _IMPORT_PATH_CALLS or any(
+                keyword.arg == "PYTHONPATH" and _sets_a_path(keyword.value) for keyword in node.keywords
+            ):
+                return True
+        if isinstance(node, ast.Dict) and any(
+            _is_pythonpath(key) and _sets_a_path(value) for key, value in zip(node.keys, node.values)
+        ):
+            return True
+        if isinstance(node, ast.Assign) and _sets_a_path(node.value) and any(
+            isinstance(target, ast.Subscript) and _is_pythonpath(target.slice) for target in node.targets
+        ):
+            return True
         target = node.func.value if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) else None
         if isinstance(node, (ast.Assign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             target = next((t.value if isinstance(t, ast.Subscript) else t for t in targets), None)
         if isinstance(target, ast.Attribute) and target.attr == "path" and isinstance(target.value, ast.Name):
-            if target.value.id == "sys":
+            if target.value.id in sys_names:
                 return True
     return False
 
@@ -382,18 +422,38 @@ def _tracked_python_files(repo_root: Path) -> list[str]:
     )
 
 
+_PYTEST_CONFIG_NAMES = frozenset({"pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"})
+_PYTHONPATH_SETTING_RE = re.compile(r"^\s*pythonpath\s*=", re.MULTILINE)
+
+
+def _pytest_configs_setting_pythonpath(repo_root: Path) -> list[str]:
+    """Tracked pytest configs that add to the import path for every test under them."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    return sorted(
+        relative
+        for relative in tracked
+        if PurePosixPath(relative).name in _PYTEST_CONFIG_NAMES
+        and "vendor" not in PurePosixPath(relative).parts
+        and not _is_in_unpackaged_skill(relative, repo_root)
+        and (repo_root / relative).is_file()
+        and _PYTHONPATH_SETTING_RE.search((repo_root / relative).read_text(errors="replace"))
+    )
+
+
 def _sys_path_editors(repo_root: Path) -> list[str]:
     return [
         relative
         for relative in _tracked_python_files(repo_root)
         if _edits_sys_path((repo_root / relative).read_text())
-    ]
+    ] + _pytest_configs_setting_pythonpath(repo_root)
 
 
 def test_prevent_sys_path_edits() -> None:
     offenders = _sys_path_editors(_REPO_ROOT)
     assert len(offenders) <= snapshot(17), (
-        "These edit sys.path. Import the package instead: a skill's modules live in its python/ "
+        "These edit the import path (sys.path, PYTHONPATH, or a pytest pythonpath setting). Import the package instead: a skill's modules live in its python/ "
         "project and a system script's beside it, all importable from the root venv:\n"
         + "\n".join(offenders)
     )
@@ -419,12 +479,34 @@ def test_the_sys_path_scan_sees_each_form_of_edit() -> None:
     assert _edits_sys_path("import sys\nsys.path.append('x')\n")
     assert _edits_sys_path("import sys\nsys.path[:0] = ['x']\n")
     assert _edits_sys_path("import sys\nsys.path += ['x']\n")
+    assert _edits_sys_path("import sys as _sys\n_sys.path.insert(0, 'x')\n")
+    assert _edits_sys_path("from sys import path\npath.append('x')\n")
+    assert _edits_sys_path("def test(monkeypatch):\n    monkeypatch.syspath_prepend('x')\n")
+    assert _edits_sys_path("import site\nsite.addsitedir('x')\n")
+    assert _edits_sys_path("import subprocess\nsubprocess.run(['x'], env={'PYTHONPATH': 'x'})\n")
+    assert _edits_sys_path("import os\nenv = dict(os.environ)\nenv['PYTHONPATH'] = 'x'\n")
+    assert _edits_sys_path("import os\nenv = dict(os.environ, PYTHONPATH='x')\n")
     assert not _edits_sys_path("import sys\nprint(sys.path)\n")
+    assert not _edits_sys_path("import os\nenv = dict(os.environ)\nenv.pop('PYTHONPATH', None)\n")
+    assert not _edits_sys_path("import subprocess\nsubprocess.run(['x'], env={'PYTHONPATH': ''})\n")
+
+
+def test_a_pytest_pythonpath_setting_is_counted(tmp_path: Path) -> None:
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "pyproject.toml").write_text('[tool.pytest.ini_options]\npythonpath = ["src"]\n')
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "pyproject.toml").write_text('[tool.pytest.ini_options]\ntestpaths = ["."]\n')
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert _sys_path_editors(tmp_path) == ["app/pyproject.toml"]
 
 
 # The ways to run a module from a file instead of importing it: each one sidesteps the
 # packages, so what it loads is a second copy of the module under another name.
-_PATH_LOADING_RE = re.compile(r"\b(?:spec_from_file_location|SourceFileLoader|run_path)\(")
+_PATH_LOADING_RE = re.compile(
+    r"\b(?:spec_from_file_location|spec_from_loader|SourceFileLoader|SourcelessFileLoader|load_source|run_path)\(|\bexec\(\s*compile\("
+)
 
 
 def _path_loading_lines(text: str) -> list[tuple[int, str]]:
@@ -441,7 +523,7 @@ def _path_loading_sites(repo_root: Path) -> list[str]:
 
 def test_prevent_loading_modules_by_file_path() -> None:
     sites = _path_loading_sites(_REPO_ROOT)
-    assert len(sites) <= snapshot(5), (
+    assert len(sites) <= snapshot(6), (
         "These load a module from a file path. Import it instead: a skill's modules live in its "
         "python/ project and a system script's beside it, all importable from the root venv:\n"
         + "\n".join(sites)
@@ -454,9 +536,12 @@ def test_the_path_loading_scan_sees_each_form() -> None:
             "spec = importlib.util.spec_from_file_location('m', path)",
             "loader = importlib.machinery.SourceFileLoader('m', path)",
             "runpy.run_path(path, run_name='__main__')",
+            "loader = importlib.machinery.SourcelessFileLoader('m', path)",
+            "spec = importlib.util.spec_from_loader('m', loader)",
+            "exec(compile(source, path, 'exec'), namespace)",
             "from workspace_bare_scripts import message_chat",
             "importlib.import_module('pcmflux')",
         ]
     )
 
-    assert [number for number, _ in _path_loading_lines(text)] == [1, 2, 3]
+    assert [number for number, _ in _path_loading_lines(text)] == [1, 2, 3, 4, 5, 6]
