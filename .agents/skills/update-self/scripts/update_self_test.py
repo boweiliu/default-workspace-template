@@ -7008,7 +7008,9 @@ def test_apply_writes_the_ledger_and_runs_env_converge_post_success(
     assert runner.ran("uv", "run", "--no-sync", "env-converge", "upgrade")
     # The converge comes after the ledger commit: it is post-success bookkeeping.
     add_index = runner.calls.index(["git", "add", "docs/VERSION_HISTORY.md"])
-    converge_index = runner.calls.index(["uv", "run", "--no-sync", "env-converge", "upgrade"])
+    converge_index = runner.calls.index(
+        ["uv", "run", "--no-sync", "env-converge", "upgrade"]
+    )
     assert add_index < converge_index
 
 
@@ -7036,7 +7038,8 @@ def test_env_converge_failure_is_a_warning_not_a_rollback(
 ) -> None:
     runner = _apply_runner(_DOCS_DIFF, apply_repo)
     runner.respond(
-        ("uv", "run", "--no-sync", "env-converge"), _Result(returncode=1, stderr="no network")
+        ("uv", "run", "--no-sync", "env-converge"),
+        _Result(returncode=1, stderr="no network"),
     )
 
     code = _apply(
@@ -7059,7 +7062,9 @@ def test_an_env_converge_that_cannot_be_spawned_is_a_warning_not_a_traceback(
     # Post-success bookkeeping: an update that landed healthy must not turn
     # into a non-zero exit because `uv` could not be resolved afterwards.
     runner = _apply_runner(_DOCS_DIFF, apply_repo)
-    runner.respond(("uv", "run", "--no-sync", "env-converge"), FileNotFoundError("uv: not found"))
+    runner.respond(
+        ("uv", "run", "--no-sync", "env-converge"), FileNotFoundError("uv: not found")
+    )
 
     code = _apply(
         runner,
