@@ -50,7 +50,11 @@ background agent, which is its own chat -- or the human).
   as a new tab in front (an empty `url` opens nothing new, like no `url` at all; a
   `url` that is not an absolute `http(s)` URL is 400; 503 while Chromium is not
   installed; a refusal carries its reason as `{"detail"}`, which the shell passes on
-  to whoever ran the launch). `POST /browsers` with no name answers the same browser; with a name
+  to whoever ran the launch, and, where a person can have asked, the sentence they are
+  told as `{"user_facing_message"}`). While Chromium is missing, the daemon tells an
+  install still running from one that failed in this boot by env-converge's own record
+  of its Fortress unit (`install_gate.py`): a failed install is not retried until the
+  workspace restarts, so it is not worded as a wait. `POST /browsers` with no name answers the same browser; with a name
   it is a create (409 for a duplicate or a full fleet). The shell opens a browser
   window at the launch path (`workspace-layout open browser`); everything else about a
   browser it learns from the page itself through the app contract. The `/browsers`
@@ -62,7 +66,12 @@ background agent, which is its own chat -- or the human).
   restored as stopped after a daemon restart (the manifest entry's `stopped` flag),
   refuses the fleet CLI's verbs with status `stopped` and a hint on bringing it back, and
   shows a "stopped" overlay with a Start button in the viewer (which
-  calls `POST /browsers/<name>/start`; `.../stop` is its counterpart). The viewer's
+  calls `POST /browsers/<name>/start`; `.../stop` is its counterpart). A crashed browser's
+  cover offers the same Start, worded by how Chromium ended (killed, ended on its own, or
+  running but not answering), and a refused start is told on the cover with the daemon's
+  reason behind "See details". When the daemon itself stops (anything but a Quit, which
+  closes the windows first), viewers are told the browser is `stopping` rather than
+  `closed`, and keep reconnecting until it is back. The viewer's
   close chord (Ctrl+W) calls `POST /browsers/<name>/close-tab`, which closes the tab
   Chromium has in front (asked of the pages themselves, so a tab the human switched
   to inside Chrome counts) and keeps the browser up: the last tab is replaced with a
@@ -78,7 +87,8 @@ background agent, which is its own chat -- or the human).
   is a Chromium still installing (503). The one browser then opens it the way the launch path opens a start page
   -- created, relaunched, or given a new tab in front -- with two exceptions: while Chromium is still launching the
   URL is held and opened in front once the launch finishes, and while an agent drives the browser the URL is held
-  rather than opened over the agent's work. Either way the route then shows the browser's page to the client that
+  rather than opened over the agent's work. A running browser opens the tab in the background, so the route answers
+  the shell's relay before a slow page's tab is up. Either way the route then shows the browser's page to the client that
   clicked (the shell's `show` op, through `workspace_layout`), raising a browser window or opening one. A held URL
   is named on the viewer's agent overlay with "Take control of this browser", which takes control as the plain
   button does and opens the URL as a tab in front, and "Cancel" (`POST /browsers/<name>/pending-url/cancel`), which
