@@ -192,13 +192,18 @@ def _plain_uv_runs(text: str) -> list[tuple[int, str]]:
 
 
 def _argv_runs_plain_uv_run(elements: list[ast.expr]) -> bool:
-    """Whether a list or tuple literal is a ``uv run`` argv whose literal words make it a syncing run."""
+    """Whether a list or tuple literal is a ``uv run`` argv that syncs.
+
+    Only the leading string literals are read: an argv that names no non-syncing
+    option before its first computed element (the program, say) syncs. A bare
+    ``("uv", "run")`` is a comparison against a command's first words, not an argv.
+    """
     literals: list[str] = []
     for element in elements:
         if not (isinstance(element, ast.Constant) and isinstance(element.value, str)):
             break
         literals.append(element.value)
-    if literals[:2] != ["uv", "run"] or len(literals) < 3:
+    if literals[:2] != ["uv", "run"] or len(elements) < 3:
         return False
     return not _is_compliant_uv_run(" " + " ".join(literals[2:]))
 
@@ -409,7 +414,7 @@ def test_the_python_scan_catches_strings_and_argv_and_skips_comparisons() -> Non
         ]
     )
 
-    assert [number for number, _ in _python_plain_uv_runs(source)] == [1, 2]
+    assert [number for number, _ in _python_plain_uv_runs(source)] == [1, 2, 5]
 
 
 def test_scanning_skips_records_and_tests_but_reaches_living_contracts() -> None:
