@@ -36,6 +36,7 @@ Parsed by the `app_manifest` library (section 14) with pydantic, `extra = "forbi
 | `priority` | string | no | `"user"` | A key of `SERVICE_BANDS` in `oom_priority.bands`, or `user`. |
 | `program` | string | no | `name` | The supervisord program that runs the app. |
 | `internal` | bool | no | `false` | Hidden from every open surface. |
+| `system` | bool | no | `false` | Part of the workspace itself rather than an app built on it: the minds Share tab lists it under a collapsed System group instead of offering it up front, and it can still be granted on its own. The share gateway admits a per-app grant on any app that is not `internal`, and only such a grant keeps a `stop_when_no_windows` app running. |
 | `default_shortcut` | table | no | absent | `{action = "<id>", launch = "<id>"?, mode = "focus" \| "new"}`. `action` must be a declared action id, or `open` for a single-instance app. `launch`, optional, is the desktop interface's spelling: a declared launch path id, or `open` when the app declares none. |
 | `actions` | array of tables | no | `[]` | Each `{id, label, params?}`; `id` matches `^[a-z0-9][a-z0-9-]{0,31}$` and is unique; `label` non-empty. `params` is an optional array of `{name, label, required}` describing the create body's `params` keys, for documentation and the New Tab page (an action with a `message` param is one the page can seed a first message into). Forbidden when `instances = false`. |
 | `launch_paths` | array of tables | no | `[]` | Each `{id, label, path, params?}`: the paths the desktop interface opens windows at (`docs/system/blueprint/desktop-interface/contracts.md` section 2). `id` follows the action id rule, is unique, and is never `open` (reserved for the synthesized root launch path); `path` is rooted with one slash, carries no query string or fragment, and nothing a URL would escape; `params` is the optional `{name, label, required}` array naming the query parameters the shell may append. Declared beside `actions` until the desktop interface replaces the tabbed shell. |
@@ -62,6 +63,8 @@ Built-in manifests:
 | `files` | false | `files` | `{launch = "new", mode = "new"}` | `new` ("New File Viewer" at `/home/user/workspace/`, param `path` optional) | the convention |
 | `browser` | false | `browser` | `{launch = "new", mode = "focus"}`; also `window_closed_path = "/api/window-closed"` | `new` ("New Browser" at `/new`, param `url` optional) | the convention |
 
+The chat, terminal, browser, and Getting Started declare `system = true`.
+
 Every built-in except the shell and the terminal's pty points `icon` at an `icon.svg` beside its manifest; those two are `internal` and have none.
 
 ## 3. The registry (`data/.state/apps.toml`)
@@ -78,6 +81,7 @@ Each `[[apps]]` row:
 | `instances` | manifest | Absent reads as `false`. |
 | `instances_url` | manifest | Absent reads as `url`. |
 | `critical` | manifest | Absent reads as `false`. |
+| `system` | manifest | Absent reads as `false`. |
 | `priority` | manifest | Absent reads as `user`. |
 | `default_shortcut` | manifest | Inline table `{action, launch?, mode}`. |
 | `actions` | manifest | Array of inline tables `{id, label, params?}`; `params` is the array of the manifest's param names, present only when there are any. |
@@ -89,7 +93,7 @@ Each `[[apps]]` row:
 `--remove` deletes the row.
 The script validates only what it copies from files; the shell validates every row against the `RegistryRow` model on read and logs and skips a row that fails, so a hand-edited registry degrades to a missing app rather than a crashed shell.
 
-The shell's services event writer and the minds side read `name`, `url`, `label`, and `icon` and ignore the manifest keys.
+The shell's services event writer announces each row's `name` (as `service`), `url`, `label`, `icon`, `display_name`, `system`, and `internal`; the minds side reads only the event. Its Share tab never lists an app announced `internal`, lists one announced `system` under its System group, and offers the rest up front.
 
 ## 4. The instances API
 
@@ -354,13 +358,13 @@ The minds chrome does not forward a deep link's query to the shell frame; that l
 ## 14. Tool environments
 
 - The manifest is the discriminator: every directory under `system/apps/` with both a `pyproject.toml` and an `app.toml` is a Python app that runs from its own uv tool: `uv tool install -e system/apps/<package> [--with-editable <plugin path>]...`, with the plugin list from `system/config/mngr_plugins.toml` where the app's manifest `name` appears in a plugin's `tools`.
-- A directory with a `pyproject.toml` and no manifest is a pre-manifest app; it runs `uv run <name>` from the root venv, untouched by the build and the apply. There are exactly these two forms, both supported indefinitely, so no code path ever handles a third.
+- A directory with a `pyproject.toml` and no manifest is a pre-manifest app; it runs `.venv/bin/<name>` from the root venv, untouched by the build and the apply. There are exactly these two forms, both supported indefinitely, so no code path ever handles a third.
 - The tool's entry point is named after the program and is what the supervisord line runs.
 - `system/scripts/build_workspace.sh` loops over the manifest directories.
 - The update apply reinstalls the tool of every manifest app whose directory changed in the merge (excluding paths under `frontend/` and `static/`), and of every manifest app when a shared backend manifest changed, and snapshots the tool directory of every `critical` app before it does.
 - `system/apps/*` is in the root workspace's member glob, so one lockfile covers the tree, a pre-manifest app's `{ workspace = true }` source in the root pyproject resolves, and a user-built app needs no root-pyproject edit; `uv sync --all-packages` therefore also installs the manifest apps into the root venv, unused, which uv's shared cache makes nearly free. Membership and the tool environments answer different questions: the lock keeps every environment on the same versions, and a tool environment keeps its app running while the root venv is rewritten or broken.
 - The `app_manifest` and `app_instances` libraries are workspace members that apps depend on by path, so a tool install pulls them in editable.
-- Services run from the root venv under `uv run <name>`.
+- Services run from the root venv: a `--frozen` sync, then `exec .venv/bin/<name>`.
 
 ## 15. Memory priority
 

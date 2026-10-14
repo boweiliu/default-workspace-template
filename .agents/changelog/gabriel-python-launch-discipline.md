@@ -3,3 +3,5 @@
 - The github-sync service's program line and the service-processes example run the entry point from `.venv/bin` after a `--frozen` sync instead of under `uv run`.
 
 - update-self advances the environment snapshot with `uv run --no-sync env-converge upgrade` after an apply, and the build-app scaffold validates a new manifest with `uv run --no-sync app-manifest`.
+
+- `running-python.md` describes where the venv is kept current: a `--frozen` sync at boot, at worker provisioning, and at claude and codex session start, none of which rewrites `uv.lock`.
