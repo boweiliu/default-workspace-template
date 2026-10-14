@@ -10,7 +10,7 @@ Each skill's Python now lives in its own uv project, `.agents/skills/<name>/pyth
   - update-self's apply refreshes the open views with `uv run --no-sync`.
 
 - **`validate_skill.py`** now requires:
-  - a `python/pyproject.toml` naming `<name>-skill` and `<name>_skill` whenever the skill has Python;
+  - a `python/pyproject.toml` naming `<name>-skill` and `<name_with_underscores>_skill` whenever the skill has Python;
   - a passing `uv lock --check`;
   - every entry file to answer `--help` under `uv run --no-sync`.
 
