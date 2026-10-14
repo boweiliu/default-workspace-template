@@ -16,8 +16,6 @@ from workspace_bare_scripts import provision_backups as _MODULE
 _SCRIPT = Path(__file__).resolve().parents[1] / "provision_backups.py"
 
 
-
-
 def test_parse_restic_env_file_handles_export_quotes_and_comments() -> None:
     parsed = _MODULE.parse_restic_env_file(
         "# comment\nexport RESTIC_PASSWORD=\"pa ss\"\nRESTIC_REPOSITORY='local:/x'\n\nBAD\n"

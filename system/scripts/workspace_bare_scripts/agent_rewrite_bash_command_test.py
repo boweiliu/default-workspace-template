@@ -19,7 +19,6 @@ from workspace_bare_scripts import agent_rewrite_bash_command as hook
 _SCRIPT = Path(__file__).resolve().parents[1] / "agent_rewrite_bash_command.py"
 
 
-
 def _clear_mngr_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
         "MNGR_AGENT_ID",
