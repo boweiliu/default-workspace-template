@@ -272,11 +272,7 @@ def test_switching_account_ends_the_session_and_asks_the_broker_which_account_to
     assert resp.status_code == 302
     query = _broker_query(resp)
     assert query["next"] == [f"https://{_SHELL_HOST}/desk"]
-    # Unconfirmed, so the broker shows its "Continue as ..." choice instead of handing the same
-    # account straight back.
     assert "confirmed" not in query
-    # A browser replaces a cookie only with one of the same name, domain, path and partition, so
-    # each expired copy must carry exactly the attributes the sign-in set it with.
     nonce = harness.pending_logins.mint(is_retry=False)
     signed_in = harness.client.get(f"/_auth/callback?token={_mint_handoff(nonce)}&state={nonce}")
     set_by_sign_in = set_cookies_by_name(signed_in)
