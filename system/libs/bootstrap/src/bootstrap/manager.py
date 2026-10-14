@@ -580,10 +580,11 @@ def _sync_workspace_venv() -> None:
     The bootstrap window syncs ``--frozen`` before this program starts, but
     against the tree as the container came up. ``_recover_interrupted_update``
     can then roll a half-applied update back, restoring an older ``uv.lock``,
-    and nothing after this point syncs: every one-off runs ``uv run --no-sync``
-    and every service execs its entry point from ``.venv/bin``. Converging
-    here, before supervisord starts anything and before the chat agent exists,
-    is what puts the venv on the restored lock. ``--frozen`` takes the
+    and most of what boot starts next -- supervisord's programs and the chat
+    agent -- runs from the venv as it is, without a sync of its own (one-offs
+    run ``uv run --no-sync``). Converging here, before supervisord starts
+    anything and before the chat agent exists, is what puts the venv on the
+    restored lock. ``--frozen`` takes the
     committed lockfile as canonical, matching build_workspace.sh. Best-effort:
     a failure is logged loudly but never blocks boot.
     """
