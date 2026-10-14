@@ -66,10 +66,7 @@ export interface ResolvedShelf {
 }
 
 export type TemplateCatalogState =
-  | { kind: "loading" }
-  | { kind: "loaded"; catalog: TemplateCatalog }
-  | { kind: "failed" }
-  | { kind: "disabled" };
+  { kind: "loading" } | { kind: "loaded"; catalog: TemplateCatalog } | { kind: "failed" } | { kind: "disabled" };
 
 export const TEMPLATES_CATALOG_PATH = "/api/templates-catalog";
 

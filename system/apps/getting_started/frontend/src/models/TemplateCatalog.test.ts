@@ -69,7 +69,9 @@ describe("the catalog's Try again", () => {
   });
 
   it("asks the app to fetch afresh rather than answer from its hold after a failure, and shows what comes back", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ catalog: CATALOG, is_stale: true })));
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(
+      async () => new Response(JSON.stringify({ catalog: CATALOG, is_stale: true })),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     retryTemplateCatalog();
