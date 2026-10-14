@@ -179,7 +179,10 @@ def _run_playwright_check(
         venv_py = repo_root / ".venv/bin/python"
         if venv_py.exists() and sys.executable != str(venv_py):
             os.execv(str(venv_py), [str(venv_py), *sys.argv])
-        sys.exit("error: playwright is not installed. Run with `uv run python ...` or activate workspace .venv.")
+        sys.exit(
+            "error: playwright is not installed in the workspace venv. Run `uv sync --all-packages`, then "
+            "`uv run --no-sync system/scripts/smoketest_app.py ...`."
+        )
 
     executable_path = str(DEFAULT_FORTRESS_PATH) if DEFAULT_FORTRESS_PATH.exists() else None
 
