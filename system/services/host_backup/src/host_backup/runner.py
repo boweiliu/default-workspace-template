@@ -65,7 +65,7 @@ LOG_FILE = Path("/tmp/host-backup.log")
 # durable alarm so a silent multi-day backup outage cannot go unnoticed.
 CONSECUTIVE_FAILURE_ALARM_THRESHOLD: Final[int] = 3
 
-# Where `uv run env-converge capture` resolves its venv from; matches the
+# Where `uv run --no-sync env-converge capture` resolves its venv from; matches the
 # host-backup program's `directory=` in system/supervisord.conf.d/host-backup.conf,
 # made explicit so the capture also works when the runner is launched from
 # another cwd.
