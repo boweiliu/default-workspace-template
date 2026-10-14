@@ -199,6 +199,7 @@ NO_USABLE_NAME_CHARACTERS_SENTENCE: Final[str] = "Pick a name with at least one 
 CANNOT_MOVE_TO_ACCOUNT_SENTENCE: Final[str] = (
     "This chat can't be moved to that account. Start a new chat on it instead."
 )
+CANNOT_MOVE_TO_ACCOUNT_KIND: Final[str] = "cannot_move_to_account"
 # A cancel of a switch that already finished or was called off: nothing failed.
 NOTHING_TO_CANCEL_SENTENCE: Final[str] = "This chat has already finished moving -- there's nothing to cancel."
 NOTHING_TO_CANCEL_KIND: Final[str] = "nothing_to_cancel"
@@ -1724,6 +1725,7 @@ class AgentManager:
                     f"Chat '{chat_id}' cannot change to account {target.account.id} in place; "
                     "it is on another harness or lane",
                     CANNOT_MOVE_TO_ACCOUNT_SENTENCE,
+                    kind=CANNOT_MOVE_TO_ACCOUNT_KIND,
                 )
             rebind = self._open_rebind_locked(
                 chat_id, agent_state, target, message, message_id, origin, now, model_pick
@@ -1762,11 +1764,19 @@ class AgentManager:
         chat = self._resolve_chat_locked(chat_id)
         agent_state = self._agents.get(chat.active_agent_id) if chat is not None and chat.active_agent_id else None
         if chat is None or agent_state is None:
-            raise HandoffError(f"Chat '{chat_id}' has no active agent to move", CANNOT_MOVE_TO_ACCOUNT_SENTENCE)
+            raise HandoffError(
+                f"Chat '{chat_id}' has no active agent to move",
+                CANNOT_MOVE_TO_ACCOUNT_SENTENCE,
+                kind=CANNOT_MOVE_TO_ACCOUNT_KIND,
+            )
         if chat.transition is not None:
             raise ChatConvergingError(_converging_detail_of(chat.transition))
         if is_primary_agent(agent_state):
-            raise HandoffError("The workspace's services agent is not a chat", CANNOT_MOVE_TO_ACCOUNT_SENTENCE)
+            raise HandoffError(
+                "The workspace's services agent is not a chat",
+                CANNOT_MOVE_TO_ACCOUNT_SENTENCE,
+                kind=CANNOT_MOVE_TO_ACCOUNT_KIND,
+            )
         if agent_state.labels.get("account") == target.account.id:
             raise HandoffError(
                 f"Chat '{chat_id}' already runs on account {target.account.id}",

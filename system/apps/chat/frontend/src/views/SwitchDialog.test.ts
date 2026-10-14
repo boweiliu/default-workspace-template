@@ -440,6 +440,26 @@ describe("the switch dialog", () => {
     expect(state.notices).toEqual([{ newChatFailure: new Error("Chat creation refused") }]);
   });
 
+  it("offers a new chat on the target, not another try, for a fresh chat that can't be moved there", async () => {
+    state.events = [WELCOME];
+    const { switchChat } = await import("../models/Handoffs");
+    vi.mocked(switchChat).mockRejectedValueOnce(
+      Object.assign(new Error("{}"), {
+        code: 400,
+        response: {
+          detail: "Chat 'agent-1' cannot change to account acct-openai in place; it is on another harness or lane",
+          user_facing_message: "This chat can't be moved to that account. Start a new chat on it instead.",
+          kind: "cannot_move_to_account",
+        },
+      }),
+    );
+    beginSwitchTo("agent-1", CODEX as ProviderAccount);
+    await flush();
+    const [notice] = state.notices as { retry?: unknown; action?: { label: string } }[];
+    expect(notice.retry).toBeUndefined();
+    expect(notice.action?.label).toBe("Start a new chat");
+  });
+
   it("says the models could not be loaded rather than that the harness has none", async () => {
     state.optionsError = "the daemon is not answering";
     beginSwitchTo("agent-1", CODEX as ProviderAccount);
@@ -447,8 +467,11 @@ describe("the switch dialog", () => {
     await flush();
     render();
     const text = ROOT().textContent ?? "";
-    expect(text).toContain("Could not load Codex's models");
-    expect(text).toContain("the daemon is not answering");
+    expect(text).toContain(
+      "Couldn't load the list of models. Codex will start on its default model, and you can change it once " +
+        "it's running.",
+    );
+    expect(ROOT().querySelector(".see-details-text")?.textContent).toContain("the daemon is not answering");
     // The switch itself needs no model, so the dialog stays usable.
     expect(text).toContain("Switch this chat");
   });

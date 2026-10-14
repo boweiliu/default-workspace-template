@@ -17,8 +17,11 @@
 import m from "mithril";
 import { makeNoticeDialog } from "@imbue/workspace-ui/src/components/NoticeDialog";
 import { inputClass } from "@imbue/workspace-ui/src/components/Input";
-import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { SeeDetails } from "@imbue/workspace-ui/src/components/SeeDetails";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
+import type { RequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 import { describeSwitchFailure } from "./composer-failures";
+import { detailsBehind } from "./failure-lines";
 import { fetchAccountModelOptions } from "../models/AccountModelOptions";
 import { getChatById } from "../models/Chats";
 import type { ChatSnapshot, TransitionKind } from "../models/Chats";
@@ -57,7 +60,7 @@ interface OpenDialog {
   /** The target account's pickable models, once fetched; null while loading. */
   options: CatalogModelOption[] | null;
   /** Why the models could not be fetched, when they could not be; null otherwise. */
-  optionsError: string | null;
+  optionsError: RequestFailure | null;
   modelId: string;
   effort: string | null;
   fast: boolean;
@@ -141,7 +144,9 @@ async function switchFreshChat(chatId: string, target: ProviderAccount): Promise
       title: `Couldn't switch to ${target.label}`,
       describe: (failure) => describeSwitchFailure(failure, target.label, false),
       error,
-      retry: () => switchChat(chatId, target.id, "", mintMessageId()).then(() => undefined),
+      ...(isRefusedForNewChat(error)
+        ? { action: { label: "Start a new chat", run: () => void startNewChatWithDraft(chatId, target.id, null) } }
+        : { retry: () => switchChat(chatId, target.id, "", mintMessageId()).then(() => undefined) }),
     });
   }
   m.redraw();
@@ -174,7 +179,7 @@ export function openSwitchDialog(chatId: string, target: ProviderAccount): void 
       // claim about the harness rather than a report that the request failed.
       if (open !== null && open.chatId === chatId && open.target.id === target.id) {
         open.options = [];
-        open.optionsError = describeRequestError(error, "read");
+        open.optionsError = describeRequestFailure(error, "read");
       }
     })
     .finally(() => {
@@ -231,12 +236,14 @@ function renderPicker(dialog: OpenDialog): m.Children {
     );
   }
   if (dialog.optionsError !== null) {
-    return m(
-      "p",
-      { class: "switch-dialog-models-failed text-(length:--font-size-helper) text-secondary" },
-      `Could not load ${harness}'s models (${dialog.optionsError}). ` +
-        `${whenNothingIsPicked}; you can change it once it is running.`,
-    );
+    const fallback =
+      dialog.kind === "rebind"
+        ? `${harness} will keep its current model`
+        : `${harness} will start on its default model`;
+    return m("div", { class: "switch-dialog-models-failed text-(length:--font-size-helper) text-secondary" }, [
+      m("p", `Couldn't load the list of models. ${fallback}, and you can change it once it's running.`),
+      m(SeeDetails, { details: detailsBehind(dialog.optionsError) }),
+    ]);
   }
   if (dialog.options.length === 0) {
     // A harness whose model the chat app cannot switch lands here by having no options at all, so
@@ -321,17 +328,30 @@ async function startNewChat(dialog: OpenDialog): Promise<void> {
     pickOf(dialog)?.identity ?? (dialog.kind === "rebind" ? currentModelIdentity(getChatById(dialog.chatId)) : null);
   dialog.isBusy = true;
   m.redraw();
-  const draft = await takeComposerDraft(dialog.chatId);
-  if (draft === null) {
+  const isDraftTaken = await startNewChatWithDraft(dialog.chatId, dialog.target.id, pick);
+  if (!isDraftTaken) {
     dialog.isBusy = false;
     m.redraw();
     return;
   }
-  setPendingAccount(dialog.chatId, null);
-  const { chatId, target } = dialog;
+  if (open === dialog) open = null;
+  m.redraw();
+}
+
+/** Open a new chat on ``accountId`` beside ``chatId`` with ``chatId``'s draft moved over; a failure puts the draft
+ *  back and is told on ``chatId``'s composer. False when the composer would not give up its draft (its own notice
+ *  says why), so nothing was started. */
+export async function startNewChatWithDraft(
+  chatId: string,
+  accountId: string,
+  pick: ModelIdentity | null,
+): Promise<boolean> {
+  const draft = await takeComposerDraft(chatId);
+  if (draft === null) return false;
+  setPendingAccount(chatId, null);
   const startWith = async (taken: TakenComposerDraft): Promise<void> => {
     try {
-      await startChatOnAccount(target.id, taken.finalText, pick);
+      await startChatOnAccount(accountId, taken.finalText, pick);
     } catch (error) {
       restoreComposerDraft(chatId, taken);
       throw error;
@@ -345,8 +365,12 @@ async function startNewChat(dialog: OpenDialog): Promise<void> {
       if (again !== null) await startWith(again);
     });
   }
-  if (open === dialog) open = null;
-  m.redraw();
+  return true;
+}
+
+/** A switch refusal whose way forward is a new chat on the target, not another try. */
+export function isRefusedForNewChat(error: unknown): boolean {
+  return describeRequestFailure(error).kind === "cannot_move_to_account";
 }
 
 export function SwitchDialog(): m.Component<{ chatId: string }> {

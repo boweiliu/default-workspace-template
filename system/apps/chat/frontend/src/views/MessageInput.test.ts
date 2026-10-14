@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => {
     setPendingAccount: vi.fn(),
     openSwitchDialog: vi.fn(),
     beginSwitchToAccountId: vi.fn(),
+    startNewChatWithDraft: vi.fn(async (..._args: unknown[]) => true),
     // The account ids that read as signed out; empty at rest.
     signedOutAccountIds: new Set<string>(),
     loadAccounts: vi.fn(async () => {}),
@@ -109,6 +110,9 @@ vi.mock("../models/PendingLane", async (importOriginal) => {
 vi.mock("./SwitchDialog", () => ({
   openSwitchDialog: mocks.openSwitchDialog,
   beginSwitchToAccountId: mocks.beginSwitchToAccountId,
+  startNewChatWithDraft: mocks.startNewChatWithDraft,
+  isRefusedForNewChat: (error: unknown) =>
+    (error as { response?: { kind?: unknown } } | null)?.response?.kind === "cannot_move_to_account",
 }));
 vi.mock("./fast-mode-limit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./fast-mode-limit")>()),
@@ -983,6 +987,26 @@ describe("MessageInput switching harness", () => {
     expect(renderedText(after)).toContain("Couldn't switch to Codex");
     expect(renderedText(after)).toContain("Chat already runs on account acct-openai");
     expect(findByTag(after, "textarea")?.attrs?.value).toBe("Carry on in Codex");
+  });
+
+  it("offers a new chat on the target, not another try, when the chat can't be moved to that account", async () => {
+    mocks.switching.target = TARGET;
+    mocks.switchChat.mockRejectedValueOnce(
+      refusal(400, {
+        detail: "Chat 'agent-1' cannot change to account acct-openai in place; it is on another harness or lane",
+        user_facing_message: "This chat can't be moved to that account. Start a new chat on it instead.",
+        kind: "cannot_move_to_account",
+      }),
+    );
+    const component = MessageInput();
+    press(findByAttr(typeDraft(component, "agent-1", "Carry on in Codex"), "aria-label", "Switch and send"));
+    await flushAsync();
+
+    const after = component.view!({ attrs: { chatId: "agent-1" } } as never);
+    expect(renderedText(after)).toContain("This chat can't be moved to that account.");
+    expect(findButton(after, "Try again")).toBeUndefined();
+    (findButton(after, "Start a new chat")!.attrs!.onclick as () => void)();
+    expect(mocks.startNewChatWithDraft).toHaveBeenCalledWith("agent-1", "acct-openai", null);
   });
 
   it("offers the dialog again from the strip, and a way to call the choice off", () => {

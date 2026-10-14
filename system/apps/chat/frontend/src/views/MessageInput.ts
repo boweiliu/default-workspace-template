@@ -38,7 +38,7 @@ import {
   setSwitchSending,
 } from "../models/PendingLane";
 import type { ProviderAccount } from "../models/Providers";
-import { beginSwitchToAccountId, openSwitchDialog } from "./SwitchDialog";
+import { beginSwitchToAccountId, isRefusedForNewChat, openSwitchDialog, startNewChatWithDraft } from "./SwitchDialog";
 import {
   addOutgoing,
   clearOutgoing,
@@ -849,7 +849,18 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
             actionFailureTitle = `Couldn't switch to ${harnessLabel(target.harness)}`;
             actionFailure = describeSwitchFailure(err, harnessLabel(target.harness), true);
             isActionFailureUnanswered = describeRequestFailure(err).isNotAnswered;
-            if (!isActionFailureUnanswered) {
+            if (isRefusedForNewChat(err)) {
+              actionFailureActions = [
+                {
+                  label: "Start a new chat",
+                  run: () => {
+                    clearActionFailureNotice();
+                    m.redraw();
+                    void startNewChatWithDraft(chatId, target.id, pick);
+                  },
+                },
+              ];
+            } else if (!isActionFailureUnanswered) {
               actionFailureActions = [tryAgainAction(() => void handleSwitchAndSend())];
             }
           }
