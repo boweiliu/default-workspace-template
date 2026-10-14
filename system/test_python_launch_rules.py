@@ -25,6 +25,7 @@ from pathlib import Path, PurePosixPath
 
 from entry_points_testing import is_bare_entry
 from inline_snapshot import snapshot
+from vendor_testing import resolves_into_vendor
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUPERVISORD_DIR = _REPO_ROOT / "system"
@@ -146,7 +147,6 @@ def _agent_facing_files(
     tracked = subprocess.run(
         ["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, text=True, check=True
     ).stdout.split("\0")
-    vendor_dir = (repo_root / "system" / "vendor").resolve()
     return [
         repo_root / relative
         for relative in tracked
@@ -154,7 +154,7 @@ def _agent_facing_files(
         and not _EXEMPT_PARTS.intersection(PurePosixPath(relative).parts)
         and PurePosixPath(relative).name not in _EXEMPT_NAMES
         and (repo_root / relative).is_file()
-        and vendor_dir not in (repo_root / relative).resolve().parents
+        and not resolves_into_vendor(repo_root / relative, repo_root)
     ]
 
 

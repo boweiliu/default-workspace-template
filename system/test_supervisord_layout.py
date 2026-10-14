@@ -28,7 +28,7 @@ from pathlib import Path
 from app_manifest import scope
 from build_app_skill import scaffold_flask_lib
 from migrate_workspace_skill import migrate_workspace
-from oom_priority.testing import supervisord_commands
+from oom_priority.supervisord_testing import supervisord_commands
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUPERVISORD_CONF = _REPO_ROOT / "system" / "supervisord.conf"

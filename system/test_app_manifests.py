@@ -15,7 +15,7 @@ from app_manifest.manifest import MANIFEST_FILENAME, load_manifest
 from app_manifest.primitives import RESERVED_APP_NAMES
 from app_manifest.scope import APP_CONVENTIONS, SKILL_CONVENTIONS, compute_app_scope
 from oom_priority import bands
-from oom_priority.testing import supervisord_commands
+from oom_priority.supervisord_testing import supervisord_commands
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _APPS_DIR = _REPO_ROOT / "system" / "apps"

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from oom_priority import bands
-from oom_priority.testing import supervisord_commands
+from oom_priority.supervisord_testing import supervisord_commands
 
 _SCRIPT = Path(__file__).parent / "oom_tag_service.py"
 _SUPERVISORD_CONF = Path(__file__).resolve().parents[3] / "supervisord.conf"

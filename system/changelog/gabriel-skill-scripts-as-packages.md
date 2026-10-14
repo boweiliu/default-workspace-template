@@ -17,7 +17,7 @@ This release turns the workspace's scripts into packages. An existing workspace'
 
 - The bug-report collector runs as a `Collector` object that takes its container paths and class budgets as arguments. Its tests build one per test instead of loading a fresh copy of the module by path. What the collector collects is unchanged.
 
-- The supervisord program readers in `system/test_app_manifests.py` and `system/test_supervisord_layout.py` share one helper, `oom_priority.testing.supervisord_commands`, instead of loading each other's test files by path.
+- The supervisord program readers in `system/test_app_manifests.py` and `system/test_supervisord_layout.py` share one helper, `oom_priority.supervisord_testing.supervisord_commands`, instead of loading each other's test files by path. The root checks that skip vendored content share `system/vendor_testing.py`.
 
 - `system/scripts/migrate_claude_auth.py` is deleted. It was a manual, one-time move of Claude keys out of the mngr host env file, from when auth moved into accounts. Without it, `workspace-scripts` no longer depends on the chat app or mngr, so chat's tests can depend on it without a dependency cycle.
 
