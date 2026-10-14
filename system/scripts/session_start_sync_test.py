@@ -24,6 +24,13 @@ def _project(root: Path, requires_python: str) -> None:
     )
 
 
+def _locked_project(root: Path) -> str:
+    """Write the probe project, lock it, and return the committed lock's text."""
+    _project(root, ">=3.11")
+    subprocess.run(["uv", "lock", "--quiet"], cwd=root, check=True, timeout=120)
+    return (root / "uv.lock").read_text()
+
+
 def _run_hook(root: Path) -> subprocess.CompletedProcess[str]:
     # Offline: the probe project has no dependencies, so nothing here needs an index.
     return subprocess.run(
@@ -38,9 +45,7 @@ def _run_hook(root: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_an_in_sync_lock_syncs_silently(tmp_path: Path) -> None:
-    _project(tmp_path, ">=3.11")
-    subprocess.run(["uv", "lock", "--quiet"], cwd=tmp_path, check=True, timeout=120)
-    lock_before = (tmp_path / "uv.lock").read_text()
+    lock_before = _locked_project(tmp_path)
 
     result = _run_hook(tmp_path)
 
@@ -51,9 +56,7 @@ def test_an_in_sync_lock_syncs_silently(tmp_path: Path) -> None:
 
 
 def test_a_drifted_lock_is_left_alone_and_reported_once(tmp_path: Path) -> None:
-    _project(tmp_path, ">=3.11")
-    subprocess.run(["uv", "lock", "--quiet"], cwd=tmp_path, check=True, timeout=120)
-    lock_before = (tmp_path / "uv.lock").read_text()
+    lock_before = _locked_project(tmp_path)
     _project(tmp_path, ">=3.12")
 
     result = _run_hook(tmp_path)
