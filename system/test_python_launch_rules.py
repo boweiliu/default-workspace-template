@@ -65,19 +65,29 @@ _DELIBERATE_SYNCS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _shell_command_string(words: list[str], shell_index: int) -> str | None:
+    """The command string a shell at ``shell_index`` runs (``-c``, ``-lc``, ``--login -c``), or None."""
+    for index in range(shell_index + 1, len(words)):
+        word = words[index]
+        if word.startswith("--"):
+            continue
+        if not word.startswith("-"):
+            return None
+        if "c" in word[1:]:
+            return words[index + 1] if index + 1 < len(words) else None
+    return None
+
+
 def _runs_uv_run(command: str) -> bool:
     """Whether a program command executes ``uv run``, directly or inside a ``bash -c`` string."""
     words = shlex.split(command)
     for index, word in enumerate(words):
         if PurePosixPath(word).name == "uv" and words[index + 1 : index + 2] == ["run"]:
             return True
-        if (
-            PurePosixPath(word).name in _SHELL_PROGRAMS
-            and words[index + 1 : index + 2] == ["-c"]
-            and index + 2 < len(words)
-            and _runs_uv_run(words[index + 2])
-        ):
-            return True
+        if PurePosixPath(word).name in _SHELL_PROGRAMS:
+            shell_command = _shell_command_string(words, index)
+            if shell_command is not None and _runs_uv_run(shell_command):
+                return True
     return False
 
 
@@ -278,6 +288,12 @@ def test_a_planted_uv_run_program_is_caught_in_any_form(tmp_path: Path) -> None:
         "[program:tagged]\ncommand=python3 system/services/oom_priority/bin/oom_tag_service.py "
         'user bash -c "python3 system/scripts/forward_port.py --name t --url http://x && exec uv run tagged"\n'
     )
+    (dropins / "login.conf").write_text(
+        '[program:login]\ncommand=bash -lc "exec uv run login"\n'
+    )
+    (dropins / "longopt.conf").write_text(
+        '[program:longopt]\ncommand=bash --login -c "exec uv run longopt"\n'
+    )
     (dropins / "fine.conf").write_text(
         "; never `command=uv run fine`: uv would stay resident as its parent\n"
         '[program:fine]\ncommand=bash -c "uv sync --all-packages --frozen && exec .venv/bin/fine"\n'
@@ -287,6 +303,8 @@ def test_a_planted_uv_run_program_is_caught_in_any_form(tmp_path: Path) -> None:
 
     assert [offender.split("]", 1)[0] for offender in offenders] == [
         "[program:direct",
+        "[program:login",
+        "[program:longopt",
         "[program:spaced",
         "[program:tagged",
     ]
