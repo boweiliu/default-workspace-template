@@ -461,7 +461,7 @@ export class DesktopStore {
 
   /** Tell the user that what they asked for failed with ``error``: a sentence the shell wrote for people stands on its
    *  own, any other reason follows ``whatFailed`` (or stands alone without one); the status and the server's own text
-   *  go behind "See details", and a fallback that asks for a bug report carries "Report a bug". */
+   *  go behind "See details", and a sentence that asks for a bug report carries "Report a bug". */
   private toastFailure(whatFailed: string | null, error: unknown): void {
     const failure = describeRequestFailure(error);
     const message =
