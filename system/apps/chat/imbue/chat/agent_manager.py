@@ -75,6 +75,7 @@ from imbue.chat.chat_seed import seed_context_message
 from imbue.chat.chat_seed import seed_events
 from imbue.chat.chat_seed import write_seed_file
 from imbue.chat.chat_settings import ChatSettingsStore
+from imbue.chat.harnesses.account_binding import AccountLaneUnavailableError
 from imbue.chat.harnesses.account_binding import BindingError
 from imbue.chat.harnesses.activity import HarnessActivityTracker
 from imbue.chat.harnesses.binding import is_rebind_supported
@@ -125,6 +126,7 @@ from imbue.chat.models import AgentStopError
 from imbue.chat.models import ChatAccountBinding
 from imbue.chat.models import ChatConvergingError
 from imbue.chat.models import ChatCreationOutcome
+from imbue.chat.models import ChatPartlyDestroyedError
 from imbue.chat.models import ChatSegmentInfo
 from imbue.chat.models import ChatSnapshot
 from imbue.chat.models import CreatedChat
@@ -192,6 +194,15 @@ APP_OWNED_LABEL_KEYS: Final[frozenset[str]] = frozenset(
 # create that takes this long has hung past every readiness budget in the template.
 CHAT_CREATION_WAIT_TIMEOUT_SECONDS: Final[float] = 300.0
 
+# What a switch refused for a chat that cannot move to the picked account says; the dialog offers a new chat there.
+NO_USABLE_NAME_CHARACTERS_SENTENCE: Final[str] = "Pick a name with at least one letter or number."
+CANNOT_MOVE_TO_ACCOUNT_SENTENCE: Final[str] = (
+    "This chat can't be moved to that account. Start a new chat on it instead."
+)
+# A cancel of a switch that already finished or was called off: nothing failed.
+NOTHING_TO_CANCEL_SENTENCE: Final[str] = "This chat has already finished moving -- there's nothing to cancel."
+NOTHING_TO_CANCEL_KIND: Final[str] = "nothing_to_cancel"
+
 _DEFAULT_MNGR_BINARY = "mngr"
 # The production messenger: a stateless, frozen value whose discover/send are the
 # real mngr calls, so one shared instance is the default for every built manager.
@@ -243,7 +254,9 @@ def explicit_chat_name(requested_name: str) -> str:
     """
     explicit_name = requested_name.strip()
     if explicit_name and not canonical_agent_name(explicit_name):
-        raise AgentCreationError(f"Chat name '{explicit_name}' contains no usable characters")
+        raise AgentCreationError(
+            f"Chat name '{explicit_name}' contains no usable characters", NO_USABLE_NAME_CHARACTERS_SENTENCE
+        )
     return explicit_name
 
 
@@ -588,15 +601,18 @@ def _resolve_switch_target(account_id: str) -> _SwitchTarget:
     try:
         account = resolve_account(account_id)
     except AccountError as e:
-        raise HandoffError(str(e)) from e
+        raise HandoffError(str(e), e.user_facing_message) from e
     harness = harness_for(account)
     if harness is None:
-        raise HandoffError(f"Account {account_id} is on a lane this build does not have")
+        raise HandoffError(
+            f"Account {account_id} is on a lane this build does not have",
+            AccountLaneUnavailableError.user_facing_message,
+        )
     # Numbered among the accounts on lanes this build has, so the lane check comes first.
     try:
         label = account_label_for(account_id)
     except AccountError as e:
-        raise HandoffError(str(e)) from e
+        raise HandoffError(str(e), e.user_facing_message) from e
     return _SwitchTarget(account=account, harness=harness, label=label)
 
 
@@ -918,6 +934,8 @@ class AgentManager:
     # nothing has been asked yet, not because there are no agents, and the routes answer
     # "not ready" rather than an empty list.
     _is_agent_list_known: bool
+    # Whether the initial discovery raised, leaving only the observer's first snapshot to read the list.
+    _has_initial_discovery_failed: bool
     # Per agent, the ids of the filed permission requests no verdict has landed for, folded
     # from the transcript events the watcher parses. A non-empty set is the chat's
     # ``attention`` status.
@@ -1041,6 +1059,7 @@ class AgentManager:
         for restored_chat_id in manager._provisional_chats:
             manager._auto_open.request_open(restored_chat_id)
         manager._is_agent_list_known = False
+        manager._has_initial_discovery_failed = False
         manager._pending_permission_ids_by_agent = {}
         manager._connecting_message_ids_by_agent = {}
         manager._presence = PresenceTracker()
@@ -1161,6 +1180,15 @@ class AgentManager:
         """Whether the agent list has been read from mngr at least once."""
         with self._lock:
             return self._is_agent_list_known
+
+    def is_agent_list_unreadable(self) -> bool:
+        """Whether the agent list is unread with nothing on its way to read it: the initial discovery failed and the
+        observer's stream is not being followed, so only the observer's return brings the list."""
+        with self._lock:
+            if self._is_agent_list_known or not self._has_initial_discovery_failed:
+                return False
+            follower = self._follower
+        return follower is None or follower.failure_detail() is not None
 
     def note_agent_list_known(self) -> None:
         """Mark the agent list as read; the discovery paths call this, and a test that seeds ``_agents`` directly."""
@@ -1692,7 +1720,8 @@ class AgentManager:
             if not is_rebind_target(agent_state, target):
                 raise HandoffError(
                     f"Chat '{chat_id}' cannot change to account {target.account.id} in place; "
-                    "it is on another harness or lane"
+                    "it is on another harness or lane",
+                    CANNOT_MOVE_TO_ACCOUNT_SENTENCE,
                 )
             rebind = self._open_rebind_locked(
                 chat_id, agent_state, target, message, message_id, origin, now, model_pick
@@ -1731,13 +1760,16 @@ class AgentManager:
         chat = self._resolve_chat_locked(chat_id)
         agent_state = self._agents.get(chat.active_agent_id) if chat is not None and chat.active_agent_id else None
         if chat is None or agent_state is None:
-            raise HandoffError(f"Chat '{chat_id}' has no active agent to move")
+            raise HandoffError(f"Chat '{chat_id}' has no active agent to move", CANNOT_MOVE_TO_ACCOUNT_SENTENCE)
         if chat.transition is not None:
             raise ChatConvergingError(_converging_detail_of(chat.transition))
         if is_primary_agent(agent_state):
-            raise HandoffError("The workspace's services agent is not a chat")
+            raise HandoffError("The workspace's services agent is not a chat", CANNOT_MOVE_TO_ACCOUNT_SENTENCE)
         if agent_state.labels.get("account") == target.account.id:
-            raise HandoffError(f"Chat '{chat_id}' already runs on account {target.account.id}")
+            raise HandoffError(
+                f"Chat '{chat_id}' already runs on account {target.account.id}",
+                "This chat already runs on that account.",
+            )
         return agent_state
 
     def _open_handoff_locked(
@@ -1850,7 +1882,11 @@ class AgentManager:
             record = self._chat_record_by_id.get(chat_id)
             transition = record.converging if record is not None else None
             if record is None or transition is None:
-                raise HandoffError(f"Chat '{chat_id}' is not moving to another agent")
+                raise HandoffError(
+                    f"Chat '{chat_id}' is not moving to another agent",
+                    NOTHING_TO_CANCEL_SENTENCE,
+                    kind=NOTHING_TO_CANCEL_KIND,
+                )
             if isinstance(transition, ChatRebindRecord):
                 raise ChatConvergingError(rebind_cancel_refused_detail(transition.target_label))
             if transition.phase in (HandoffPhase.SWITCHING, HandoffPhase.FAILED):
@@ -1903,14 +1939,21 @@ class AgentManager:
             record = self._chat_record_by_id.get(chat_id)
             transition = record.converging if record is not None else None
             if record is None or transition is None or transition.phase is not HandoffPhase.FAILED:
-                raise HandoffError(f"Chat '{chat_id}' has no failed switch to retry")
+                raise HandoffError(
+                    f"Chat '{chat_id}' has no failed switch to retry", "This chat has no failed move to try again."
+                )
             if isinstance(transition, ChatRebindRecord):
                 if transition.agent_id not in self._agents:
-                    raise HandoffError(f"Chat '{chat_id}' no longer has the agent its switch was restarting")
+                    raise HandoffError(
+                        f"Chat '{chat_id}' no longer has the agent its switch was restarting",
+                        "This chat's agent is gone, so its move can't be tried again. Start a new chat instead.",
+                    )
                 if not _is_rebind_retry_target(transition, target):
                     raise HandoffError(
                         f"Chat '{chat_id}' can only retry its switch on an account of the same harness and lane; "
-                        "start a new chat to move it elsewhere"
+                        "start a new chat to move it elsewhere",
+                        "Pick an account from the same provider to try again, or start a new chat to move this one "
+                        "somewhere else.",
                     )
                 # The pick survives: a rebind retry stays on the same harness and lane, whose models it named.
                 retried_rebind = transition.model_copy_update(
@@ -1932,7 +1975,8 @@ class AgentManager:
                 if is_successor_adopted and transition.target_account_id != target.account.id:
                     raise HandoffError(
                         f"Chat '{chat_id}' has already moved to its new agent; its switch can only be "
-                        "retried on the account it moved to"
+                        "retried on the account it moved to",
+                        "This chat has already moved -- try again on the account it moved to.",
                     )
                 # A successor an earlier attempt created (a pick that failed leaves one running)
                 # is adopted by a retry on the same account, since the create step finds it
@@ -2111,12 +2155,18 @@ class AgentManager:
         """Refuse every switch verb in a secondary chat: a switch writes the chat's record, and a
         secondary's records are a scratch copy the live chat never reads."""
         if self._is_secondary:
-            raise HandoffError(f"Chat '{chat_id}' cannot change account from a preview; switch it from the live chat")
+            raise HandoffError(
+                f"Chat '{chat_id}' cannot change account from a preview; switch it from the live chat",
+                "This chat can't be switched from here. Open the chat itself and switch it there.",
+            )
 
     def _require_switch_capabilities(self) -> HandoffCapabilities:
         capabilities = self._handoff_capabilities
         if capabilities is None:
-            raise HandoffError("This chat app cannot move a chat between agents or accounts: switches are not wired")
+            raise HandoffError(
+                "This chat app cannot move a chat between agents or accounts: switches are not wired",
+                "This chat can't be switched from here. Open the chat itself and switch it there.",
+            )
         return capabilities
 
     def _pause(self, seconds: float) -> None:
@@ -2373,7 +2423,7 @@ class AgentManager:
         try:
             self._chat_record_store.delete(chat_id)
         except ChatRecordError as e:
-            raise AgentDestroyError(
+            raise ChatPartlyDestroyedError(
                 f"Destroyed the agents of chat '{chat_id}', but its folder could not be removed: {e}"
             ) from e
         with self._lock:
@@ -3064,7 +3114,7 @@ class AgentManager:
         try:
             account = resolve_binding(account_id)
         except (AccountError, BindingError) as e:
-            raise AgentCreationError(str(e)) from e
+            raise AgentCreationError(str(e), e.user_facing_message) from e
         harness = harness_for(account)
         assert harness is not None, "resolve_binding rejects an account whose lane is unknown"
 
@@ -3488,6 +3538,8 @@ class AgentManager:
                 self._ensure_model_tracking(agent_info.id)
         except (OSError, ValueError, RuntimeError, MngrError) as e:
             _loguru_logger.opt(exception=e).error("Initial agent discovery failed")
+            with self._lock:
+                self._has_initial_discovery_failed = True
 
     def _refresh_agents(self) -> None:
         """Re-discover all agents and broadcast updates."""
