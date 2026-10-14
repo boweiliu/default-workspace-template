@@ -21,6 +21,8 @@ import subprocess
 import tomllib
 from pathlib import Path, PurePosixPath
 
+from imbue.mngr.interfaces.host import NamedCommand
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SUPERVISORD_DIR = _REPO_ROOT / "system"
 _MNGR_SETTINGS = _REPO_ROOT / ".mngr" / "settings.toml"
@@ -121,16 +123,6 @@ def _programs_under_uv_run(supervisord_dir: Path) -> list[str]:
     ]
 
 
-def _window_command(entry: str) -> str:
-    """The command of one ``extra_window`` entry, parsed as mngr's ``NamedCommand.from_string`` does."""
-    name, separator, rest = entry.partition("=")
-    if not separator or not name or " " in name or '"' in name:
-        return entry
-    if len(rest) > 1 and rest[0] == rest[-1] and rest[0] in "'\"":
-        return rest[1:-1]
-    return rest
-
-
 def _extra_window_commands(settings: object) -> list[str]:
     """Every command an ``extra_window`` setting opens, at any depth of mngr's settings."""
     if isinstance(settings, list):
@@ -142,7 +134,7 @@ def _extra_window_commands(settings: object) -> list[str]:
     commands: list[str] = []
     for key, value in settings.items():
         if key in _EXTRA_WINDOW_KEYS:
-            commands.extend(_window_command(entry) for entry in value)
+            commands.extend(NamedCommand.from_string(entry).command for entry in value)
         else:
             commands.extend(_extra_window_commands(value))
     return commands
