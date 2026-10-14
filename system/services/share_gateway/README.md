@@ -35,10 +35,11 @@ three things running:
    Caddyfile re-renders and hot-reloads when the registry changes), and
    unknown-but-plausible service origins to an auto-retrying loading page.
    A registered service whose backend will not take the connection (crashed,
-   stopped, or between the shell parking its port and the app binding it)
-   gets a separate not-responding page instead: it reloads every 3 seconds
-   while the address has gone unanswered for less than a minute, then stops
-   and says the page is not responding, with a "Try again" button. For an app
+   stopped and not yet parked by the shell, or released by the shell and not
+   yet bound by the app) gets a separate not-responding page instead: it
+   reloads every 3 seconds while the address has gone unanswered for less
+   than a minute, then stops and says the page is not responding, with a
+   "Try again" button. For an app
    the shell never starts on demand (a critical app, a row with no program, a
    non-loopback address) it adds that the workspace owner may need to restart
    it. The minute is counted per address across all visitors, and starts over
