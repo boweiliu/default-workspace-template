@@ -411,7 +411,7 @@ def _path_loading_sites(repo_root: Path) -> list[str]:
 
 def test_prevent_loading_modules_by_file_path() -> None:
     sites = _path_loading_sites(_REPO_ROOT)
-    assert len(sites) <= snapshot(7), (
+    assert len(sites) <= snapshot(5), (
         "These load a module from a file path. Import it instead: a skill's modules live in its "
         "python/ project and a system script's beside it, all importable from the root venv:\n"
         + "\n".join(sites)
