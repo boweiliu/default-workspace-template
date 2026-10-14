@@ -212,14 +212,21 @@ export function prependToComposer(chatId: string, block: string): void {
 /** Lay the composer out for its text: the buttons beside a message that fits on one line, or in a
  *  row under a longer one, so the text gets the full width. Wrapping is measured with the buttons
  *  beside the text whichever layout is showing, so the stacked layout's extra width cannot unwrap
- *  the text and flip it back. */
+ *  the text and flip it back.
+ *
+ *  The row holds its height while the text is measured collapsed to one line. Otherwise the page
+ *  lays out around a one-line composer for that moment, and the browser clamps the transcript's
+ *  scroll position to fit it: a tall composer would pull the transcript off its bottom on every
+ *  redraw. */
 function fitComposer(row: HTMLElement, textarea: HTMLTextAreaElement): void {
+  row.style.height = `${row.getBoundingClientRect().height}px`;
   row.removeAttribute("data-stacked");
   textarea.style.overflowY = "hidden";
   textarea.style.height = "auto";
   row.toggleAttribute("data-stacked", textarea.scrollHeight > textarea.clientHeight);
   textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_TEXTAREA_HEIGHT_PX)}px`;
   textarea.style.overflowY = textarea.scrollHeight > MAX_TEXTAREA_HEIGHT_PX ? "auto" : "hidden";
+  row.style.height = "";
 }
 
 function imageFilesFromClipboard(clipboardData: DataTransfer | null): File[] {

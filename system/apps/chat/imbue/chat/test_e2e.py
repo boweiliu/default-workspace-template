@@ -713,6 +713,79 @@ def test_a_minimized_chat_preserves_its_scroll_window(tmp_path: Path, page: Page
         )
 
 
+_TRANSCRIPT_AT_BOTTOM_JS = (
+    "() => { const el = document.querySelector('.transcript-scroll'); "
+    "return el.scrollHeight - el.scrollTop - el.clientHeight <= 1; }"
+)
+
+# The transcript's largest distance from its bottom over a run of animation frames: one reading can land
+# between a frame that pulls the transcript up and the pin that puts it back.
+_MAX_TRANSCRIPT_BOTTOM_GAP_JS = """
+async () => {
+  const el = document.querySelector('.transcript-scroll');
+  let maxGapPx = 0;
+  for (let frame = 0; frame < 30; frame++) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    maxGapPx = Math.max(maxGapPx, el.scrollHeight - el.scrollTop - el.clientHeight);
+  }
+  return maxGapPx;
+}
+"""
+
+
+@pytest.mark.timeout(120, func_only=False)
+def test_the_transcript_reaches_its_bottom_whatever_the_composer_height(tmp_path: Path, page: Page) -> None:
+    """A draft that grows the composer leaves the transcript at its bottom, the wheel can still reach that
+    bottom, and when the composer shrinks back the transcript keeps following new messages."""
+    events = _make_long_conversation_events(150)
+    with _running_e2e_server(tmp_path, session_events=events) as server:
+        page.set_viewport_size({"width": 1200, "height": 900})
+        _open_fixture_chat(page, server)
+        chat = _chat(page)
+        frame = _chat_frame(page)
+        frame.wait_for_function(
+            "() => { const el = document.querySelector('.transcript-scroll'); "
+            "return el && el.scrollHeight > el.clientHeight * 2 "
+            "&& el.scrollHeight - el.scrollTop - el.clientHeight <= 1; }",
+            timeout=15000,
+        )
+        textarea = chat.locator(".message-input-textbox")
+        transcript = chat.locator(".transcript-scroll")
+
+        textarea.fill("\n".join(f"draft line {line}" for line in range(12)))
+        expect(chat.locator(".message-input-row")).to_have_attribute("data-stacked", "")
+        frame.wait_for_function(_TRANSCRIPT_AT_BOTTOM_JS, timeout=5000)
+        assert frame.evaluate(_MAX_TRANSCRIPT_BOTTOM_GAP_JS) <= 1, "a tall composer pulled the transcript off its bottom"
+        last_reply_box = _box(chat.locator(".message-assistant", has_text="reply-149"))
+        assert last_reply_box["bottom"] <= _box(chat.locator(".message-input-box"))["top"]
+
+        transcript.hover()
+        page.mouse.wheel(0, -600)
+        page.wait_for_timeout(300)
+        page.mouse.wheel(0, 5000)
+        frame.wait_for_function(_TRANSCRIPT_AT_BOTTOM_JS, timeout=5000)
+        assert frame.evaluate(_MAX_TRANSCRIPT_BOTTOM_GAP_JS) <= 1, "the transcript would not stay at its bottom"
+
+        textarea.fill("")
+        expect(chat.locator(".message-input-row")).not_to_have_attribute("data-stacked", "")
+        with open(server.session_file, "a") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "uuid": "long-u-after-shrink",
+                        "timestamp": "2026-01-01T00:02:00Z",
+                        "message": {"role": "user", "content": "arrived-after-the-composer-shrank"},
+                    }
+                )
+                + "\n"
+            )
+        expect(chat.locator(".message-user", has_text="arrived-after-the-composer-shrank")).to_be_attached(
+            timeout=_TRIGGER_TIMEOUT_MS
+        )
+        frame.wait_for_function(_TRANSCRIPT_AT_BOTTOM_JS, timeout=5000)
+
+
 # watching
 
 
