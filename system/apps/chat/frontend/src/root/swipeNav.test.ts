@@ -15,8 +15,8 @@ describe("swipeDirectionFromDelta", () => {
     expect(swipeDirectionFromDelta(80, 0)).toBe("newer");
   });
 
-  it("ignores a drag shorter than the threshold", () => {
-    expect(swipeDirectionFromDelta(-30, 0)).toBeNull();
+  it("ignores a drag shorter than the engage threshold", () => {
+    expect(swipeDirectionFromDelta(-8, 0)).toBeNull();
   });
 
   it("ignores a drag that is mostly vertical, even if long", () => {

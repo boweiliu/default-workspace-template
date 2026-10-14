@@ -66,7 +66,7 @@ import { groupedRows, rowsFromSnapshots } from "./rows";
 import type { ChatRow } from "./rows";
 import { intakeTokenFromSearch, rootPathFor, selectionFromSearch, slotFill } from "./selection";
 import type { SlotFill } from "./selection";
-import { swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
+import { COMMIT_FRACTION, RESIST_RATIO, swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
 import { prependToComposer } from "../views/MessageInput";
 
 const ROOT_TITLE = "Chats";
@@ -91,10 +91,18 @@ const awaitingListing = new Set<string>();
 const compactQuery = window.matchMedia(COMPACT_MEDIA_QUERY);
 // Whether the phone layout's drawer is open. It opens whenever nothing is selected, and closes when a chat is picked.
 let isDrawerOpen = false;
-// The phone layout's swipe-between-chats gesture (swipeNav.ts): the touch's start point while a drag is in
-// progress, and whether a swipe past the newest chat left the "New chat" edge showing.
-let swipeStart: { x: number; y: number } | null = null;
+// The phone layout's swipe-between-chats gesture (swipeNav.ts): the touch's start point for the life of one
+// gesture, and whether a drag past the newest chat left the "New chat" edge showing.
+let swipeTouchStart: { x: number; y: number } | null = null;
 let isAtNewChatEdge = false;
+// What the current gesture has engaged into, once it has gone far enough to read as a swipe rather than a tap
+// or a vertical scroll (``null`` before that, and again once the gesture ends). ``restOffsetPx`` is where
+// ``targetChatId``'s frame rests before any drag delta, for ``framePool.ts``'s carousel; the resisted cases
+// (nothing to switch to) carry none, since only the shown frame itself moves, scaled down.
+type EngagedDrag =
+  | { kind: "select"; targetChatId: string; restOffsetPx: number }
+  | { kind: "resist"; isAtNewChatEdge: boolean };
+let engagedDrag: EngagedDrag | null = null;
 
 function selectedTitle(): string {
   if (selectedChatId === null) return "";
@@ -203,36 +211,101 @@ async function startNewChat(): Promise<void> {
   openProviderChooser({ onSignedIn: (signedInAccountId) => void createAndSelect(signedInAccountId) });
 }
 
+/** The chat slot's width, the carousel's unit: a frame rests one slot-width off-screen before a drag reaches
+ *  it, and a drag has to cross `COMMIT_FRACTION` of it to commit. Read fresh each gesture rather than cached,
+ *  since a rotation or a resize between gestures is the normal case on a phone. */
+function slotWidthPx(): number {
+  return document.querySelector<HTMLElement>(".chat-root-slot")?.clientWidth ?? window.innerWidth;
+}
+
 /** The phone layout's swipe gesture: a touch inside a frame never reaches a listener on the root's own page
  *  (`framePool.ts` binds these to each frame's document instead), so these ignore the desktop layout themselves
  *  rather than relying on being unbound there. A one-finger drag starts it; a second finger (a pinch) cancels
- *  it rather than reading as a swipe. */
+ *  it rather than reading as a swipe. Nothing else happens yet -- `onFrameTouchMove` engages the drag once it
+ *  has gone far enough to tell a swipe from a tap or the transcript's own vertical scroll. */
 function onFrameTouchStart(event: TouchEvent): void {
   if (!compactQuery.matches || event.touches.length !== 1) {
-    swipeStart = null;
+    swipeTouchStart = null;
+    engagedDrag = null;
     return;
   }
-  swipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+  const touch = event.touches[0];
+  swipeTouchStart = { x: touch.screenX, y: touch.screenY };
+  engagedDrag = null;
 }
 
-/** The drag's end: past the threshold in `swipeNav.ts`, it switches chats or, past the newest one, leaves the
- *  "New chat" button showing in its place. Short of the threshold, nothing happens -- including a tap, which
- *  reports no movement at all. */
-function onFrameTouchEnd(event: TouchEvent): void {
-  const start = swipeStart;
-  swipeStart = null;
-  if (start === null || !compactQuery.matches) return;
-  const touch = event.changedTouches[0];
+/** Each move past engagement follows the finger 1:1 (the carousel case) or at `RESIST_RATIO` (the resisted
+ *  edge cases), live, through `framePool.ts` -- this is the carousel itself, not just its trigger. Engaging
+ *  also claims the gesture from the page's own vertical scroll (`preventDefault`), since a drag that has
+ *  already committed to a direction reading as a scroll too, mid-swipe, would fight the frame underneath it.
+ *
+ *  Reads `screenX`/`screenY` (position on the physical screen), not `clientX`/`clientY`: once a frame starts
+ *  moving under `updateCarouselDrag`, a touch's `clientX` inside that same frame is computed against its own
+ *  now-shifting rendered position and comes back corrupted (confirmed live: it alternates between two readings
+ *  a constant offset apart, one per rendering pass, as the frame's own transform changes). `screenX` is defined
+ *  relative to the physical screen, which no page-level transform can move, so a plain delta from the gesture's
+ *  start stays correct for the drag's whole duration. */
+function onFrameTouchMove(event: TouchEvent): void {
+  const start = swipeTouchStart;
+  if (start === null) return;
+  const touch = event.touches[0];
   if (touch === undefined) return;
-  const direction = swipeDirectionFromDelta(touch.clientX - start.x, touch.clientY - start.y);
-  if (direction === null) return;
-  const outcome = swipeTarget(railRows(), selectedChatId, direction);
-  if (outcome.kind === "select") {
-    select(outcome.chatId);
-  } else if (outcome.kind === "new_chat_edge") {
-    isAtNewChatEdge = true;
-    m.redraw();
+  const deltaX = touch.screenX - start.x;
+  if (engagedDrag === null) {
+    const direction = swipeDirectionFromDelta(deltaX, touch.screenY - start.y);
+    if (direction === null) return;
+    const outcome = swipeTarget(railRows(), selectedChatId, direction);
+    if (outcome.kind === "select") {
+      const restOffsetPx = direction === "older" ? slotWidthPx() : -slotWidthPx();
+      pool?.beginCarouselDrag(outcome.chatId, restOffsetPx);
+      engagedDrag = { kind: "select", targetChatId: outcome.chatId, restOffsetPx };
+    } else {
+      pool?.beginResistDrag();
+      engagedDrag = { kind: "resist", isAtNewChatEdge: outcome.kind === "new_chat_edge" };
+    }
   }
+  if (event.cancelable) event.preventDefault();
+  if (engagedDrag.kind === "select") {
+    pool?.updateCarouselDrag(engagedDrag.targetChatId, deltaX, engagedDrag.restOffsetPx);
+  } else {
+    pool?.updateResistDrag(deltaX * RESIST_RATIO);
+  }
+}
+
+/** The drag's end: past `COMMIT_FRACTION` of the slot's width, it switches chats or, past the newest one,
+ *  leaves the "New chat" button showing in its place; short of it, the carousel snaps back to where it
+ *  started. A gesture that never engaged (a tap, or a scroll `onFrameTouchMove` left to the page) has nothing
+ *  to settle. */
+function onFrameTouchEnd(event: TouchEvent): void {
+  const start = swipeTouchStart;
+  const drag = engagedDrag;
+  swipeTouchStart = null;
+  engagedDrag = null;
+  if (start === null || drag === null) return;
+  const touch = event.changedTouches[0];
+  const deltaX = touch === undefined ? 0 : touch.screenX - start.x;
+  if (drag.kind === "select") {
+    const committed = Math.abs(deltaX) > slotWidthPx() * COMMIT_FRACTION;
+    pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, committed);
+    if (committed) select(drag.targetChatId);
+  } else {
+    pool?.endResistDrag();
+    if (drag.isAtNewChatEdge && Math.abs(deltaX) > slotWidthPx() * COMMIT_FRACTION) {
+      isAtNewChatEdge = true;
+      m.redraw();
+    }
+  }
+}
+
+/** A cancelled gesture (a system interruption -- an incoming call, the app backgrounded mid-drag) settles
+ *  exactly like releasing short of the commit threshold: snap back, nothing committed. */
+function onFrameTouchCancel(): void {
+  const drag = engagedDrag;
+  swipeTouchStart = null;
+  engagedDrag = null;
+  if (drag === null) return;
+  if (drag.kind === "select") pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, false);
+  else pool?.endResistDrag();
 }
 
 /** Show ``chatId`` once the pending intake is applied or given up, reporting the selection even when it is the one
@@ -411,7 +484,12 @@ const ChatRoot: m.Component = {
                 pool.setRootShown(isRootShown);
                 // Swipe-between-chats (phone layout only; a mouse drag on the desktop layout is left to the
                 // rail): the gesture happens inside a frame's own document, so the pool binds it there.
-                pool.setSwipeHandlers({ onTouchStart: onFrameTouchStart, onTouchEnd: onFrameTouchEnd });
+                pool.setSwipeHandlers({
+                  onTouchStart: onFrameTouchStart,
+                  onTouchMove: onFrameTouchMove,
+                  onTouchEnd: onFrameTouchEnd,
+                  onTouchCancel: onFrameTouchCancel,
+                });
                 pool.show(selectedChatId);
               },
               onremove: () => {

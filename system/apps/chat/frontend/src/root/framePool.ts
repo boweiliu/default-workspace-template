@@ -18,8 +18,14 @@ export const MAX_HELD_FRAMES = 4;
  *  touch inside the iframe never reaches a listener on the root's own page, same origin or not. */
 export interface SwipeHandlers {
   onTouchStart: (event: TouchEvent) => void;
+  onTouchMove: (event: TouchEvent) => void;
   onTouchEnd: (event: TouchEvent) => void;
+  onTouchCancel: (event: TouchEvent) => void;
 }
+
+// The snap animation's duration and easing, for both a completed drag and an abandoned one.
+const SNAP_TRANSITION = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+const SNAP_DURATION_MS = 220;
 
 // What the shell grants an app page's frame (the PAGE_FRAME_SANDBOX of its live pages layer); a
 // nested frame can hold no more than its parent, so this asks for the same.
@@ -52,13 +58,19 @@ export class InnerFramePool {
     return false;
   }
 
-  /** Show ``chatId`` (creating its frame on first sight), hiding whatever was shown; null shows nothing. */
+  /** Show ``chatId`` (creating its frame on first sight), hiding whatever was shown; null shows nothing. Also
+   *  the drag's clean slate: a frame a carousel drag left mid-transition always ends up either shown or hidden
+   *  through ``endCarouselDrag``/``endResistDrag``, but this resets every frame's inline transform regardless,
+   *  so a programmatic selection (the drawer, the New chat button) never inherits a stale one. */
   show(chatId: string | null): void {
     if (chatId !== null && !this.held.has(chatId)) this.create(chatId);
     const previous = this.shownChatId;
     this.shownChatId = chatId;
     if (previous !== null && previous !== chatId) this.tell(previous, "hidden");
     for (const [heldId, held] of this.held) {
+      held.frame.style.transition = "";
+      held.frame.style.transform = "";
+      held.frame.style.pointerEvents = "";
       held.frame.hidden = heldId !== chatId;
     }
     if (chatId !== null) {
@@ -67,6 +79,106 @@ export class InnerFramePool {
       if (this.isRootShown) this.tell(chatId, "shown");
     }
     this.evict();
+  }
+
+  /** Begin a live carousel drag: ``targetChatId``'s frame (created now if this is its first sight) appears
+   *  beside the shown one, resting at ``restOffsetPx`` (its position before any drag delta is applied --
+   *  positive is off-screen to the right, negative to the left) until ``updateCarouselDrag`` moves it. */
+  beginCarouselDrag(targetChatId: string, restOffsetPx: number): void {
+    if (this.shownChatId === null) return;
+    if (!this.held.has(targetChatId)) this.create(targetChatId);
+    const current = this.held.get(this.shownChatId);
+    const target = this.held.get(targetChatId);
+    if (current === undefined || target === undefined) return;
+    current.frame.style.transition = "none";
+    target.frame.style.transition = "none";
+    target.frame.hidden = false;
+    // The target is purely visual until the drag commits: both frames are full-size, absolutely-positioned
+    // siblings (only a transform moves one of them), and a touch over the slot can land on either one's
+    // document underneath that transform -- the current frame is the only one the gesture may drive.
+    target.frame.style.pointerEvents = "none";
+    current.frame.style.transform = "translateX(0px)";
+    target.frame.style.transform = `translateX(${restOffsetPx}px)`;
+  }
+
+  /** Mid-drag: both frames follow the finger together, ``deltaPx`` applied to each from where
+   *  ``beginCarouselDrag`` rested them. */
+  updateCarouselDrag(targetChatId: string, deltaPx: number, restOffsetPx: number): void {
+    if (this.shownChatId === null) return;
+    const current = this.held.get(this.shownChatId);
+    const target = this.held.get(targetChatId);
+    if (current === undefined || target === undefined) return;
+    current.frame.style.transform = `translateX(${deltaPx}px)`;
+    target.frame.style.transform = `translateX(${restOffsetPx + deltaPx}px)`;
+  }
+
+  /** The drag's end. ``committed``: ``targetChatId`` finishes sliding fully into place and becomes the shown
+   *  chat, the old one slides the rest of the way out. Not committed: both animate back to where
+   *  ``beginCarouselDrag`` rested them, and the target's frame is left exactly as `show()` would have, as
+   *  though the drag had never touched it. */
+  endCarouselDrag(targetChatId: string, restOffsetPx: number, committed: boolean): void {
+    const previousId = this.shownChatId;
+    if (previousId === null) return;
+    const current = this.held.get(previousId);
+    const target = this.held.get(targetChatId);
+    if (current === undefined || target === undefined) return;
+    current.frame.style.transition = SNAP_TRANSITION;
+    target.frame.style.transition = SNAP_TRANSITION;
+    if (committed) {
+      current.frame.style.transform = `translateX(${-restOffsetPx}px)`;
+      target.frame.style.transform = "translateX(0px)";
+      this.shownChatId = targetChatId;
+      target.lastShownAt = Date.now();
+    } else {
+      current.frame.style.transform = "translateX(0px)";
+      target.frame.style.transform = `translateX(${restOffsetPx}px)`;
+    }
+    window.setTimeout(() => {
+      current.frame.style.transition = "";
+      current.frame.style.transform = "";
+      target.frame.style.transition = "";
+      target.frame.style.transform = "";
+      target.frame.style.pointerEvents = "";
+      if (committed) {
+        current.frame.hidden = true;
+        this.tell(previousId, "hidden");
+        if (this.isRootShown) this.tell(targetChatId, "shown");
+        this.evict();
+      } else {
+        target.frame.hidden = true;
+      }
+    }, SNAP_DURATION_MS);
+  }
+
+  /** Begin a resisted drag with no frame to switch to (swiping past the newest or the oldest end of the
+   *  list): the shown frame alone moves, scaled down, for the felt resistance of hitting an edge. */
+  beginResistDrag(): void {
+    if (this.shownChatId === null) return;
+    const current = this.held.get(this.shownChatId);
+    if (current === undefined) return;
+    current.frame.style.transition = "none";
+  }
+
+  /** Mid-resisted-drag: ``scaledDeltaPx`` is the caller's already-dampened delta (``swipeNav.ts``'s
+   *  resistance ratio applied to the raw finger movement). */
+  updateResistDrag(scaledDeltaPx: number): void {
+    if (this.shownChatId === null) return;
+    const current = this.held.get(this.shownChatId);
+    if (current === undefined) return;
+    current.frame.style.transform = `translateX(${scaledDeltaPx}px)`;
+  }
+
+  /** The resisted drag's end: always snaps back, since there is nothing to commit to. */
+  endResistDrag(): void {
+    if (this.shownChatId === null) return;
+    const current = this.held.get(this.shownChatId);
+    if (current === undefined) return;
+    current.frame.style.transition = SNAP_TRANSITION;
+    current.frame.style.transform = "translateX(0px)";
+    window.setTimeout(() => {
+      current.frame.style.transition = "";
+      current.frame.style.transform = "";
+    }, SNAP_DURATION_MS);
   }
 
   /** The shell's word on whether the root is on screen, passed to the shown page. */
@@ -124,8 +236,13 @@ export class InnerFramePool {
       this.tell(chatId, this.isRootShown && this.shownChatId === chatId ? "shown" : "hidden");
       const innerDocument = frame.contentWindow?.document;
       if (innerDocument !== undefined && this.swipeHandlers !== null) {
-        innerDocument.addEventListener("touchstart", this.swipeHandlers.onTouchStart);
-        innerDocument.addEventListener("touchend", this.swipeHandlers.onTouchEnd);
+        const { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel } = this.swipeHandlers;
+        innerDocument.addEventListener("touchstart", onTouchStart);
+        // Not passive: once a drag is engaged, onTouchMove calls preventDefault to hold off the page's own
+        // vertical scroll for the rest of the gesture.
+        innerDocument.addEventListener("touchmove", onTouchMove, { passive: false });
+        innerDocument.addEventListener("touchend", onTouchEnd);
+        innerDocument.addEventListener("touchcancel", onTouchCancel);
       }
     });
     this.held.set(chatId, held);
