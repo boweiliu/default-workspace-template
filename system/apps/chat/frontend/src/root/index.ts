@@ -49,6 +49,7 @@ import {
 } from "../models/Providers";
 import { TOUCH_MEDIA_QUERY } from "@imbue/workspace-ui/src/device_queries";
 import { COMPACT_MEDIA_QUERY } from "../compactLayout";
+import { plusGlyph } from "../glyphs";
 import { ChatDrawer } from "./ChatDrawer";
 import { ChatHeader } from "./ChatHeader";
 import { ChatRail } from "./ChatRail";
@@ -62,6 +63,7 @@ import { groupedRows, rowsFromSnapshots } from "./rows";
 import type { ChatRow } from "./rows";
 import { intakeTokenFromSearch, rootPathFor, selectionFromSearch, slotFill } from "./selection";
 import type { SlotFill } from "./selection";
+import { swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
 import { prependToComposer } from "../views/MessageInput";
 
 const ROOT_TITLE = "Chats";
@@ -88,6 +90,10 @@ const compactQuery = window.matchMedia(COMPACT_MEDIA_QUERY);
 const touchQuery = window.matchMedia(TOUCH_MEDIA_QUERY);
 // Whether the phone layout's drawer is open. It opens whenever nothing is selected, and closes when a chat is picked.
 let isDrawerOpen = false;
+// The phone layout's swipe-between-chats gesture (swipeNav.ts): the touch's start point while a drag is in
+// progress, and whether a swipe past the newest chat left the "New chat" edge showing.
+let swipeStart: { x: number; y: number } | null = null;
+let isAtNewChatEdge = false;
 
 function selectedTitle(): string {
   if (selectedChatId === null) return "";
@@ -141,6 +147,7 @@ function select(chatId: string | null): void {
   const shown = fill.kind === "select" ? fill.chatId : chatId;
   selectedChatId = shown;
   isDrawerOpen = shown === null;
+  isAtNewChatEdge = false;
   history.replaceState(null, "", `${getBasePath()}${rootPathFor(shown)}`);
   pool?.show(shown);
   if (shown !== null && isRootShown) markRead(shown);
@@ -203,6 +210,36 @@ async function startNewChat(): Promise<void> {
     select(chatId);
   } catch (error) {
     alert(`Failed to create chat: ${(error as Error).message}`);
+  }
+}
+
+/** The phone layout's swipe gesture over the slot: a one-finger drag starts it, a second finger (a pinch) cancels
+ *  it rather than reading as a swipe. */
+function onSlotTouchStart(event: TouchEvent): void {
+  if (event.touches.length !== 1) {
+    swipeStart = null;
+    return;
+  }
+  swipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+}
+
+/** The drag's end: past the threshold in `swipeNav.ts`, it switches chats or, past the newest one, leaves the
+ *  "New chat" button showing in its place. Short of the threshold, nothing happens -- including a tap, which
+ *  reports no movement at all. */
+function onSlotTouchEnd(event: TouchEvent): void {
+  const start = swipeStart;
+  swipeStart = null;
+  if (start === null) return;
+  const touch = event.changedTouches[0];
+  if (touch === undefined) return;
+  const direction = swipeDirectionFromDelta(touch.clientX - start.x, touch.clientY - start.y);
+  if (direction === null) return;
+  const outcome = swipeTarget(railRows(), selectedChatId, direction);
+  if (outcome.kind === "select") {
+    select(outcome.chatId);
+  } else if (outcome.kind === "new_chat_edge") {
+    isAtNewChatEdge = true;
+    m.redraw();
   }
 }
 
@@ -364,33 +401,69 @@ const ChatRoot: m.Component = {
               isTouch: rail.isTouch,
             })
           : m(ChatRail, rail),
-        m("div", { class: "chat-root-slot relative min-h-0 min-w-0 flex-1" }, [
-          m("div", {
-            class: "chat-root-frames absolute inset-0",
-            // The frames are the pool's DOM, not mithril's: never reconciled.
-            oncreate: ({ dom }: m.VnodeDOM) => {
-              pool = new InnerFramePool(dom as HTMLElement);
-              pool.setCompact(isCompact);
-              if (handshake !== null) pool.setHandshake(handshake);
-              pool.setRootShown(isRootShown);
-              pool.show(selectedChatId);
-            },
-            onremove: () => {
-              pool = null;
-            },
-            onbeforeupdate: () => false,
-          }),
-          selectedChatId === null
-            ? m(
-                "div",
-                {
-                  class:
-                    "chat-root-empty absolute inset-0 flex items-center justify-center text-(length:--font-size-body) text-secondary",
-                },
-                "Pick a chat, or start a new one.",
-              )
-            : null,
-        ]),
+        m(
+          "div",
+          {
+            class: "chat-root-slot relative min-h-0 min-w-0 flex-1",
+            // Swipe-between-chats (phone layout only; a mouse drag on the desktop layout is left to the rail).
+            ontouchstart: isCompact ? onSlotTouchStart : undefined,
+            ontouchend: isCompact ? onSlotTouchEnd : undefined,
+          },
+          [
+            m("div", {
+              class: "chat-root-frames absolute inset-0",
+              // The frames are the pool's DOM, not mithril's: never reconciled.
+              oncreate: ({ dom }: m.VnodeDOM) => {
+                pool = new InnerFramePool(dom as HTMLElement);
+                pool.setCompact(isCompact);
+                if (handshake !== null) pool.setHandshake(handshake);
+                pool.setRootShown(isRootShown);
+                pool.show(selectedChatId);
+              },
+              onremove: () => {
+                pool = null;
+              },
+              onbeforeupdate: () => false,
+            }),
+            selectedChatId === null
+              ? m(
+                  "div",
+                  {
+                    class:
+                      "chat-root-empty absolute inset-0 flex items-center justify-center text-(length:--font-size-body) text-secondary",
+                  },
+                  "Pick a chat, or start a new one.",
+                )
+              : null,
+            isCompact && isAtNewChatEdge
+              ? m(
+                  "div",
+                  {
+                    class: "chat-root-swipe-edge absolute inset-0 flex items-end justify-center bg-black/30 pb-8",
+                    onclick: () => {
+                      isAtNewChatEdge = false;
+                      m.redraw();
+                    },
+                  },
+                  m(
+                    "button",
+                    {
+                      type: "button",
+                      class:
+                        "chat-root-swipe-edge-new flex items-center gap-2 rounded-full bg-accent px-5 py-3 " +
+                        "text-(length:--font-size-body) font-semibold text-on-accent shadow-lg",
+                      "aria-label": "New chat",
+                      onclick: (event: MouseEvent) => {
+                        event.stopPropagation();
+                        void startNewChat();
+                      },
+                    },
+                    [plusGlyph(18), m("span", "New chat")],
+                  ),
+                )
+              : null,
+          ],
+        ),
         isCompact && isDrawerOpen
           ? m(ChatDrawer, {
               rail,
