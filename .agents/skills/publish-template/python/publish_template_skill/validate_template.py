@@ -24,8 +24,8 @@ worktree, which `build_template.sh` has reset with `git read-tree -u --reset`
 project there would be slow on a cold base and can fail outright on an
 unrelated build error, aborting a publish that is otherwise fine (the same
 reasoning the assembly script's boot smoke-check documents). So this script (its
-entry file and the `publish_template_skill` package beside it) and its schema
-module are snapshotted out of the tree BEFORE that reset, exactly as
+entry file in `scripts/` and the `publish_template_skill` package in `python/`
+beside it) and its schema module are snapshotted out of the tree BEFORE that reset, exactly as
 `scan_secrets.sh` and `betterleaks.toml` already are, and the schema module
 imports only pydantic and the standard library.
 
@@ -59,7 +59,7 @@ class SchemaModuleNotFoundError(ValidateTemplateError, FileNotFoundError):
         super().__init__(
             "Cannot find template_manifest.py (searched: "
             + ", ".join(str(path) for path in searched)
-            + "). It is snapshotted next to validate_template.py by build_template.sh; "
+            + "). It is snapshotted beside the publish_template_skill package by build_template.sh; "
             "without it there is no validation and no fallback."
         )
 
