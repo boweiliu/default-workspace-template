@@ -114,7 +114,7 @@ def test_a_chat_page_without_a_bundle_is_the_not_built_placeholder(tmp_path: Pat
 
     assert response.status_code == 200
     assert response.headers[FRONTEND_BUILT_HEADER] == "false"
-    assert "not built" in response.text
+    assert "Chat isn't available in this workspace right now." in response.text
 
 
 def test_the_health_route_reports_the_bundle(tmp_path: Path) -> None:

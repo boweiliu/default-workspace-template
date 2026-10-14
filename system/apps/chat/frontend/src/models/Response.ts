@@ -8,7 +8,7 @@ import { apiUrl } from "@imbue/workspace-ui/src/base-path";
 import { getActiveDesktopId, getClientId } from "@imbue/workspace-ui/src/models/ClientIdentity";
 import { isHandoffPromptChip } from "./handoffPrompt";
 import { dropOutgoingByMessageId, noteBackendArrivals } from "./OutgoingMessages";
-import { describeRequestError, describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 import type { RequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 
 export interface SubagentMetadata {
