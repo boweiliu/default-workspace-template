@@ -64,6 +64,9 @@ build_inputs = [
 [framework]
 type = "pytest"
 command = "uv run --no-sync pytest"
+# Skip assertion-rewriting during `pytest --collect-only` -- pure overhead
+# there (OFFLOAD-18).
+discovery_args = "--assert=plain"
 # Inside the image every workspace-only test can run, so a skip is a missing install (pytest-workspace-env).
 env = { DWT_REQUIRE_WORKSPACE_ENV = "1" }
 
