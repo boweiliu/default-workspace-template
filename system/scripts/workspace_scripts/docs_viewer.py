@@ -2,9 +2,10 @@
 
 Serves the .md files under ``system/apps/system_interface/docs`` rendered to HTML,
 with a sidebar for navigation. Rendering is on the fly, so edits to a spec show up
-on refresh. Run it from the root venv::
+on refresh. It stays up, so run it with the root venv's interpreter rather than
+under ``uv run``::
 
-    uv run --no-sync system/scripts/docs_viewer.py --port 8791
+    .venv/bin/python system/scripts/docs_viewer.py --port 8791
 
 Then register + surface it as a workspace tab::
 
