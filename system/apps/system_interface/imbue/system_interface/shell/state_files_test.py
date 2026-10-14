@@ -38,7 +38,7 @@ def test_a_write_under_a_path_that_is_not_a_directory_raises_the_state_error(tmp
     with pytest.raises(ShellStateError, match="cannot write shell state file") as raised:
         write_json_atomic(blocking_file / "desktops.json", {"version": 1})
     assert blocking_file.read_text() == "in the way"
-    assert raised.value.user_facing_message == NOT_SAVED_SENTENCE and raised.value.kind is None
+    assert raised.value.user_facing_message == NOT_SAVED_SENTENCE and raised.value.kind is RefusalKind.NOT_SAVED
 
 
 @pytest.mark.parametrize("full", [errno.ENOSPC, errno.EDQUOT])

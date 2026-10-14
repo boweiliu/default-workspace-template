@@ -28,6 +28,9 @@ export class HttpError extends Error implements Failure {
     readonly isReportable: boolean,
     /** The server's sentence was written for people, so it stands on its own rather than after what failed. */
     readonly isUserFacing: boolean = false,
+    /** The JSON object the server answered, for a caller that reads a field of its own (a refusal's ``kind``);
+     *  null when the answer was not one. */
+    readonly body: Readonly<Record<string, unknown>> | null = null,
   ) {
     super(message);
   }
@@ -48,9 +51,13 @@ function nonEmptyString(value: unknown): string | null {
 export async function readResponseFailure(response: Response, kind: RequestKind): Promise<HttpError> {
   const text = await response.text().catch(() => "");
   let body: ErrorBody = {};
+  let parsedBody: Readonly<Record<string, unknown>> | null = null;
   try {
     const parsed: unknown = JSON.parse(text);
-    if (typeof parsed === "object" && parsed !== null) body = parsed as ErrorBody;
+    if (typeof parsed === "object" && parsed !== null) {
+      body = parsed as ErrorBody;
+      parsedBody = parsed as Record<string, unknown>;
+    }
   } catch {
     // Not JSON (an error page, a proxy's plain text): quoted behind "See details" below.
   }
@@ -62,12 +69,12 @@ export async function readResponseFailure(response: Response, kind: RequestKind)
     nonEmptyString(body.details),
     userFacing === null && reason === null ? text.slice(0, RAW_BODY_LIMIT) : null,
   ]);
-  if (userFacing !== null) return new HttpError(response.status, userFacing, details, false, true);
-  if (reason !== null) return new HttpError(response.status, reason, details, false);
+  if (userFacing !== null) return new HttpError(response.status, userFacing, details, false, true, parsedBody);
+  if (reason !== null) return new HttpError(response.status, reason, details, false, false, parsedBody);
   if (GATEWAY_STATUSES.has(response.status)) {
-    return new HttpError(response.status, notAnsweredSentence(kind), details, false);
+    return new HttpError(response.status, notAnsweredSentence(kind), details, false, false, parsedBody);
   }
-  return new HttpError(response.status, REST_FALLBACK_MESSAGE, details, true);
+  return new HttpError(response.status, REST_FALLBACK_MESSAGE, details, true, false, parsedBody);
 }
 
 /** ``fetch`` that answers a request nothing answered (the connection refused or dropped) as an ``HttpError``. */

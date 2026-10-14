@@ -45,6 +45,18 @@ describe("postJson", () => {
     });
   });
 
+  it("keeps the answer's own fields for a caller that words the refusal itself", async () => {
+    answering(400, {
+      detail: "No registered app named 'files'",
+      user_facing_message: "Gone.",
+      kind: "app_unavailable",
+    });
+    const failure = await failureOf(postJson("/api/x", {}));
+    expect(failure.body?.kind).toBe("app_unavailable");
+    answering(500, "<html>Internal Server Error</html>", "text/html");
+    expect((await failureOf(postJson("/api/x", {}))).body).toBeNull();
+  });
+
   it("answers a refusal with no reason with the fallback, the body behind the details", async () => {
     answering(500, "<html>Internal Server Error</html>", "text/html");
     const failure = await failureOf(postJson("/api/x", {}));

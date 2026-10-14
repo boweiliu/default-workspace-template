@@ -38,6 +38,16 @@ export function fallbackSentence(whatFailed: string): string {
   return `${whatFailed}. ${REPORT_A_BUG_ENDING}`;
 }
 
+/** Whether a sentence ends by asking for a bug report, so its surface offers "Report a bug". */
+export function asksForBugReport(sentence: string): boolean {
+  return sentence.endsWith(REPORT_A_BUG_ENDING);
+}
+
+/** Whether a sentence is the one a request nothing answered gets. */
+export function isNotAnsweredSentence(sentence: string): boolean {
+  return sentence === READ_NOT_ANSWERED || sentence === CHANGE_NOT_ANSWERED;
+}
+
 /** A failure that carries no explanation of its own, as the fallback sentence for ``whatFailed``. */
 export function fallbackFailure(whatFailed: string, details: string | null = null): Failure {
   return { message: fallbackSentence(whatFailed), details, isReportable: true };

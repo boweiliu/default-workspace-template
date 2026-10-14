@@ -14,7 +14,9 @@ class RefusalKind(LowerCaseStrEnum):
     WINDOW_GONE = auto()
     # A launch that opened nothing, with no sentence of the app's own for it: the frontend says what was asked.
     LAUNCH_FAILED = auto()
+    # A state file could not be written: the frontend offers to try the change again.
     OUT_OF_SPACE = auto()
+    NOT_SAVED = auto()
 
 
 APP_UNAVAILABLE_SENTENCE: Final[str] = "This app isn't available in this workspace right now, so nothing was changed."
