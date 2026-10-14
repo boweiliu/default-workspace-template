@@ -1,24 +1,34 @@
 /**
- * The phone layout's swipe-between-chats gesture: a horizontal drag on the chat slot moves to the
- * next or previous row of the list (``rows.ts``'s display order), so switching chats on a phone
- * does not require opening the drawer. Swiping past the newest end of the list surfaces the "New
- * chat" button the drawer already offers (``ChatRail``'s ``onNew``), in place, instead of nothing
- * happening.
+ * The phone layout's swipe-between-chats gesture: a horizontal drag on the chat slot tracks the
+ * next or previous row of the list (``rows.ts``'s display order) in live, carousel-style, so
+ * switching chats on a phone does not require opening the drawer. Dragging past the newest end of
+ * the list surfaces the "New chat" button the drawer already offers (``ChatRail``'s ``onNew``), in
+ * place, instead of nothing happening.
  */
 
 import type { ChatRow } from "./rows";
 
-/** How far, and how straight, a touch has to travel to count as a swipe rather than a tap or a
- *  vertical scroll (the transcript itself scrolls vertically underneath this gesture). */
-const MIN_SWIPE_PX = 60;
+/** How far, and how straight, a touch has to travel before the drag engages (follows the finger)
+ *  rather than reading as a tap or the transcript's own vertical scroll. Small on purpose: once
+ *  engaged the frame is already following the finger, so a low bar is what makes that feel
+ *  immediate rather than catching up partway through the drag. */
+const ENGAGE_PX = 12;
 const MIN_HORIZONTAL_RATIO = 1.5;
+
+/** How much of the slot's width a drag has to cross before release commits it (switches chats, or
+ *  shows the new-chat edge) rather than snapping back to where it started. */
+export const COMMIT_FRACTION = 0.3;
+
+/** How much a drag that can go nowhere (the resisted edge cases) moves the frame, relative to the
+ *  raw finger movement -- the rest reads as resistance, as pulling against a boundary. */
+export const RESIST_RATIO = 0.35;
 
 export type SwipeDirection = "older" | "newer";
 
-/** The direction a completed drag reads as, or ``null`` when it is a tap, a scroll, or a drag too
- *  short to count. */
+/** The drag's direction once it has gone far enough, straight enough, to engage; ``null`` while it
+ *  still reads as a tap or a vertical scroll. */
 export function swipeDirectionFromDelta(deltaX: number, deltaY: number): SwipeDirection | null {
-  if (Math.abs(deltaX) < MIN_SWIPE_PX) return null;
+  if (Math.abs(deltaX) < ENGAGE_PX) return null;
   if (Math.abs(deltaX) < Math.abs(deltaY) * MIN_HORIZONTAL_RATIO) return null;
   // The list is newest-first (``rows.ts``): dragging left (deltaX < 0) steps toward it the same
   // way turning a page does, so it reads as moving to an older chat.
