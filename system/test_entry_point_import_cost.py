@@ -4,8 +4,8 @@ A one-off pays for its imports on every call, and on gVisor a few heavy librarie
 CLI's startup (see .agents/shared/references/running-python.md). Each entry point is imported in
 a fresh interpreter of its own tier -- the root venv's python for a venv entry, ``python -S -s``
 (no site-packages) for a bare one -- and the modules it left in ``sys.modules`` are checked
-against a short list. A venv entry that needs one at import declares it in its scripts
-``pyproject.toml`` under ``[tool.workspace-template.entry-points."<entry>.py"]`` as
+against a short list. A venv entry that needs one at import declares it in its project's
+``pyproject.toml`` (a skill's ``python/pyproject.toml``) under ``[tool.workspace-template.entry-points."<entry>.py"]`` as
 ``heavy-imports``; everything else imports heavy modules inside the function that uses them.
 """
 
