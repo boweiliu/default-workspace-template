@@ -181,7 +181,7 @@ the one workspace lock and its package installs into the root venv:
   of `scripts/`) is a thin dispatcher that imports it through the root venv,
   so a new skill's package is importable once `uv sync --all-packages` has
   installed it. Tests sit in the package beside their modules and import them
-  normally (`from <name>_skill.parse import parse_rows`).
+  normally (`from <name_with_underscores>_skill.parse import parse_rows`).
 - Keep the entry cheap to start: it runs on every call, so its module imports
   only what every invocation needs at the top, and each subcommand imports its
   implementation (and any heavy library -- pydantic, loguru, click, httpx, ...)
