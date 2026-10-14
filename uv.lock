@@ -4126,16 +4126,12 @@ name = "workspace-scripts"
 version = "0.1.0"
 source = { editable = "system/scripts" }
 dependencies = [
-    { name = "chat" },
-    { name = "imbue-mngr" },
     { name = "markdown" },
     { name = "playwright" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "chat", editable = "system/apps/chat" },
-    { name = "imbue-mngr", git = "https://github.com/imbue-ai/mngr?subdirectory=libs%2Fmngr&rev=f7d91a88a6586142aeb71a73399d2f0f470c52d2" },
     { name = "markdown", specifier = ">=3" },
     { name = "playwright", specifier = "==1.58.0" },
 ]

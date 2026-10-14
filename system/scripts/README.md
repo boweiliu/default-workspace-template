@@ -47,7 +47,7 @@ which runs from the root venv (`uv run --no-sync`). See
   conversation the Imbue Studio app had before the workspace existed; run through
   `mngr exec` by the Imbue Studio app), `require_create_account.py` (the
   create gate), `refresh_workspace_view.py` (rebuild the user's view after the
-  interface changes), `migrate_claude_auth.py` (one-time auth migration).
+  interface changes).
 - Boot recovery: `minds_start_services_agent.sh`, `minds_lima_autostart.sh`.
 - The changelog gate: `check_changelog_entries.py`.
 
