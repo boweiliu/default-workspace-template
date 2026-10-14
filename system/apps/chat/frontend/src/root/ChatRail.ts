@@ -149,7 +149,7 @@ function setRunningFromMenu(row: ChatRow, isRunning: boolean): void {
     raiseRootNotice({
       title: isRunning ? "Couldn't restart the chat" : "Couldn't stop the chat",
       lines: describeRunVerbFailure(error, row.title, isRunning),
-      retry: () => setRunningFromMenu(row, isRunning),
+      retry: describeRequestFailure(error).kind === "chat_gone" ? null : () => setRunningFromMenu(row, isRunning),
     });
   });
 }

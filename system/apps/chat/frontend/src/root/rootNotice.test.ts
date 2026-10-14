@@ -90,6 +90,26 @@ describe("the chat list's failed verbs", () => {
     expect(verbs.stopChat).toHaveBeenCalledTimes(2);
   });
 
+  it("says a chat that is gone is gone, with nothing to try again", async () => {
+    verbs.stopChat.mockRejectedValue(
+      new HttpError(
+        404,
+        "This chat is no longer here.",
+        "HTTP 404\nChat 'agent-1' not found",
+        false,
+        true,
+        false,
+        "chat_gone",
+      ),
+    );
+    select("stop");
+    const root = await rendered();
+
+    expect(root.textContent).toContain("This chat is no longer here.");
+    expect(root.textContent).not.toContain("still running");
+    expect(button(root, "Try again")).toBeUndefined();
+  });
+
   it("says a delete nothing answered may have run, offers no retry, and keeps the row marked until the list updates", async () => {
     verbs.destroyChat.mockRejectedValue(
       new HttpError(502, "The workspace didn't answer.", "HTTP 502", false, false, true),

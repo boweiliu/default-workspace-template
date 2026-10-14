@@ -78,6 +78,9 @@ export function describeRunVerbFailure(error: unknown, title: string, isRestart:
       isReportable: false,
     };
   }
+  if (failure.kind === "chat_gone") {
+    return { body: [failure.message], details: failure.details, isReportable: false };
+  }
   const lead = isRestart
     ? `Couldn't restart ${named}. It's still stopped.`
     : `Couldn't stop ${named}. It's still running.`;
