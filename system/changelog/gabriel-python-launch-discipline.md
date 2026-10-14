@@ -1,4 +1,4 @@
-- The `bootstrap` window and every supervisord program now start their entry point from `.venv/bin` after a `uv sync --all-packages --frozen`, so no `uv` process stays resident as a parent of supervisord or any program. A failed boot-time sync still starts `bootstrap` on the existing venv, so a workspace with a broken dependency tree stays reachable.
+- The `bootstrap` window now starts `bootstrap` from `.venv/bin` after a `uv sync --all-packages --frozen` instead of under `uv run`, and no supervisord program runs under `uv run`, so no `uv` process stays resident as a parent of supervisord or any program. A failed boot-time sync still starts `bootstrap` on the existing venv, so a workspace with a broken dependency tree stays reachable.
 
 - The claude and codex `SessionStart` hooks run `system/scripts/session_start_sync.sh`, which syncs the venv `--frozen` from the committed `uv.lock` and never rewrites it: a lock that has drifted from `pyproject.toml` is reported once, for whoever is changing dependencies to relock. Worker provisioning syncs `--frozen` too.
 
