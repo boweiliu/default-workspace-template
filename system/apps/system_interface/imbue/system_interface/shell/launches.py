@@ -43,7 +43,7 @@ USER_FACING_MESSAGE_FIELD: Final[str] = "user_facing_message"
 # A launch is one loopback request an app answers once it has decided what to show; an app that takes longer
 # than this has hung.
 LAUNCH_TIMEOUT_SECONDS: Final[float] = 30.0
-# How much of an app's answer a refusal quotes.
+# How much of one field of an app's failed launch answer (its detail, its user_facing_message) the shell quotes.
 _DETAIL_LIMIT: Final[int] = 400
 
 
