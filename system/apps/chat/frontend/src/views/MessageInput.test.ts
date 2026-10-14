@@ -1430,7 +1430,7 @@ describe("MessageInput on a chat whose account was signed out", () => {
 describe("MessageInput tells each way a send can fail", () => {
   beforeEach(() => {
     mocks.sendMessage.mockReset();
-    mocks.sendMessage.mockResolvedValue("ok");
+    mocks.sendMessage.mockResolvedValue(undefined);
     mocks.interruptAgent.mockClear();
     mocks.drainToComposer.mockReset();
     mocks.drainToComposer.mockResolvedValue({ block: "" });
