@@ -44,6 +44,15 @@ spec.loader.exec_module(module)
 print(json.dumps(sorted({name.split(".")[0] for name in sys.modules})))
 """
 
+# Imports one module the way the entry's own import resolves it (the entry's directory
+# first on sys.path), then reports every module left loaded.
+_MODULE_PROBE = """
+import importlib, json, sys
+sys.path.insert(0, sys.argv[1])
+importlib.import_module(sys.argv[2])
+print(json.dumps(sorted({name.split(".")[0] for name in sys.modules})))
+"""
+
 
 def _all_entry_points() -> list[Path]:
     entries = [
@@ -56,10 +65,10 @@ def _all_entry_points() -> list[Path]:
     return entries
 
 
-def _loaded_modules(entry: Path, *, bare: bool) -> frozenset[str]:
+def _run_probe(probe: str, *args: str, bare: bool) -> frozenset[str]:
     flags = ["-S", "-s"] if bare else []
     result = subprocess.run(
-        [sys.executable, *flags, "-c", _PROBE, str(entry)],
+        [sys.executable, *flags, "-c", probe, *args],
         cwd=_REPO_ROOT,
         # As a real run sees it: some libraries change behaviour when they detect pytest.
         env={
@@ -72,17 +81,34 @@ def _loaded_modules(entry: Path, *, bare: bool) -> frozenset[str]:
         timeout=60,
         check=False,
     )
-    assert result.returncode == 0, f"importing {entry} failed:\n{result.stderr}"
+    assert result.returncode == 0, f"importing {args[-1]} failed:\n{result.stderr}"
     return frozenset(json.loads(result.stdout))
 
 
+def _loaded_modules(entry: Path, *, bare: bool) -> frozenset[str]:
+    return _run_probe(_PROBE, str(entry), bare=bare)
+
+
 def _undeclared_heavy_imports(entry: Path, *, bare: bool) -> set[str]:
+    """The heavy modules importing ``entry`` loads that it has not declared.
+
+    A heavy module that another loaded heavy module imports is part of that one's cost, not
+    a second offence: on Python 3.12, importing pydantic loads asyncio (through
+    typing_extensions' ``deprecated``), so declaring pydantic covers it.
+    """
     heavy = (
         _HEAVY_STDLIB_MODULES if bare else _HEAVY_VENV_MODULES | _HEAVY_STDLIB_MODULES
     )
-    return set(_loaded_modules(entry, bare=bare) & heavy) - declared_heavy_imports(
-        entry
-    )
+    loaded = _loaded_modules(entry, bare=bare) & heavy
+    pulled_in = {
+        dependency
+        for module in loaded
+        for dependency in _run_probe(
+            _MODULE_PROBE, str(entry.parent), module, bare=bare
+        )
+        - {module}
+    }
+    return set(loaded - pulled_in) - declared_heavy_imports(entry)
 
 
 @pytest.mark.timeout(60)
@@ -135,6 +161,19 @@ def test_a_declared_heavy_import_passes(tmp_path: Path) -> None:
     )
 
     assert _undeclared_heavy_imports(entry, bare=False) == set()
+
+
+@pytest.mark.timeout(60)
+def test_a_heavy_module_another_heavy_module_imports_is_not_counted(
+    tmp_path: Path,
+) -> None:
+    entry = _scripts_project(
+        tmp_path, "import httpx\n\n\ndef main() -> None:\n    pass\n"
+    )
+    (entry.parent / "httpx").mkdir()
+    (entry.parent / "httpx" / "__init__.py").write_text("import asyncio\n")
+
+    assert _undeclared_heavy_imports(entry, bare=False) == {"httpx"}
 
 
 @pytest.mark.timeout(60)
