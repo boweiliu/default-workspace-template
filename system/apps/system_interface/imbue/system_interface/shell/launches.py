@@ -29,6 +29,7 @@ from imbue.imbue_common.pure import pure
 from imbue.system_interface.shell.data_types import AppInventoryEntry
 from imbue.system_interface.shell.errors import LaunchRefusedError
 from imbue.system_interface.shell.errors import LaunchUnavailableError
+from imbue.system_interface.shell.errors import RefusalKind
 
 # The envelope's field names (the manifest library reserves them for the shell).
 CLIENT_ID_FIELD: Final[str] = "client_id"
@@ -78,7 +79,9 @@ def post_launch(post: LaunchPost) -> LaunchPostOutcome:
     except httpx.HTTPError as e:
         logger.warning("Could not post a launch to {} at {}: {}", post.app, post.url, e)
         raise LaunchUnavailableError(
-            f"{post.app} could not be reached for the launch: {e}", could_not_open_sentence(post.display_name)
+            f"{post.app} could not be reached for the launch: {e}",
+            could_not_open_sentence(post.display_name),
+            RefusalKind.LAUNCH_FAILED,
         ) from e
     try:
         body = response.json()
@@ -161,26 +164,27 @@ def launched_path(app: str, display_name: str, outcome: LaunchPostOutcome) -> Wi
     LaunchRefusedError with that detail; anything else that is not a 200 carrying a window path (a 4xx with no
     detail among them: a missing or GET-only route, not a refusal the app wrote) is LaunchUnavailableError, which
     carries the app's ``detail`` too when it gave one, whatever the status. The person is shown the sentence the app
-    wrote for them (its ``user_facing_message``) when it wrote one, else that the app couldn't open that."""
-    user_facing_message = _quoted_field(outcome.body, USER_FACING_MESSAGE_FIELD) or could_not_open_sentence(
-        display_name
-    )
+    wrote for them (its ``user_facing_message``) when it wrote one, else that the app couldn't open that, marked as
+    the ``LAUNCH_FAILED`` kind so a frontend can say what it had asked for instead."""
+    own_sentence = _quoted_field(outcome.body, USER_FACING_MESSAGE_FIELD)
+    user_facing_message = own_sentence or could_not_open_sentence(display_name)
+    kind = None if own_sentence else RefusalKind.LAUNCH_FAILED
     if outcome.status_code != 200:
         detail = _quoted_field(outcome.body, "detail")
         if 400 <= outcome.status_code < 500 and detail:
-            raise LaunchRefusedError(f"{app} refused the launch: {detail}", user_facing_message)
+            raise LaunchRefusedError(f"{app} refused the launch: {detail}", user_facing_message, kind)
         answered_with = f"{app} answered the launch with {outcome.status_code}"
         raise LaunchUnavailableError(
-            f"{answered_with}: {detail}" if detail else f"{answered_with} and no reason", user_facing_message
+            f"{answered_with}: {detail}" if detail else f"{answered_with} and no reason", user_facing_message, kind
         )
     answered = outcome.body.get(PATH_FIELD) if isinstance(outcome.body, dict) else None
     if not isinstance(answered, str):
-        raise LaunchUnavailableError(f"{app} answered the launch with no page path", user_facing_message)
+        raise LaunchUnavailableError(f"{app} answered the launch with no page path", user_facing_message, kind)
     try:
         return WindowPath(answered)
     except InvalidLayoutValueError as e:
         raise LaunchUnavailableError(
-            f"{app} answered the launch with a path that is not a window path: {e}", user_facing_message
+            f"{app} answered the launch with a path that is not a window path: {e}", user_facing_message, kind
         ) from e
 
 

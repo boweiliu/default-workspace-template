@@ -93,18 +93,22 @@ from imbue.system_interface.shell.desktops import desktop_name_for_user
 from imbue.system_interface.shell.desktops import next_glyph_index
 from imbue.system_interface.shell.desktops import resolve_active_desktop
 from imbue.system_interface.shell.desktops import slugify_desktop_name
+from imbue.system_interface.shell.errors import APP_UNAVAILABLE_SENTENCE
 from imbue.system_interface.shell.errors import DesktopNotFoundError
 from imbue.system_interface.shell.errors import DesktopValueError
 from imbue.system_interface.shell.errors import InvalidShellValueError
 from imbue.system_interface.shell.errors import LaunchUnavailableError
 from imbue.system_interface.shell.errors import PinnedWindowError
+from imbue.system_interface.shell.errors import RefusalKind
 from imbue.system_interface.shell.errors import ShellStateError
+from imbue.system_interface.shell.errors import WINDOW_GONE_SENTENCE
 from imbue.system_interface.shell.errors import WindowNotFoundError
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.identity import visiting_user_id
 from imbue.system_interface.shell.inventory import AppInventory
 from imbue.system_interface.shell.inventory import DEFAULT_SHARE_DOMAIN_PATH
 from imbue.system_interface.shell.launches import LaunchPoster
+from imbue.system_interface.shell.launches import could_not_open_sentence
 from imbue.system_interface.shell.launches import post_launch
 from imbue.system_interface.shell.launches import resolve_launch_destination
 from imbue.system_interface.shell.placements import PlacementStore
@@ -295,7 +299,11 @@ class ShellState(MutableModel):
         """The inventory entry of a registered app; raises DesktopValueError (a 400) for any other name."""
         entry = self.inventory.entry(app)
         if entry is None:
-            raise DesktopValueError(f"No registered app named {app!r}")
+            raise DesktopValueError(
+                f"No registered app named {app!r}",
+                user_facing_message=APP_UNAVAILABLE_SENTENCE,
+                kind=RefusalKind.APP_UNAVAILABLE,
+            )
         return entry
 
     def require_launch_path(self, entry: AppInventoryEntry, launch: LaunchPathId) -> RegistryLaunchPath:
@@ -305,7 +313,13 @@ class ShellState(MutableModel):
             (candidate for candidate in effective_launch_paths(entry.row) if candidate.id == launch), None
         )
         if launch_path is None:
-            raise DesktopValueError(f"App {str(entry.row.name)!r} declares no launch path {str(launch)!r}")
+            # The label of a launch path the app no longer declares is only the frontend's to know; it words the
+            # refusal with it, and this sentence is for any other reader.
+            raise DesktopValueError(
+                f"App {str(entry.row.name)!r} declares no launch path {str(launch)!r}",
+                user_facing_message=f"{entry.display_name} no longer offers that, so nothing was changed.",
+                kind=RefusalKind.LAUNCH_PATH_GONE,
+            )
         return launch_path
 
     def launch_destination(
@@ -326,7 +340,11 @@ class ShellState(MutableModel):
         if launch_path.method is LaunchPathMethod.POST and not entry.is_running and self.lifecycle.is_enabled:
             is_stoppable = stoppable_program_of(entry, self.inventory.entries()) is not None
             if is_stoppable and not self.lifecycle.wake_and_wait(entry):
-                raise LaunchUnavailableError(f"{entry.row.name} is stopped and could not be brought up for the launch")
+                raise LaunchUnavailableError(
+                    f"{entry.row.name} is stopped and could not be brought up for the launch",
+                    could_not_open_sentence(entry.display_name),
+                    RefusalKind.LAUNCH_FAILED,
+                )
         return resolve_launch_destination(
             entry, launch_path, params, client_id, desktop_id, window_path, self.launch_poster
         )
@@ -355,10 +373,18 @@ class ShellState(MutableModel):
                 return LaunchOutcome(window=opened.window, path=path, is_new=opened.is_new)
             case LaunchTargetKind.WINDOW:
                 assert request.target.window_id is not None, "a window target names its window"
-                window = require_window(desktop, request.target.window_id)
+                window = find_window(desktop, request.target.window_id)
+                if window is None:
+                    raise WindowNotFoundError(
+                        str(request.target.window_id),
+                        user_facing_message=WINDOW_GONE_SENTENCE,
+                        kind=RefusalKind.WINDOW_GONE,
+                    )
                 if window.app != request.app:
                     raise DesktopValueError(
-                        f"Window {str(window.id)} shows {str(window.app)!r}, not {str(request.app)!r}"
+                        f"Window {str(window.id)} shows {str(window.app)!r}, not {str(request.app)!r}",
+                        user_facing_message=WINDOW_GONE_SENTENCE,
+                        kind=RefusalKind.WINDOW_GONE,
                     )
                 seen = effective_window(window, self.read_window_paths(desktop, request.client_id).get(window.id))
                 path = self.launch_destination(

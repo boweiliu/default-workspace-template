@@ -17,6 +17,7 @@ from imbue.system_interface.shell.client_activity import find_client_id_for_page
 from imbue.system_interface.shell.errors import ClientNotFoundError
 from imbue.system_interface.shell.errors import InvalidShellValueError
 from imbue.system_interface.shell.errors import NoTargetClientError
+from imbue.system_interface.shell.errors import RefusalKind
 from imbue.system_interface.shell.identity import IDENTITY_HEADER
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.identity import parse_identity_header
@@ -40,12 +41,17 @@ HTTP_SERVICE_UNAVAILABLE: Final[int] = 503
 _RequestModel = TypeVar("_RequestModel", bound=BaseModel)
 
 
-def detail_response(message: str, status_code: int, user_facing_message: str | None = None) -> ResponseReturnValue:
+def detail_response(
+    message: str, status_code: int, user_facing_message: str | None = None, kind: RefusalKind | None = None
+) -> ResponseReturnValue:
     """An error answer: ``detail`` is the developer's reason, which every caller reads; ``user_facing_message``, when
-    there is one, is the sentence the workspace's frontends show a person in its place."""
+    there is one, is the sentence the workspace's frontends show a person in its place, and ``kind`` names the
+    refusal for a frontend that words it itself."""
     body = {"detail": message}
     if user_facing_message is not None:
         body["user_facing_message"] = user_facing_message
+    if kind is not None:
+        body["kind"] = kind.value
     return jsonify(body), status_code
 
 

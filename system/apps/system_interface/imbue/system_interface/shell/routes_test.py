@@ -17,6 +17,10 @@ from workspace_layout.primitives import UserId
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import state_of
 from imbue.system_interface.shell.app_lifecycle import WAKE_BUDGET_COUNT
+from imbue.system_interface.shell.errors import APP_UNAVAILABLE_SENTENCE
+from imbue.system_interface.shell.errors import DESKTOP_GONE_SENTENCE
+from imbue.system_interface.shell.errors import LAST_DESKTOP_SENTENCE
+from imbue.system_interface.shell.errors import WINDOW_GONE_SENTENCE
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.inventory import AppInventory
 from imbue.system_interface.shell.launches import LaunchPost
@@ -2637,7 +2641,9 @@ def test_a_post_launch_the_app_refuses_or_cannot_answer_is_passed_on_and_opens_n
             LaunchPostOutcome(status_code=400, body={"detail": "no account is signed in"}),
             LaunchPostOutcome(status_code=404, body=None),
             LaunchPostOutcome(status_code=500, body={"detail": "boom"}),
-            LaunchPostOutcome(status_code=503, body={"detail": "agent list not read", "user_facing_message": starting}),
+            LaunchPostOutcome(
+                status_code=503, body={"detail": "agent list not read", "user_facing_message": starting}
+            ),
             LaunchPostOutcome(status_code=200, body={"nope": True}),
             LaunchPostOutcome(status_code=200, body={"path": "//evil"}),
         ]
@@ -2648,12 +2654,14 @@ def test_a_post_launch_the_app_refuses_or_cannot_answer_is_passed_on_and_opens_n
     body = {"app": "buddy", "launch": "new", "params": {"message": "hi"}, "target": {"kind": "new"}}
     could_not_open = "Buddy couldn't open that. Try again. If this persists, report a bug."
 
-    # Every failure says what failed by the app's display name; the app's own words are the developer's detail.
+    # Every failure says what failed by the app's display name, marked as the shell's own sentence so a frontend
+    # can say what it had asked for instead; the app's own words are the developer's detail.
     refused = _launch(client, body)
     assert refused.status_code == 400
     assert refused.get_json() == {
         "detail": "buddy refused the launch: no account is signed in",
         "user_facing_message": could_not_open,
+        "kind": "launch_failed",
     }
     # A 4xx with no detail is not a refusal the app wrote (a missing route answers 404 as HTML): the app could
     # not be asked.
@@ -2662,11 +2670,17 @@ def test_a_post_launch_the_app_refuses_or_cannot_answer_is_passed_on_and_opens_n
     assert unrouted.get_json() == {
         "detail": "buddy answered the launch with 404 and no reason",
         "user_facing_message": could_not_open,
+        "kind": "launch_failed",
     }
-    # A 5xx's reason is passed on too, and a sentence the app wrote for people is what the person is shown.
+    # A 5xx's reason is passed on too, and a sentence the app wrote for people is what the person is shown, with no
+    # kind: it is the app's to say.
     failed = _launch(client, body)
     assert failed.status_code == 502
-    assert failed.get_json() == {"detail": "buddy answered the launch with 500: boom", "user_facing_message": could_not_open}
+    assert failed.get_json() == {
+        "detail": "buddy answered the launch with 500: boom",
+        "user_facing_message": could_not_open,
+        "kind": "launch_failed",
+    }
     waiting = _launch(client, body)
     assert waiting.status_code == 502
     assert waiting.get_json() == {
@@ -2678,6 +2692,63 @@ def test_a_post_launch_the_app_refuses_or_cannot_answer_is_passed_on_and_opens_n
         assert no_page.status_code == 502 and no_page.get_json()["user_facing_message"] == could_not_open
     # Only the pinned window stands: nothing opened for any of them.
     assert len(_desktop_windows(client)) == 1
+
+
+def test_a_refusal_for_something_this_window_held_says_it_is_gone_and_that_nothing_was_changed(
+    tmp_path: Path, broadcaster: WebSocketBroadcaster
+) -> None:
+    """The desktop builds its requests from the apps and desktops it last heard of; what went in the meantime is
+    refused before anything is written, in a sentence for people and a kind for the frontend to word with the name
+    and label only it still holds. The developer's reason stays in ``detail``, which agents and the CLI read."""
+    app = _launching_shell(tmp_path, broadcaster, _RecordingLaunchPoster([]))
+    client = app.test_client()
+    _register_client(app, "c1", "home")
+    (pinned,) = _desktop_windows(client)
+    gone_app = {"user_facing_message": APP_UNAVAILABLE_SENTENCE, "kind": "app_unavailable"}
+
+    assert _open_window(client, "gone", "/").get_json() == {"detail": "No registered app named 'gone'", **gone_app}
+    assert _launch(client, {"app": "gone", "launch": "new", "target": {"kind": "new"}}).get_json() == {
+        "detail": "No registered app named 'gone'",
+        **gone_app,
+    }
+    shortcut = {
+        "target": {"kind": "launch", "app": "gone", "launch": "open"},
+        "mode": "focus",
+        "cell": {"column": 0, "row": 0},
+    }
+    assert client.post("/api/desktops/home/shortcuts", json=shortcut).get_json()["kind"] == "app_unavailable"
+    quit_answer = client.post("/api/apps/gone/quit")
+    assert quit_answer.status_code == 404 and quit_answer.get_json()["kind"] == "app_unavailable"
+
+    gone_launch = _launch(client, {"app": "buddy", "launch": "old", "target": {"kind": "new"}})
+    assert gone_launch.status_code == 400
+    assert gone_launch.get_json() == {
+        "detail": "App 'buddy' declares no launch path 'old'",
+        "user_facing_message": "Buddy no longer offers that, so nothing was changed.",
+        "kind": "launch_path_gone",
+    }
+
+    # A launch into a window that has gone, or that now shows another app.
+    terminal = _open_window(client, "terminal", "/").get_json()["window"]
+    for window_id in ("win-00000000000000ff", terminal["id"]):
+        into_gone = _launch(
+            client, {"app": "buddy", "launch": "new", "target": {"kind": "window", "window_id": window_id}}
+        )
+        assert into_gone.get_json()["user_facing_message"] == WINDOW_GONE_SENTENCE
+        assert into_gone.get_json()["kind"] == "window_gone"
+
+    terminal_shortcut = {**shortcut, "target": {"kind": "launch", "app": "terminal", "launch": "new"}}
+    deleted = client.post("/api/desktops/research/shortcuts", json=terminal_shortcut)
+    assert deleted.status_code == 404
+    assert deleted.get_json() == {
+        "detail": "Desktop 'research' not found",
+        "user_facing_message": DESKTOP_GONE_SENTENCE,
+    }
+
+    only = client.post("/api/desktops/home/delete")
+    assert only.status_code == 409 and only.get_json()["user_facing_message"] == LAST_DESKTOP_SENTENCE
+    # Nothing was opened, launched, or posted for any of them.
+    assert [window["id"] for window in _desktop_windows(client)] == [pinned["id"], terminal["id"]]
 
 
 def test_an_open_op_at_a_post_launch_path_posts_for_its_page_with_and_without_a_client(
