@@ -191,7 +191,7 @@ from update_self_skill.update_target import (
 )
 
 # The repo-relative directory holding the update-self skill (SKILL.md,
-# references/, scripts/). Used by ``bootstrap-skill`` to extract the target
+# references/, scripts/, python/). Used by ``bootstrap-skill`` to extract the target
 # ref's own copy of the flow.
 SKILL_DIR_REL = ".agents/skills/update-self"
 
@@ -613,7 +613,7 @@ def _cmd_bootstrap_skill(args: argparse.Namespace) -> int:
 
     # Whether the ref's skill differs from the local working-tree copy. Let git
     # do the compare: ``git diff`` ignores untracked files, so the ``__pycache__/
-    # *.pyc`` that importing the script drops into ``scripts/`` never registers as
+    # *.pyc`` that importing the package drops into ``python/`` never registers as
     # a spurious difference. ``--quiet`` exits 0 if identical, 1 on any
     # difference; ``check_returncode`` surfaces any other code as a real git error.
     diff = subprocess.run(
