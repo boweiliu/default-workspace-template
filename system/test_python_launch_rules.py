@@ -35,8 +35,9 @@ _AGENT_FACING_SUFFIXES = (".md", ".toml", ".sh", ".conf")
 # Path parts whose files are records, third-party code or test inputs, not instructions.
 _EXEMPT_PARTS = frozenset({"changelog", "vendor", "fixtures"})
 _EXEMPT_NAMES = frozenset({"CHANGELOG.md", "UNABRIDGED_CHANGELOG.md"})
-# Dated design records, which quote the commands of their day. The living contracts
-# among them are what agents are pointed at as the rules, so those are scanned.
+# Dated design records under docs/, which quote the commands of their day. The living
+# contracts among them are what agents are pointed at as the rules, so those are scanned.
+_DOCS_ROOT = "docs"
 _DESIGN_RECORD_PARTS = frozenset({"blueprint", "specs"})
 _LIVING_CONTRACT_NAME = "contracts.md"
 
@@ -224,7 +225,8 @@ def _is_scanned(relative: str) -> bool:
     if _EXEMPT_PARTS.intersection(path.parts) or path.name in _EXEMPT_NAMES:
         return False
     if (
-        _DESIGN_RECORD_PARTS.intersection(path.parts)
+        path.parts[0] == _DOCS_ROOT
+        and _DESIGN_RECORD_PARTS.intersection(path.parts)
         and path.name != _LIVING_CONTRACT_NAME
     ):
         return False
@@ -407,5 +409,7 @@ def test_scanning_skips_records_and_tests_but_reaches_living_contracts() -> None
         not in scanned
     )
     assert "docs/system/blueprint/workspace-app-model/contracts.md" in scanned
+    # A skill named like a design-record directory is still agent-facing.
+    assert ".agents/skills/blueprint/SKILL.md" in scanned
     assert "system/services/host_backup/src/host_backup/runner.py" in scanned
     assert "AGENTS.md" in scanned
