@@ -36,7 +36,8 @@ DESKTOP_ID_FIELD: Final[str] = "desktop_id"
 WINDOW_PATH_FIELD: Final[str] = "window_path"
 # The one field a POST launch answers.
 PATH_FIELD: Final[str] = "path"
-# The field of an app's refusal that holds a sentence it wrote for people, which the shell passes on as its own.
+# The field of an app's failed launch answer that holds a sentence it wrote for people, which the shell passes on as
+# its own.
 USER_FACING_MESSAGE_FIELD: Final[str] = "user_facing_message"
 
 # A launch is one loopback request an app answers once it has decided what to show; an app that takes longer
