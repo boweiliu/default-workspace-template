@@ -370,6 +370,11 @@ uv run --no-sync .agents/skills/migrate-workspace/scripts/migrate_workspace.py r
 The report lists every substitution. The rewriter deliberately leaves the
 ambiguous legacy prefixes alone -- resolve those by reading.
 
+A skill whose Python sits in its `scripts/` (PEP 723 or plain scripts, the layout
+of older workspaces) moves into its own `python/` project here, by "A user skill
+with scripts" in `.agents/skills/update-self/references/python-packaging-migration.md`;
+until it does, `validate_skill.py` rejects it.
+
 **Template-file edits.** Port them *semantically* into their new counterparts and
 report each port: `CLAUDE.md` additions appended to this `CLAUDE.md`, settings
 keys set in the new settings file, supervisord program blocks re-added. Never
