@@ -4,7 +4,9 @@ from pathlib import Path
 from imbue.chat.harnesses.model_state_poll import ModelStatePoller
 
 
-def _build_poller_over(path_by_agent: dict[str, Path], changed_agent_ids: list[str]) -> ModelStatePoller:
+def _build_poller_over(
+    path_by_agent: dict[str, Path], changed_agent_ids: list[str]
+) -> ModelStatePoller:
     return ModelStatePoller.build(
         list_model_state_paths=lambda: dict(path_by_agent),
         on_model_state_changed=changed_agent_ids.append,
