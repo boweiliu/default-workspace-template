@@ -6,7 +6,7 @@
  */
 
 import { apiUrl } from "@imbue/workspace-ui/src/base-path";
-import { HttpError, errorDetailFromResponse, postJson } from "@imbue/workspace-ui/src/models/http";
+import { HttpError, getJson, postJson } from "@imbue/workspace-ui/src/models/http";
 import {
   parseClientArrival,
   parseAvatarCatalog,
@@ -42,12 +42,6 @@ const HTTP_CONFLICT = 409;
 
 /** The shell refused a placements save because the stored layout is newer than the one it was based on. */
 export class StalePlacementsSaveError extends Error {}
-
-async function getJson(url: string): Promise<unknown> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(await errorDetailFromResponse(response));
-  return (await response.json()) as unknown;
-}
 
 function desktopUrl(desktopId: string, suffix: string = ""): string {
   return apiUrl(`/api/desktops/${encodeURIComponent(desktopId)}${suffix}`);

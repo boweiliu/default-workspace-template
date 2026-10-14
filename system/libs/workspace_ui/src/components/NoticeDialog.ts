@@ -1,6 +1,7 @@
 import m from "mithril";
 import { Button } from "./Button";
 import { MODAL_MESSAGE_CLASS, Modal } from "./Modal";
+import { SeeDetails } from "./SeeDetails";
 import { hoverTooltipAttrs } from "./hoverTooltip";
 
 /**
@@ -36,6 +37,8 @@ export interface NoticeDialogAttrs {
   dismissLabel: string;
   /** Actions beyond dismissal, rendered after it. */
   actions?: readonly NoticeAction[];
+  /** What goes behind "See details" under the body (a status, the server's own text); none when null. */
+  details?: string | null;
   /** False while an action is running, so the notice cannot be closed out from under it. */
   isDismissable?: boolean;
   onDismiss: () => void;
@@ -49,7 +52,7 @@ const NOTICE_BODY_CLASS = `${MODAL_MESSAGE_CLASS} wrap-anywhere max-h-[40vh] ove
 export function makeNoticeDialog(): m.Component<NoticeDialogAttrs> {
   return {
     view(vnode) {
-      const { title, body, dismissLabel, actions = [], isDismissable = true, onDismiss } = vnode.attrs;
+      const { title, body, dismissLabel, actions = [], details = null, isDismissable = true, onDismiss } = vnode.attrs;
       const dismiss = (): void => {
         if (isDismissable) onDismiss();
       };
@@ -100,6 +103,9 @@ export function makeNoticeDialog(): m.Component<NoticeDialogAttrs> {
           ...body
             .filter((line): line is string => line !== null && line !== "")
             .map((line) => m("p", { class: NOTICE_BODY_CLASS }, line)),
+          details === null
+            ? null
+            : m("div", { class: "notice-details mb-4 text-secondary" }, m(SeeDetails, { details })),
           vnode.children,
         ],
       );

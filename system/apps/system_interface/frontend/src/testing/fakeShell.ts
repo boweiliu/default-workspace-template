@@ -67,8 +67,9 @@ export class FakeDesktopApi implements DesktopApi {
   relayDeliveries: MessageDelivery[] = [];
   /** What every window open answers of whether the client has only pop-outs open. */
   hasNoDesktopWindow = false;
-  /** A refusal every route raises while set. */
-  refusal: string | null = null;
+  /** A refusal every route raises while set: a bare reason, or the error itself (an ``HttpError``, as the REST
+   *  helper throws one). */
+  refusal: string | Error | null = null;
   /** The page a POST launch path answers (as the app would); a GET launch path's page is built from its path. */
   postLaunchAnswer = "/launched";
   /** While set, the inventory, the client records, a layout, and the catalog answer only once this settles: a
@@ -107,7 +108,7 @@ export class FakeDesktopApi implements DesktopApi {
   private windowCounter = 0;
 
   private refuse(): void {
-    if (this.refusal !== null) throw new Error(this.refusal);
+    if (this.refusal !== null) throw typeof this.refusal === "string" ? new Error(this.refusal) : this.refusal;
   }
 
   private stamp(): string {

@@ -1,45 +1,99 @@
-/** What the shell's REST routes answer, read the way the user needs it said. */
+/** What the workspace's REST routes answer, read the way the user needs it said. */
 
-// What the tunnel in front of this server answers when the server itself is not up: a
-// workspace still provisioning, restarting, or shutting down. The request never reached an
-// endpoint, so nothing was read and nothing changed.
-const UNREACHABLE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+import {
+  GATEWAY_STATUSES,
+  fallbackSentence,
+  joinDetails,
+  notAnsweredSentence,
+  type Failure,
+  type RequestKind,
+} from "./failure";
+
+/** The fallback for a refusal that carries no reason. */
+export const REST_FALLBACK_MESSAGE = fallbackSentence("Something went wrong in this workspace");
+
+// How much of a body that is not a reason (an error page, a proxy's plain text) "See details" quotes.
+const RAW_BODY_LIMIT = 2000;
 
 /**
- * Why a request failed, in terms the user can act on: the server's own ``detail`` when it gave
- * one, a plain "not responding" for a gateway answer, and the bare status otherwise.
+ * A refused or unanswered request to a REST route. ``message`` is what to show: a sentence the server wrote for
+ * people (``user_facing_message``), else its ``detail`` (or ``error``), else one of the fallbacks. ``status`` is 0
+ * when nothing answered.
  */
-export async function errorDetailFromResponse(response: Response): Promise<string> {
-  const data = (await response.json().catch(() => ({}))) as { detail?: string; error?: string };
-  if (data.detail) return data.detail;
-  if (data.error) return data.error;
-  if (UNREACHABLE_STATUSES.has(response.status)) {
-    return "the workspace is not responding right now, so nothing was changed — try again in a moment";
-  }
-  return `HTTP ${response.status}`;
-}
-
-/** A refusal from a REST route: the server's detail as the message, and the status for a caller
- *  that tells one refusal from another (a stale save's 409, say). */
-export class HttpError extends Error {
+export class HttpError extends Error implements Failure {
   constructor(
     readonly status: number,
-    detail: string,
+    message: string,
+    readonly details: string | null,
+    readonly isReportable: boolean,
+    /** The server's sentence was written for people, so it stands on its own rather than after what failed. */
+    readonly isUserFacing: boolean = false,
   ) {
-    super(detail);
+    super(message);
   }
 }
 
-/** POST a JSON body and answer the parsed JSON reply, throwing an ``HttpError`` with the server's detail on a refusal. */
-export async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new HttpError(response.status, await errorDetailFromResponse(response));
+interface ErrorBody {
+  readonly user_facing_message?: unknown;
+  readonly detail?: unknown;
+  readonly error?: unknown;
+  readonly details?: unknown;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+/** The failure a non-2xx ``response`` stands for. */
+export async function readResponseFailure(response: Response, kind: RequestKind): Promise<HttpError> {
+  const text = await response.text().catch(() => "");
+  let body: ErrorBody = {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === "object" && parsed !== null) body = parsed as ErrorBody;
+  } catch {
+    // Not JSON (an error page, a proxy's plain text): quoted behind "See details" below.
   }
+  const userFacing = nonEmptyString(body.user_facing_message);
+  const reason = nonEmptyString(body.detail) ?? nonEmptyString(body.error);
+  const details = joinDetails([
+    `HTTP ${response.status}`,
+    userFacing === null ? null : reason,
+    nonEmptyString(body.details),
+    userFacing === null && reason === null ? text.slice(0, RAW_BODY_LIMIT) : null,
+  ]);
+  if (userFacing !== null) return new HttpError(response.status, userFacing, details, false, true);
+  if (reason !== null) return new HttpError(response.status, reason, details, false);
+  if (GATEWAY_STATUSES.has(response.status)) {
+    return new HttpError(response.status, notAnsweredSentence(kind), details, false);
+  }
+  return new HttpError(response.status, REST_FALLBACK_MESSAGE, details, true);
+}
+
+/** ``fetch`` that answers a request nothing answered (the connection refused or dropped) as an ``HttpError``. */
+export async function fetchOrNotAnswered(url: string, init: RequestInit, kind: RequestKind): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    throw new HttpError(0, notAnsweredSentence(kind), joinDetails([(error as Error).message]), false);
+  }
+}
+
+/** GET ``url`` and answer the parsed JSON reply, throwing an ``HttpError`` on a refusal or no answer. */
+export async function getJson<T>(url: string): Promise<T> {
+  const response = await fetchOrNotAnswered(url, {}, "read");
+  if (!response.ok) throw await readResponseFailure(response, "read");
+  return (await response.json()) as T;
+}
+
+/** POST a JSON body and answer the parsed JSON reply, throwing an ``HttpError`` on a refusal or no answer. */
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetchOrNotAnswered(
+    url,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    "change",
+  );
+  if (!response.ok) throw await readResponseFailure(response, "change");
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }

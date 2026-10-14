@@ -111,11 +111,12 @@ def _answer_shell_error(error: ShellError) -> ResponseReturnValue:
             | AppLifecycleRefusedError()
             | LayoutOpError()
             | DesktopValueError()
-            | LaunchRefusedError()
         ):
             return detail_response(str(error), HTTP_BAD_REQUEST)
+        case LaunchRefusedError():
+            return detail_response(str(error), HTTP_BAD_REQUEST, error.user_facing_message)
         case LaunchUnavailableError():
-            return detail_response(str(error), HTTP_BAD_GATEWAY)
+            return detail_response(str(error), HTTP_BAD_GATEWAY, error.user_facing_message)
         case NoTargetClientError():
             return detail_response(str(error), HTTP_PRECONDITION_FAILED)
         case WindowPoppedOutError():

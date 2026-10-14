@@ -94,7 +94,7 @@ export function SubagentView(): m.Component<SubagentViewAttrs> {
       loading = false;
     } catch (error) {
       loading = false;
-      loadingError = describeRequestError(error);
+      loadingError = describeRequestError(error, "read");
     }
   }
 

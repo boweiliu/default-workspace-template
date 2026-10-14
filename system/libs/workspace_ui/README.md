@@ -20,7 +20,21 @@ workspace rooted at `system/package.json` (one `npm ci`, one lockfile).
   themselves with).
 - `src/base-path.ts`, `src/origin.ts`, and
   `src/models/` (`ClientIdentity`, `http`, `backoff`, `ws-json`,
-  `request-error`): the base helpers every page shares.
+  `request-error`, `failure`): the base helpers every page shares.
+- How a failed request is told (`models/failure.ts`, `models/http.ts`,
+  `models/request-error.ts`): a sentence of ours on the visible line and
+  everything underneath it (the status, the server's own text) behind "See
+  details". A route's `user_facing_message` is shown as written; its `detail`
+  is shown where no such sentence was given; a gateway status (502, 503, 504)
+  or a request nothing answered reads "The workspace didn't answer. Try again in
+  a moment." for a read and "The workspace didn't answer, so Imbue Studio can't
+  tell whether this went through." for a change (never "nothing was changed":
+  Imbue Studio's forward proxy can send a gateway status after the request
+  arrived); any other status with no reason reads as the fallback "<what
+  failed>. Try again. If this persists, report a bug.". Their screen pieces are
+  `src/components/SeeDetails.ts` (the collapsed details, which `NoticeDialog`
+  draws from its `details`) and `src/report-bug.ts` (the "Report a bug" button,
+  which opens Imbue Studio's bug report).
 - `src/app_contract.ts`: an app page's side of the browser-side contract
   (contracts.md section 10 of the workspace app model, extended by section 7
   of the desktop interface's contracts.md), which the shell's frontend also

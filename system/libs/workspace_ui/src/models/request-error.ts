@@ -1,3 +1,13 @@
+import {
+  GATEWAY_STATUSES,
+  fallbackSentence,
+  joinDetails,
+  notAnsweredSentence,
+  type Failure,
+  type RequestKind,
+} from "./failure";
+import { HttpError } from "./http";
+
 /**
  * Messages that carry no information, in the spellings a stringified body takes.
  *
@@ -13,47 +23,86 @@
  */
 const UNINFORMATIVE_MESSAGES: ReadonlySet<string> = new Set(["null", "undefined", "[object Object]"]);
 
+/** The fallback for a failed request that carries no reason. */
+export const REQUEST_FALLBACK_MESSAGE = fallbackSentence("The workspace couldn't do that");
+
+/** A failure as ``describeRequestFailure`` reads it: the server's own sentence, when it gave one, is ``message``. */
+export interface RequestFailure extends Failure {
+  /** The server's sentence was written for people, so it stands on its own rather than after what failed. */
+  readonly isUserFacing: boolean;
+}
+
+function informativeMessage(value: unknown): string | null {
+  const message = typeof value === "string" ? value.trim() : "";
+  return message !== "" && !UNINFORMATIVE_MESSAGES.has(message) ? message : null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 /**
- * Extract a human-readable message from a failed `m.request` rejection.
+ * Read a failed request -- a mithril `m.request` rejection, an ``HttpError``, or an error a caller threw -- as what to
+ * show and what goes behind "See details".
  *
- * Mithril rejects with an Error-like value carrying (when available) the parsed
- * response body, an HTTP status `code`, and a `message`. A gateway error (e.g. a
- * 504 from a front-door proxy) often has no JSON body, so naive
- * `response.detail` extraction yields `null`/`undefined` and surfaces a useless
- * "null" to the user. This walks the available fields in order of usefulness and
- * always returns a non-empty string.
+ * A mithril rejection carries (when available) the parsed response body, the HTTP status as `code`, and a `message`
+ * that is the raw body text. A gateway answer (a 502 from a front-door proxy, say) often has no JSON body, so naive
+ * `response.detail` extraction yields `null` and surfaces a useless "null". The server's own `detail` is shown as
+ * written; a status with no reason reads as a fallback of ours, with the status and any raw text behind the details.
  */
-export function describeRequestError(error: unknown): string {
-  if (error === null || error === undefined) {
-    return "unknown error";
+export function describeRequestFailure(error: unknown, kind: RequestKind = "change"): RequestFailure {
+  if (error instanceof HttpError) {
+    return {
+      message: error.message,
+      details: error.details,
+      isReportable: error.isReportable,
+      isUserFacing: error.isUserFacing,
+    };
   }
+  const fallback: RequestFailure = {
+    message: REQUEST_FALLBACK_MESSAGE,
+    details: null,
+    isReportable: true,
+    isUserFacing: false,
+  };
+  if (error === null || error === undefined) return fallback;
   if (typeof error === "string") {
-    return error.trim() || "unknown error";
+    const text = error.trim();
+    return text === "" ? fallback : { ...fallback, message: text, isReportable: false };
   }
-  const err = error as { response?: { detail?: unknown } | null; message?: unknown; code?: unknown };
+  const err = error as {
+    response?: { user_facing_message?: unknown; detail?: unknown; error?: unknown } | null;
+    message?: unknown;
+    code?: unknown;
+  };
+  const message = informativeMessage(err.message);
 
-  const detail = err.response?.detail;
-  if (typeof detail === "string" && detail.trim() !== "") {
-    return detail.trim();
-  }
-
-  const message = typeof err.message === "string" ? err.message.trim() : "";
-  if (message !== "" && !UNINFORMATIVE_MESSAGES.has(message)) {
-    return message;
-  }
-
-  if (typeof err.code === "number" && err.code !== 0) {
-    return `request failed (HTTP ${err.code})`;
+  // Not a request's rejection: an error a caller threw, whose message is its own.
+  if (typeof err.code !== "number") {
+    return message === null ? fallback : { ...fallback, message, isReportable: false };
   }
 
-  // Code 0 is mithril's "no HTTP response at all": the request never reached a
-  // server (connection refused, DNS failure, a tunnel that is down). There is no
-  // status to name, but "unknown error" would hide the one thing that is known.
-  if (err.code === 0) {
-    return "could not reach the workspace";
+  const userFacing = nonEmptyString(err.response?.user_facing_message);
+  const reason = nonEmptyString(err.response?.detail) ?? nonEmptyString(err.response?.error);
+  const status = err.code === 0 ? null : `HTTP ${err.code}`;
+  if (userFacing !== null) {
+    return { message: userFacing, details: joinDetails([status, reason]), isReportable: false, isUserFacing: true };
   }
+  if (reason !== null) {
+    return { message: reason, details: status, isReportable: false, isUserFacing: false };
+  }
+  // The body's raw text (mithril's `message`), behind the details. Code 0 is mithril's "no HTTP response at all": a
+  // connection refused or dropped, or its own timeout, so nothing says whether the request was carried out.
+  const details = joinDetails([status, message]);
+  if (err.code === 0 || GATEWAY_STATUSES.has(err.code)) {
+    return { message: notAnsweredSentence(kind), details, isReportable: false, isUserFacing: false };
+  }
+  return { ...fallback, details };
+}
 
-  return "unknown error";
+/** The sentence ``describeRequestFailure`` shows for ``error``; always non-empty. */
+export function describeRequestError(error: unknown, kind: RequestKind = "change"): string {
+  return describeRequestFailure(error, kind).message;
 }
 
 /**

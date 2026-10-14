@@ -170,7 +170,7 @@ export function openSwitchDialog(chatId: string, target: ProviderAccount): void 
       // claim about the harness rather than a report that the request failed.
       if (open !== null && open.chatId === chatId && open.target.id === target.id) {
         open.options = [];
-        open.optionsError = describeRequestError(error);
+        open.optionsError = describeRequestError(error, "read");
       }
     })
     .finally(() => {

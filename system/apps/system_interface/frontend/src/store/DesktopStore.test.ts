@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cascadeFrame } from "../geometry/frames";
 import { placementOf } from "../geometry/stack";
 import { getPresentUsers, resetPresenceForTesting } from "../model/Presence";
+import { TOAST_DURATION_MS } from "../model/Toasts";
+import { HttpError, REST_FALLBACK_MESSAGE } from "@imbue/workspace-ui/src/models/http";
 import { activeFocusedWindowId, activePlacements, isLayoutDirty } from "../reducers/desktopState";
 import { STILL_CONNECTING_NOTICE, resolveLaunchRun } from "../reducers/shortcuts";
 import { FakeDesktopApi, FakeDesktopSocket, PINNED_WINDOW_FRAME, offerApps, settle } from "../testing/fakeShell";
@@ -789,6 +791,53 @@ describe("windows", () => {
     deliverDesktopNews("home", 2, null, "other");
     await settle();
     expect(store.getState().activeDesktopId).toBe("work");
+  });
+});
+
+describe("failure toasts", () => {
+  it("frames a fallback by what failed and keeps it up, with the status behind See details and Report a bug", async () => {
+    const store = await startedStore();
+    api.refusal = new HttpError(500, REST_FALLBACK_MESSAGE, "HTTP 500\nTraceback ...", true);
+    await store.closeWindow("win-1");
+
+    const [toast] = store.toasts.current();
+    expect(toast.message).toBe(`Could not close the window: ${REST_FALLBACK_MESSAGE}`);
+    expect(toast.details).toBe("HTTP 500\nTraceback ...");
+    expect(toast.actions.map((action) => action.label)).toEqual(["Report a bug"]);
+    // It carries something to read and press, so it outlasts the five seconds a plain note gets.
+    vi.advanceTimersByTime(TOAST_DURATION_MS * 2);
+    expect(store.toasts.current()).toHaveLength(1);
+    store.toasts.dismiss(toast.id);
+    expect(store.toasts.current()).toEqual([]);
+  });
+
+  it("shows a sentence the shell wrote for people on its own, with the app's own words behind See details", async () => {
+    const store = await startedStore();
+    api.refusal = new HttpError(
+      502,
+      "Docs couldn't open that. Try again. If this persists, report a bug.",
+      "HTTP 502\ndocs answered the launch with 503: still loading",
+      false,
+      true,
+    );
+    await store.runLaunch("docs", "new", "new");
+
+    expect(store.toasts.current()).toMatchObject([
+      {
+        message: "Docs couldn't open that. Try again. If this persists, report a bug.",
+        details: "HTTP 502\ndocs answered the launch with 503: still loading",
+        isLasting: true,
+      },
+    ]);
+  });
+
+  it("lets a plain reason with nothing behind it go on its own", async () => {
+    const store = await startedStore();
+    api.refusal = "the shell is restarting";
+    await store.closeWindow("win-1");
+    expect(notices()).toEqual(["Could not close the window: the shell is restarting"]);
+    vi.advanceTimersByTime(TOAST_DURATION_MS);
+    expect(notices()).toEqual([]);
   });
 });
 

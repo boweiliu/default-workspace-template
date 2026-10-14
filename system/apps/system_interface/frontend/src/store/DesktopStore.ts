@@ -24,6 +24,8 @@ import {
   externalLinkMessageType,
 } from "@imbue/workspace-ui/src/links";
 import { StalePlacementsSaveError } from "../model/api";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
+import { REPORT_A_BUG_LABEL, openBugReport } from "@imbue/workspace-ui/src/report-bug";
 import {
   NO_DRAFT_APP_REASON,
   NO_TEXT_APP_REASON,
@@ -64,7 +66,7 @@ import type {
   WindowState,
 } from "../model/records";
 import { isSameCell, isSameWindowPaths, shortcutKey } from "../model/records";
-import { ToastQueue } from "../model/Toasts";
+import { ToastQueue, type ToastOptions } from "../model/Toasts";
 import { OwnIdMinter, PAGE_ID_PREFIX, REPORT_ID_PREFIX, SAVE_ID_PREFIX, mintHex } from "../model/ownIds";
 import { isPreviewShell } from "../model/PreviewShell";
 import { noticeFromWire } from "../model/UpdateNotice";
@@ -453,8 +455,21 @@ export class DesktopStore {
   }
 
   /** Tell the user about a refusal. */
-  private toast(message: string): void {
-    this.toasts.show(message);
+  private toast(message: string, options?: ToastOptions): void {
+    this.toasts.show(message, options);
+  }
+
+  /** Tell the user that what they asked for failed with ``error``: a sentence the shell wrote for people stands on its
+   *  own, any other reason follows ``whatFailed`` (or stands alone without one); the status and the server's own text
+   *  go behind "See details", and a fallback that asks for a bug report carries "Report a bug". */
+  private toastFailure(whatFailed: string | null, error: unknown): void {
+    const failure = describeRequestFailure(error);
+    const message =
+      failure.isUserFacing || whatFailed === null ? failure.message : `${whatFailed}: ${failure.message}`;
+    this.toast(message, {
+      details: failure.details,
+      actions: failure.isReportable ? [{ label: REPORT_A_BUG_LABEL, run: openBugReport }] : [],
+    });
   }
 
   /** The one window this shell shows alone, or null for the whole desktop. */
@@ -842,7 +857,7 @@ export class DesktopStore {
       inventory = await this.deps.api.fetchInventory();
     } catch (error) {
       console.warn("[si] could not read the inventory", error);
-      this.toast(`Could not read the desktops and apps: ${(error as Error).message}`);
+      this.toastFailure("Could not read the desktops and apps", error);
       return;
     }
     // The apps before the desktops, so the first draw of a desktop's shortcuts already knows every app.
@@ -1135,7 +1150,7 @@ export class DesktopStore {
     try {
       relay = await this.deps.api.relayEmbedderMessage(type, this.deps.clientId, payload, sender);
     } catch (error) {
-      this.toast((error as Error).message);
+      this.toastFailure(null, error);
       return false;
     }
     if (relay.deliveries.some((delivery) => delivery.has_no_desktop_window)) {
@@ -1233,7 +1248,7 @@ export class DesktopStore {
     try {
       reported = await this.deps.api.reportWindowLocation(found.desktop.id, windowId, this.deps.clientId, path, title);
     } catch (error) {
-      this.toast(`Could not move the window: ${(error as Error).message}`);
+      this.toastFailure("Could not move the window", error);
       return false;
     }
     this.applyOwnNavigation(found, reported);
@@ -1275,7 +1290,7 @@ export class DesktopStore {
     try {
       await this.deps.api.selectAvatar(design);
     } catch (error) {
-      this.toast(`Could not change the avatar: ${(error as Error).message}`);
+      this.toastFailure("Could not change the avatar", error);
     }
   }
 
@@ -1293,7 +1308,7 @@ export class DesktopStore {
       if (this.entryPushes !== entryPushesBefore) return;
       this.dispatch({ type: "entries_updated", entries: record.entries });
     } catch (error) {
-      this.toast(`Could not change the entry: ${(error as Error).message}`);
+      this.toastFailure("Could not change the entry", error);
       if (this.entryPushes !== entryPushesBefore) return;
       const others = Object.fromEntries(Object.entries(this.state.entries).filter(([name]) => name !== app));
       this.dispatch({
@@ -1395,7 +1410,7 @@ export class DesktopStore {
       this.takeDesktop(created);
       await this.switchDesktop(created.id);
     } catch (error) {
-      this.toast(`Could not create the desktop: ${(error as Error).message}`);
+      this.toastFailure("Could not create the desktop", error);
     }
   }
 
@@ -1447,7 +1462,7 @@ export class DesktopStore {
       if (now !== null && findShortcut(now, app, launch) === shortcut) {
         this.takeDesktop({ ...now, shortcuts: now.shortcuts.filter((candidate) => candidate !== shortcut) });
       }
-      this.toast(`Could not add the shortcut: ${(error as Error).message}`);
+      this.toastFailure("Could not add the shortcut", error);
     }
   }
 
@@ -1456,7 +1471,7 @@ export class DesktopStore {
     try {
       this.takeDesktop(await this.deps.api.setDesktopShortcut(desktopId, shortcut));
     } catch (error) {
-      this.toast(`Could not change the shortcut: ${(error as Error).message}`);
+      this.toastFailure("Could not change the shortcut", error);
     }
   }
 
@@ -1496,7 +1511,7 @@ export class DesktopStore {
       this.takeDesktop(await this.deps.api.moveDesktopShortcut(desktop.id, app, launch, cell));
     } catch (error) {
       this.withShortcutCells(changes.map((entry) => ({ ...entry, cell: entry.storedCell })));
-      this.toast(`Could not move the shortcut: ${(error as Error).message}`);
+      this.toastFailure("Could not move the shortcut", error);
     }
   }
 
@@ -1530,7 +1545,7 @@ export class DesktopStore {
       if (this.desktopsRevision === revision && now !== null && findShortcut(now, app, launch) === undefined) {
         this.takeDesktop({ ...now, shortcuts: [...now.shortcuts, removed] });
       }
-      this.toast(`Could not remove the shortcut: ${(error as Error).message}`);
+      this.toastFailure("Could not remove the shortcut", error);
     }
   }
 
@@ -1662,7 +1677,7 @@ export class DesktopStore {
         isMinimized,
       });
     } catch (error) {
-      this.toast(`Could not open ${app}: ${(error as Error).message}`);
+      this.toastFailure(`Could not open ${app}`, error);
       return null;
     }
     this.takeOpened(desktopId, outcome.window, outcome.isNew, isMinimized);
@@ -1704,7 +1719,7 @@ export class DesktopStore {
         isMinimized,
       });
     } catch (error) {
-      this.toast(`Could not open ${app}: ${(error as Error).message}`);
+      this.toastFailure(`Could not open ${app}`, error);
       return null;
     }
     if (target.kind === "window") {
@@ -1736,7 +1751,7 @@ export class DesktopStore {
     try {
       await this.deps.api.closeWindow(found.desktop.id, windowId);
     } catch (error) {
-      this.toast(`Could not close the window: ${(error as Error).message}`);
+      this.toastFailure("Could not close the window", error);
       return;
     }
     this.dispatch({ type: "window_closed_here", desktopId: found.desktop.id, windowId });
@@ -1927,7 +1942,7 @@ export class DesktopStore {
     try {
       await this.deps.api.quitApp(appName);
     } catch (error) {
-      this.toast(`Failed to quit ${appName}: ${(error as Error).message}`);
+      this.toastFailure(`Failed to quit ${appName}`, error);
     }
   }
 

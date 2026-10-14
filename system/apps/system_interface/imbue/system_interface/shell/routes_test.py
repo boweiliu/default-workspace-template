@@ -17,7 +17,6 @@ from workspace_layout.primitives import UserId
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import state_of
 from imbue.system_interface.shell.app_lifecycle import WAKE_BUDGET_COUNT
-from imbue.system_interface.shell.errors import LaunchUnavailableError
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.inventory import AppInventory
 from imbue.system_interface.shell.launches import LaunchPost
@@ -2491,16 +2490,13 @@ def test_a_preview_shell_reads_the_notice_but_refuses_to_close_or_roll_it_back(
 class _RecordingLaunchPoster:
     """Answers the shell's POST launches from a queue of outcomes and keeps every post it was handed."""
 
-    def __init__(self, outcomes: list[LaunchPostOutcome | LaunchUnavailableError]) -> None:
+    def __init__(self, outcomes: list[LaunchPostOutcome]) -> None:
         self.outcomes = list(outcomes)
         self.posts: list[LaunchPost] = []
 
     def __call__(self, post: LaunchPost) -> LaunchPostOutcome:
         self.posts.append(post)
-        outcome = self.outcomes.pop(0)
-        if isinstance(outcome, LaunchUnavailableError):
-            raise outcome
-        return outcome
+        return self.outcomes.pop(0)
 
 
 def _launching_shell(tmp_path: Path, broadcaster: WebSocketBroadcaster, poster: _RecordingLaunchPoster) -> Flask:
@@ -2511,6 +2507,7 @@ def _launching_shell(tmp_path: Path, broadcaster: WebSocketBroadcaster, poster: 
         registry_row_toml(
             "buddy",
             "http://localhost:7002",
+            display_name="Buddy",
             pin=("/", "plain", "independent", "bar"),
             launch_paths=(("root", "Buddy", "/"), ("new", "New buddy", "/api/intake")),
             launch_params={"new": ["message", "account_id"]},
@@ -2634,33 +2631,51 @@ def test_a_post_launch_path_is_posted_with_its_presets_params_and_envelope_and_l
 def test_a_post_launch_the_app_refuses_or_cannot_answer_is_passed_on_and_opens_nothing(
     tmp_path: Path, broadcaster: WebSocketBroadcaster
 ) -> None:
+    starting = "Buddy is still starting. Try again in a few seconds."
     poster = _RecordingLaunchPoster(
         [
             LaunchPostOutcome(status_code=400, body={"detail": "no account is signed in"}),
             LaunchPostOutcome(status_code=404, body=None),
             LaunchPostOutcome(status_code=500, body={"detail": "boom"}),
+            LaunchPostOutcome(status_code=503, body={"detail": "agent list not read", "user_facing_message": starting}),
             LaunchPostOutcome(status_code=200, body={"nope": True}),
             LaunchPostOutcome(status_code=200, body={"path": "//evil"}),
-            LaunchUnavailableError("buddy could not be reached for the launch: refused"),
         ]
     )
     app = _launching_shell(tmp_path, broadcaster, poster)
     client = app.test_client()
     _register_client(app, "c1", "home")
     body = {"app": "buddy", "launch": "new", "params": {"message": "hi"}, "target": {"kind": "new"}}
+    could_not_open = "Buddy couldn't open that. Try again. If this persists, report a bug."
 
+    # Every failure says what failed by the app's display name; the app's own words are the developer's detail.
     refused = _launch(client, body)
     assert refused.status_code == 400
-    assert refused.get_json()["detail"] == "buddy refused the launch: no account is signed in"
+    assert refused.get_json() == {
+        "detail": "buddy refused the launch: no account is signed in",
+        "user_facing_message": could_not_open,
+    }
     # A 4xx with no detail is not a refusal the app wrote (a missing route answers 404 as HTML): the app could
     # not be asked.
     unrouted = _launch(client, body)
-    assert unrouted.status_code == 502 and "no refusal detail" in unrouted.get_json()["detail"]
-    assert _launch(client, body).status_code == 502
-    assert _launch(client, body).status_code == 502
-    assert _launch(client, body).status_code == 502
-    unreachable = _launch(client, body)
-    assert unreachable.status_code == 502 and "could not be reached" in unreachable.get_json()["detail"]
+    assert unrouted.status_code == 502
+    assert unrouted.get_json() == {
+        "detail": "buddy answered the launch with 404 and no reason",
+        "user_facing_message": could_not_open,
+    }
+    # A 5xx's reason is passed on too, and a sentence the app wrote for people is what the person is shown.
+    failed = _launch(client, body)
+    assert failed.status_code == 502
+    assert failed.get_json() == {"detail": "buddy answered the launch with 500: boom", "user_facing_message": could_not_open}
+    waiting = _launch(client, body)
+    assert waiting.status_code == 502
+    assert waiting.get_json() == {
+        "detail": "buddy answered the launch with 503: agent list not read",
+        "user_facing_message": starting,
+    }
+    for _ in range(2):
+        no_page = _launch(client, body)
+        assert no_page.status_code == 502 and no_page.get_json()["user_facing_message"] == could_not_open
     # Only the pinned window stands: nothing opened for any of them.
     assert len(_desktop_windows(client)) == 1
 

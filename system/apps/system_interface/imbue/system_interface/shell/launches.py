@@ -36,6 +36,8 @@ DESKTOP_ID_FIELD: Final[str] = "desktop_id"
 WINDOW_PATH_FIELD: Final[str] = "window_path"
 # The one field a POST launch answers.
 PATH_FIELD: Final[str] = "path"
+# The field of an app's refusal that holds a sentence it wrote for people, which the shell passes on as its own.
+USER_FACING_MESSAGE_FIELD: Final[str] = "user_facing_message"
 
 # A launch is one loopback request an app answers once it has decided what to show; an app that takes longer
 # than this has hung.
@@ -48,6 +50,7 @@ class LaunchPost(FrozenModel):
     """One POST launch: where it goes and what it carries."""
 
     app: str = Field(description="The app the launch path belongs to, for the log")
+    display_name: str = Field(description="What users call the app, for what a failed launch tells them")
     url: str = Field(description="The app's registered URL plus the launch path")
     body: dict[str, str] = Field(description="The presets, the params, and the envelope, as one flat object")
 
@@ -62,13 +65,21 @@ class LaunchPostOutcome(FrozenModel):
 LaunchPoster = Callable[[LaunchPost], LaunchPostOutcome]
 
 
+@pure
+def could_not_open_sentence(display_name: str) -> str:
+    """What a person is told about a launch that opened nothing, when the app gave no sentence of its own for it."""
+    return f"{display_name} couldn't open that. Try again. If this persists, report a bug."
+
+
 def post_launch(post: LaunchPost) -> LaunchPostOutcome:
     """Make one POST launch over loopback; an app that cannot be reached or times out raises LaunchUnavailableError."""
     try:
         response = httpx.post(post.url, json=post.body, timeout=LAUNCH_TIMEOUT_SECONDS)
     except httpx.HTTPError as e:
         logger.warning("Could not post a launch to {} at {}: {}", post.app, post.url, e)
-        raise LaunchUnavailableError(f"{post.app} could not be reached for the launch: {e}") from e
+        raise LaunchUnavailableError(
+            f"{post.app} could not be reached for the launch: {e}", could_not_open_sentence(post.display_name)
+        ) from e
     try:
         body = response.json()
     except ValueError:
@@ -130,36 +141,47 @@ def launch_post_body(
 @pure
 def launch_post(entry: AppInventoryEntry, launch_path: RegistryLaunchPath, body: Mapping[str, str]) -> LaunchPost:
     return LaunchPost(
-        app=str(entry.row.name), url=f"{str(entry.row.url).rstrip('/')}{launch_path.path}", body=dict(body)
+        app=str(entry.row.name),
+        display_name=entry.display_name,
+        url=f"{str(entry.row.url).rstrip('/')}{launch_path.path}",
+        body=dict(body),
     )
 
 
 @pure
-def _quoted_detail(body: Any) -> str:
-    if isinstance(body, dict) and isinstance(body.get("detail"), str):
-        return body["detail"][:_DETAIL_LIMIT]
+def _quoted_field(body: Any, field: str) -> str:
+    if isinstance(body, dict) and isinstance(body.get(field), str):
+        return body[field].strip()[:_DETAIL_LIMIT]
     return ""
 
 
 @pure
-def launched_path(app: str, outcome: LaunchPostOutcome) -> WindowPath:
+def launched_path(app: str, display_name: str, outcome: LaunchPostOutcome) -> WindowPath:
     """The page path a POST launch answered. A 4xx carrying a ``detail`` is the app's refusal, passed on as
     LaunchRefusedError with that detail; anything else that is not a 200 carrying a window path (a 4xx with no
-    detail among them: a missing or GET-only route, not a refusal the app wrote) is LaunchUnavailableError."""
-    if 400 <= outcome.status_code < 500:
-        detail = _quoted_detail(outcome.body)
-        if detail:
-            raise LaunchRefusedError(f"{app} refused the launch: {detail}")
-        raise LaunchUnavailableError(f"{app} answered the launch with {outcome.status_code} and no refusal detail")
+    detail among them: a missing or GET-only route, not a refusal the app wrote) is LaunchUnavailableError, which
+    carries the app's ``detail`` too when it gave one, whatever the status. The person is shown the sentence the app
+    wrote for them (its ``user_facing_message``) when it wrote one, else that the app couldn't open that."""
+    user_facing_message = _quoted_field(outcome.body, USER_FACING_MESSAGE_FIELD) or could_not_open_sentence(
+        display_name
+    )
     if outcome.status_code != 200:
-        raise LaunchUnavailableError(f"{app} answered the launch with {outcome.status_code} instead of a page path")
+        detail = _quoted_field(outcome.body, "detail")
+        if 400 <= outcome.status_code < 500 and detail:
+            raise LaunchRefusedError(f"{app} refused the launch: {detail}", user_facing_message)
+        answered_with = f"{app} answered the launch with {outcome.status_code}"
+        raise LaunchUnavailableError(
+            f"{answered_with}: {detail}" if detail else f"{answered_with} and no reason", user_facing_message
+        )
     answered = outcome.body.get(PATH_FIELD) if isinstance(outcome.body, dict) else None
     if not isinstance(answered, str):
-        raise LaunchUnavailableError(f"{app} answered the launch with no page path")
+        raise LaunchUnavailableError(f"{app} answered the launch with no page path", user_facing_message)
     try:
         return WindowPath(answered)
     except InvalidLayoutValueError as e:
-        raise LaunchUnavailableError(f"{app} answered the launch with a path that is not a window path: {e}") from e
+        raise LaunchUnavailableError(
+            f"{app} answered the launch with a path that is not a window path: {e}", user_facing_message
+        ) from e
 
 
 def resolve_launch_destination(
@@ -179,6 +201,6 @@ def resolve_launch_destination(
         case LaunchPathMethod.POST:
             body = launch_post_body(launch_path, checked, client_id, desktop_id, window_path)
             outcome = poster(launch_post(entry, launch_path, body))
-            return launched_path(str(entry.row.name), outcome)
+            return launched_path(str(entry.row.name), entry.display_name, outcome)
         case _ as unreachable:
             assert_never(unreachable)
