@@ -636,15 +636,17 @@ describe("the desktop shortcut rows", () => {
     await settle();
     expect(shownApps()).toEqual(["docs"]);
     const toastMessages = (): string[] => store.toasts.current().map((toast) => toast.message);
-    expect(toastMessages()).toEqual(["Could not remove the shortcut: the shell said no"]);
+    expect(toastMessages()).toEqual([
+      "Couldn't remove this shortcut, so it's back. Try again. If this persists, report a bug.",
+    ]);
 
     void store.addShortcut("docs", "other", "focus");
     expect(shownApps()).toEqual(["docs", "docs"]);
     await settle();
     expect(shownApps()).toEqual(["docs"]);
     expect(toastMessages()).toEqual([
-      "Could not remove the shortcut: the shell said no",
-      "Could not add the shortcut: the shell said no",
+      "Couldn't remove this shortcut, so it's back. Try again. If this persists, report a bug.",
+      "Couldn't add this shortcut, so it's been taken off again. Try again. If this persists, report a bug.",
     ]);
   });
 

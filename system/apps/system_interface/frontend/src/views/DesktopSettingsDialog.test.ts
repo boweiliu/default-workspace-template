@@ -3,6 +3,7 @@ import "../testing/dom";
 import { mountView, unmountViews } from "@imbue/workspace-ui/src/testing/mount";
 import m from "mithril";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { HttpError, REST_FALLBACK_MESSAGE } from "@imbue/workspace-ui/src/models/http";
 import { desktopRecord } from "../testing/records";
 import { DesktopSettingsDialog, isSameWallpaper } from "./DesktopSettingsDialog";
 import type { DesktopSettingsDialogAttrs } from "./DesktopSettingsDialog";
@@ -14,6 +15,7 @@ function render(overrides: Partial<DesktopSettingsDialogAttrs> = {}): DesktopSet
     desktop: desktopRecord("home", { name: "Home" }),
     wallpapers: [],
     isDeleting: false,
+    isOnlyDesktop: false,
     onSave: vi.fn(async () => undefined),
     onDelete: vi.fn(async () => undefined),
     onCancel: vi.fn(),
@@ -104,6 +106,47 @@ describe("DesktopSettingsDialog", () => {
     expect(attrs.onCancel).not.toHaveBeenCalled();
     pressEscape();
     expect(attrs.onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds Delete from the only desktop and says why", () => {
+    const attrs = render({ isOnlyDesktop: true });
+    const deleteButton = card().querySelector(".desktop-settings-delete") as HTMLButtonElement;
+    expect(deleteButton.disabled).toBe(true);
+    expect(deleteButton.parentElement?.getAttribute("data-hover-tooltip")).toBe(
+      "You can't delete your only desktop. Add another one first.",
+    );
+    deleteButton.click();
+    m.redraw.sync();
+    expect(card().querySelector(".desktop-settings-confirm-delete")).toBeNull();
+    expect(attrs.onDelete).not.toHaveBeenCalled();
+  });
+
+  it("says which press failed, with the shell's reason behind See details, and keeps the step that failed", async () => {
+    render({ onSave: vi.fn(async () => Promise.reject(new HttpError(500, REST_FALLBACK_MESSAGE, "HTTP 500", true))) });
+    (card().querySelector(".desktop-settings-save") as HTMLButtonElement).click();
+    await settled();
+    expect(card().querySelector(".desktop-settings-error-message")?.textContent).toBe(
+      "These settings couldn't be saved. Try again. If this persists, report a bug.",
+    );
+    expect(card().querySelector(".see-details pre")?.textContent).toBe("HTTP 500");
+    expect(card().querySelector(".desktop-settings-error-action")?.textContent).toBe("Report a bug");
+    unmountViews();
+
+    // The shell's own sentence (another window deleted the other desktop meanwhile) stands as it is.
+    const lastOne = new HttpError(
+      409,
+      "You can't delete your only desktop. Add another one first.",
+      "HTTP 409\nDesktop 'Home' is the last one and cannot be deleted",
+      false,
+      true,
+    );
+    render({ isDeleting: true, onDelete: vi.fn(async () => Promise.reject(lastOne)) });
+    (card().querySelector(".desktop-settings-confirm-delete") as HTMLButtonElement).click();
+    await settled();
+    expect(card().querySelector(".desktop-settings-error-message")?.textContent).toBe(
+      "You can't delete your only desktop. Add another one first.",
+    );
+    expect(card().querySelector(".desktop-settings-confirm-delete")).not.toBeNull();
   });
 
   it("confirming the delete asks for it once", async () => {
