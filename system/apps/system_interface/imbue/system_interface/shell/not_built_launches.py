@@ -6,11 +6,11 @@ from enum import auto
 from typing import Final
 
 from app_manifest.registry import RegistryLaunchPath
+from pydantic import Field
+
 from imbue.imbue_common.enums import LowerCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.pure import pure
-from pydantic import Field
-
 from imbue.system_interface.shell.data_types import AppInventoryEntry
 from imbue.system_interface.shell.data_types import effective_launch_paths
 from imbue.system_interface.shell.desktop_document import launcher_order

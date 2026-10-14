@@ -10,6 +10,7 @@ proxies anything, and answers every method and path the same way.
 
 import errno
 import html
+import json
 import socket
 import threading
 from collections.abc import Callable
@@ -80,12 +81,45 @@ summary{{cursor:pointer}}</style></head>
 <body><div><h1>{heading}</h1>{body}</div></body></html>
 """
 
-# What a page that could not start offers: a Try again that asks once more, and the log's command for whoever wants it.
+# The app contract's wire (system/libs/workspace_ui/src/app_contract.ts), which this page speaks without the
+# contract module: the parker answers every path with this page, so it cannot serve the module beside it.
+SHELL_HANDSHAKE_TYPE: Final[str] = "shell:handshake"
+SHELL_START_WITH_TEXT_TYPE: Final[str] = "shell:start-with-text"
+
+# What a page that could not start offers: a Try again that asks once more, an agent asked to look at it (shown once
+# a shell that frames the page has greeted it, since only a shell can start one), and the log's command for whoever
+# wants it.
 _FAILED_BODY_TEMPLATE: Final[str] = (
-    '{sentence}<p><button type="button" onclick="location.reload()">Try again</button></p>'
+    '{sentence}<p><button type="button" onclick="location.reload()">Try again</button> '
+    '<button type="button" id="ask-agent" hidden>Ask an agent to look at it</button></p>'
     "<details><summary>See details</summary><p>The program's log may say why: "
     "<code>supervisorctl tail {program} stderr</code></p></details>"
+    "<script>(function () {"
+    'var ask = document.getElementById("ask-agent");'
+    "if (window.parent === window) return;"
+    'window.addEventListener("message", function (event) {'
+    "if (event.source === window.parent && event.data && event.data.type === {handshake}) ask.hidden = false;"
+    "});"
+    'ask.addEventListener("click", function () {'
+    'window.parent.postMessage({ type: {start_with_text}, text: {request} }, "*");'
+    "});"
+    "})();</script>"
 )
+
+
+@pure
+def _script_literal(value: str) -> str:
+    """``value`` as a JavaScript string literal that cannot close the script element it sits in."""
+    return json.dumps(value).replace("<", "\\u003c")
+
+
+@pure
+def could_not_start_request(display_name: str, program: str) -> str:
+    """What an agent asked to look at an app that could not start is told: the app, and where its log is."""
+    return (
+        f"{display_name} couldn't start in this workspace. Its program's log may say why "
+        f"(supervisorctl tail {program} stderr). Please find out why and get it running again."
+    )
 
 
 @pure
@@ -104,9 +138,14 @@ def parked_refresh_seconds(kind: ParkedPageKind) -> int:
 @pure
 def parked_page_html(kind: ParkedPageKind, display_name: str, program: str) -> str:
     """The page the parker answers with: starting (reloading every few seconds until the app answers), or could not
-    start (with a Try again, and the program's log behind "See details")."""
+    start (with a Try again, an agent to look at it, and the program's log behind "See details")."""
     name = html.escape(display_name)
-    failed_body = _FAILED_BODY_TEMPLATE.replace("{program}", html.escape(program))
+    failed_body = (
+        _FAILED_BODY_TEMPLATE.replace("{program}", html.escape(program))
+        .replace("{handshake}", _script_literal(SHELL_HANDSHAKE_TYPE))
+        .replace("{start_with_text}", _script_literal(SHELL_START_WITH_TEXT_TYPE))
+        .replace("{request}", _script_literal(could_not_start_request(display_name, program)))
+    )
     match kind:
         case ParkedPageKind.STARTING:
             return _PAGE_TEMPLATE.format(

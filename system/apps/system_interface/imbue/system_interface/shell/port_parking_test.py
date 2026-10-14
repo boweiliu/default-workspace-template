@@ -1,7 +1,9 @@
 """Tests for port parking: the held port, the handoff on the first connection, and the pages."""
 
+import re
 from collections.abc import Callable
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +14,8 @@ from imbue.system_interface.shell.port_parking import FAILED_REFRESH_SECONDS
 from imbue.system_interface.shell.port_parking import ParkedPageKind
 from imbue.system_interface.shell.port_parking import ParkedPort
 from imbue.system_interface.shell.port_parking import ParkingTarget
+from imbue.system_interface.shell.port_parking import SHELL_HANDSHAKE_TYPE
+from imbue.system_interface.shell.port_parking import SHELL_START_WITH_TEXT_TYPE
 from imbue.system_interface.shell.port_parking import STARTING_REFRESH_SECONDS
 from imbue.system_interface.shell.port_parking import parked_page_html
 from imbue.system_interface.shell.port_parking import parked_response_bytes
@@ -157,3 +161,16 @@ def test_the_response_bytes_carry_the_page_length() -> None:
     assert f"Content-Length: {len(page.encode())}".encode() in head
     assert body == page.encode()
     assert "&lt;b&gt;" in page
+
+
+@pytest.mark.frontend
+def test_the_could_not_start_pages_wire_types_are_the_app_contracts() -> None:
+    """The page speaks the app contract without its module, so it carries the two types it uses; this pins them to
+    ``app_contract.ts``, where a renamed type would otherwise leave the page's button silently doing nothing."""
+    app_contract_ts = (Path(__file__).parents[5] / "libs" / "workspace_ui" / "src" / "app_contract.ts").read_text()
+    for name, value in (
+        ("SHELL_HANDSHAKE", SHELL_HANDSHAKE_TYPE),
+        ("SHELL_START_WITH_TEXT", SHELL_START_WITH_TEXT_TYPE),
+    ):
+        declared = re.search(rf'export const {name} = "([^"]+)";', app_contract_ts)
+        assert declared is not None and declared.group(1) == value
