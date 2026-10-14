@@ -2,9 +2,9 @@
 
 Serves the .md files under ``system/apps/system_interface/docs`` rendered to HTML,
 with a sidebar for navigation. Rendering is on the fly, so edits to a spec show up
-on refresh. Run it with the ``markdown`` package available, e.g.::
+on refresh. Run it from the root venv::
 
-    uv run --with markdown python system/scripts/docs_viewer.py --port 8791
+    uv run --no-sync system/scripts/docs_viewer.py --port 8791
 
 Then register + surface it as a workspace tab::
 

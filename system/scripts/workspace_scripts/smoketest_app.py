@@ -4,10 +4,10 @@ Performs active socket/HTTP readiness polling, reload verification, and
 optional headless Playwright browser screenshot capture with optimized flags.
 
 Usage:
-    python3 system/scripts/smoketest_app.py <name-or-port>
-    python3 system/scripts/smoketest_app.py <name-or-port> --marker "Add a task"
-    python3 system/scripts/smoketest_app.py <name-or-port> --screenshot /tmp/mock.png
-    python3 system/scripts/smoketest_app.py <name-or-port> --marker "Add a task" --screenshot /tmp/mock.png
+    uv run --no-sync system/scripts/smoketest_app.py <name-or-port>
+    uv run --no-sync system/scripts/smoketest_app.py <name-or-port> --marker "Add a task"
+    uv run --no-sync system/scripts/smoketest_app.py <name-or-port> --screenshot /tmp/mock.png
+    uv run --no-sync system/scripts/smoketest_app.py <name-or-port> --marker "Add a task" --screenshot /tmp/mock.png
 """
 
 import argparse
