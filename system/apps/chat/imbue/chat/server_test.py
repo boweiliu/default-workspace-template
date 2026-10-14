@@ -237,6 +237,7 @@ def test_subagent_route_refuses_an_agent_that_is_not_the_chats(
     matched = client.get("/api/chats/agent-123/agents/agent-123/subagents/s1/events")
     assert mismatched.status_code == 404
     assert mismatched.get_json()["detail"] == "Chat 'agent-123' has no agent 'agent-456'"
+    assert mismatched.get_json()["kind"] == "side_conversation_gone"
     assert matched.status_code == 200
     assert matched.get_json() == {"events": [], "metadata": None}
 

@@ -1423,8 +1423,12 @@ def _retry_handoff_endpoint(chat_id: str) -> Response:
 
 
 def _chat_agent_not_found_response(chat_id: str, agent_id: str) -> Response:
-    error = ErrorResponse(detail=f"Chat '{chat_id}' has no agent '{agent_id}'")
-    return json_response(error.model_dump(), status_code=404)
+    return refusal_response(
+        f"Chat '{chat_id}' has no agent '{agent_id}'",
+        404,
+        user_facing_message="This side conversation is no longer available.",
+        kind="side_conversation_gone",
+    )
 
 
 def _find_chat_agent(chat_id: str, agent_id: str) -> ChatSegmentInfo | Response:

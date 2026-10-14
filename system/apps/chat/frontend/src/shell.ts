@@ -161,6 +161,11 @@ export async function startChatOnAccount(
   m.redraw();
 }
 
+/** Bring up the chat page of ``chatId``: a subagent view's way back to the chat it came from. */
+export function openChatPage(chatId: string): void {
+  connection?.openPath(rootPathFor(chatId), "focus");
+}
+
 /**
  * Open the subagent view for `sessionId` of this page's chat beside it, by its path alone: the
  * view's key names the chat, the agent whose harness session it is (the chat's active agent,
