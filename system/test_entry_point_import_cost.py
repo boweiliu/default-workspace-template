@@ -103,23 +103,23 @@ def test_an_entry_point_loads_no_undeclared_heavy_module(entry: Path) -> None:
     )
 
 
-def _skill_scripts(tmp_path: Path, module_source: str, pyproject: str = "") -> Path:
+def _scripts_project(tmp_path: Path, module_source: str, pyproject: str = "") -> Path:
     scripts = tmp_path / "scripts"
-    package = scripts / "probe_skill"
+    package = scripts / "probe_pkg"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
     (package / "cli.py").write_text(module_source)
     (scripts / "pyproject.toml").write_text(pyproject)
     entry = scripts / "probe.py"
     entry.write_text(
-        'from probe_skill.cli import main\n\nif __name__ == "__main__":\n    main()\n'
+        'from probe_pkg.cli import main\n\nif __name__ == "__main__":\n    main()\n'
     )
     return entry
 
 
 @pytest.mark.timeout(60)
 def test_the_probe_catches_a_top_level_heavy_import(tmp_path: Path) -> None:
-    entry = _skill_scripts(
+    entry = _scripts_project(
         tmp_path, "import pydantic\n\n\ndef main() -> None:\n    pass\n"
     )
 
@@ -128,7 +128,7 @@ def test_the_probe_catches_a_top_level_heavy_import(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(60)
 def test_a_declared_heavy_import_passes(tmp_path: Path) -> None:
-    entry = _skill_scripts(
+    entry = _scripts_project(
         tmp_path,
         "import pydantic\n\n\ndef main() -> None:\n    pass\n",
         '[tool.workspace-template.entry-points."probe.py"]\nheavy-imports = ["pydantic"]\n',
@@ -139,7 +139,7 @@ def test_a_declared_heavy_import_passes(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(60)
 def test_a_heavy_import_inside_a_subcommand_passes(tmp_path: Path) -> None:
-    entry = _skill_scripts(
+    entry = _scripts_project(
         tmp_path, "def main() -> None:\n    import pydantic\n\n    del pydantic\n"
     )
 
@@ -148,7 +148,7 @@ def test_a_heavy_import_inside_a_subcommand_passes(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(60)
 def test_a_bare_entry_is_probed_without_site_packages(tmp_path: Path) -> None:
-    entry = _skill_scripts(
+    entry = _scripts_project(
         tmp_path, "import asyncio\n\n\ndef main() -> None:\n    pass\n"
     )
 
@@ -157,7 +157,7 @@ def test_a_bare_entry_is_probed_without_site_packages(tmp_path: Path) -> None:
 
 @pytest.mark.timeout(60)
 def test_a_bare_entry_cannot_reach_the_venv(tmp_path: Path) -> None:
-    entry = _skill_scripts(
+    entry = _scripts_project(
         tmp_path, "import pydantic\n\n\ndef main() -> None:\n    pass\n"
     )
 
