@@ -6,6 +6,7 @@ knows the chat only as an app with pages, and reaches it only through the browse
 this app's manifest registers for (``focus_chat.py``).
 """
 
+import html
 import json
 import os
 import queue
@@ -70,6 +71,7 @@ from imbue.chat.chat_transcript import ChatTranscript
 from imbue.chat.chat_transcript import TranscriptSegment
 from imbue.chat.config import Config
 from imbue.chat.documents import document_response
+from imbue.chat.documents import html_response
 from imbue.chat.documents import inject_base_path_meta_tag
 from imbue.chat.documents import inject_chat_identity_meta_tags
 from imbue.chat.documents import inject_hostname_meta_tag
@@ -193,8 +195,23 @@ ROOT_DOCUMENT_FILENAME: Final[str] = "root.html"
 # repair story, and a chat frame is never the page a reader is looking at on its own.
 _CHAT_NOT_BUILT_HTML: Final[str] = (
     '<!doctype html><html><head><meta charset="utf-8"><title>Chat</title></head>'
-    "<body><p>This workspace's chat interface is not built yet.</p></body></html>"
+    "<body><p>Chat isn't available in this workspace right now. Restart the workspace. "
+    "If this persists, report a bug.</p></body></html>"
 )
+
+
+def _not_part_of_chat_page() -> Response:
+    """What a saved or restored address the chat no longer serves gets: a page, not a data body, with a way back."""
+    root_path = (request.script_root or "").rstrip("/")
+    back_href = html.escape(f"{root_path}/", quote=True)
+    page = (
+        '<!doctype html><html><head><meta charset="utf-8"><title>Chat</title></head>'
+        '<body style="font-family: system-ui, sans-serif; padding: 2rem">'
+        "<p>This page isn't part of chat.</p>"
+        f'<p><a href="{back_href}">Back to the chat</a></p>'
+        "</body></html>"
+    )
+    return html_response(page, status_code=404)
 
 
 def _find_active_agent(chat_id: str) -> AgentInfo | None:
@@ -2124,7 +2141,7 @@ def _chat_document(key: str) -> Response:
     elif AGENT_ID_PATTERN.fullmatch(key):
         chat_id, agent_id, session_id = key, "", ""
     else:
-        return _chat_not_found_response(key)
+        return _not_part_of_chat_page()
     document_path = get_state().static_directory / CHAT_DOCUMENT_FILENAME
     if not document_path.exists():
         _loguru_logger.warning("Served the chat not-built placeholder: no chat bundle at {}", document_path)
@@ -2149,8 +2166,10 @@ def _serve_file_or_document(path: str) -> Response:
     file_response = try_serve_file(path)
     if file_response is not None:
         return file_response
-    if "/" in path:
+    if path.startswith("api/"):
         return json_response(ErrorResponse(detail=f"Nothing is served at '/{path}'").model_dump(), status_code=404)
+    if "/" in path:
+        return _not_part_of_chat_page()
     return _chat_document(path)
 
 

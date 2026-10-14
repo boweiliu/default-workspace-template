@@ -3519,11 +3519,30 @@ def test_directory_with_image_extension_returns_404(client: FlaskClient, tmp_pat
 
 
 def test_nonexistent_path_is_not_a_chat_page(client: FlaskClient, tmp_path: Path) -> None:
-    """A path matching no file is not a chat page either: the chat app has no client-side routes to fall through to."""
+    """A path matching no file is not a chat page either: the chat app has no client-side routes to fall through to.
+    A browser at such an address gets a page with a way back rather than a data body."""
     response = client.get(str(tmp_path / "some" / "client" / "route"))
 
     assert response.status_code == 404
-    assert response.get_json()["detail"] == f"Nothing is served at '{tmp_path / 'some' / 'client' / 'route'}'"
+    assert response.mimetype == "text/html"
+    page = response.get_data(as_text=True)
+    assert "This page isn't part of chat." in page
+    assert 'href="/"' in page
+
+
+def test_an_old_chat_address_gets_a_page_not_a_missing_chat(client: FlaskClient) -> None:
+    for old_address in ("/new", "/send"):
+        response = client.get(old_address)
+
+        assert response.status_code == 404
+        assert "This page isn't part of chat." in response.get_data(as_text=True)
+
+
+def test_an_unknown_api_path_still_answers_with_data(client: FlaskClient) -> None:
+    response = client.get("/api/not-a-route/at-all")
+
+    assert response.status_code == 404
+    assert response.get_json()["detail"] == "Nothing is served at '/api/not-a-route/at-all'"
 
 
 def test_serves_image_with_spaces_in_filename(client: FlaskClient, tmp_path: Path) -> None:
