@@ -2,7 +2,7 @@ Each skill's Python now lives in its own uv project, `.agents/skills/<name>/pyth
 
 - **Third-party skills are unaffected:** a skill whose `scripts/` holds plain or PEP 723 scripts never touches the workspace's uv setup.
 
-- **What existing workspaces need:** a workspace's own skills with Python need the same layout. The update worker converts them by following the new `update-self/references/python-packaging-migration.md`.
+- **What existing workspaces need:** a workspace's own skills with Python need the same layout. The update worker converts them by following the new `update-self/references/python-packaging-migration.md`, which also covers a skill test that loads its module from a file: it imports the module from the package instead.
 
 - **Commands that changed:**
   - `notify_user.py`, `request_secret.py`, `preview_app.py`, `serve_isolated_instance.py`, `refresh_workspace_view.py` and `smoketest_app.py` are now run with `uv run --no-sync` instead of `python3`.
