@@ -196,7 +196,8 @@ def _argv_runs_plain_uv_run(elements: list[ast.expr]) -> bool:
 
     Only the leading string literals are read: an argv that names no non-syncing
     option before its first computed element (the program, say) syncs. A bare
-    ``("uv", "run")`` is a comparison against a command's first words, not an argv.
+    ``("uv", "run")`` names no program, so it is not judged: it is a comparison
+    against a command's first words or a prefix that another argv spreads.
     """
     literals: list[str] = []
     for element in elements:
