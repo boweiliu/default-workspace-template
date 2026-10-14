@@ -28,7 +28,7 @@
 > * A paired mngr PR on `gabriel/skill-scripts-as-packages` (matching PR 2's template branch name) converts minds_evals' and minds_admin's `uv run` invocations of template scripts to `--no-sync` and runs their tests against PR 2's branch.
 > * Every long-running program line uses `bash -c "uv sync --all-packages --frozen && exec .venv/bin/<name>"`: host-backup, share-gateway, env-converge (unchanged), plus the `bootstrap` window, github-sync, and the user-service guide and its example.
 > * The `bootstrap` window uses `;` instead of `&&`: a failed boot-time sync (e.g. a skill `scripts/` dir with no `pyproject.toml`, which fails every uv command in the workspace) still starts supervisord on the existing venv, so the workspace stays reachable for an agent to repair it.
-> * The `SessionStart` sync checks the lock. If it's stale, it relocks and prints a message that the lock was regenerated and should go into the agent's next commit, phrased so the agent doesn't act on it before the user's first message. Then it syncs `--frozen`.
+> * The `SessionStart` sync (claude and codex) checks the lock. If it's stale, it never relocks (in the shared main tree a drift is usually another agent's dependency change in progress); it prints one note for whoever is changing dependencies, phrased so the agent doesn't act on it before the user's first message. Then it syncs `--frozen`.
 > * A root test fails on any supervisord program line that runs under `uv run`, so the update worker fixes existing user services the same way it migrates user skills.
 > * On the scratch workspace after PR 1: `ps` shows no `uv` process parenting supervisord or any program, every program reaches RUNNING, and the PR records per-process memory before/after.
 > * All agent-facing plain `uv run` (dev tools included) becomes `--no-sync`. A root check scans tracked `.md`, `.toml`, `.sh` and `.conf` files for plain `uv run`, skipping changelog dirs, consolidated changelogs and test fixtures; any remaining deliberate use is listed with file and context in the check.
@@ -84,9 +84,9 @@
   - a bare script also runs under uv (stdlib only), at about 40 ms more;
   - `python3` on a venv-tier script fails loudly at its first third-party import;
   - the contexts where bareness matters (hooks, pre-sync build steps, program lines, minds/CI/owner-exec calls, update-self's own flow) are wired in config, not typed by agents.
-- At session start:
-  - If `uv.lock` has drifted from `pyproject.toml`, it is regenerated, and the agent is told (as context, not an instruction to act now) to include it in its next commit.
-  - The venv is then synced `--frozen`.
+- At session start (claude and codex):
+  - If `uv.lock` has drifted from `pyproject.toml`, it is left as it is, and the agent is told once (as context, not an instruction to act now) that whoever is changing dependencies relocks.
+  - The venv is then synced `--frozen` from the lock.
   - With no drift, nothing visible happens.
 - Skill-authoring docs say:
   - a skill with scripts gets `scripts/pyproject.toml`;
@@ -101,7 +101,7 @@
 
 ### For long-running processes
 - No `uv` process stays resident as a parent of supervisord or any program.
-  - `bootstrap`, github-sync, and the user-service guide use `bash -c "uv sync --all-packages --frozen && exec .venv/bin/<name>"`, like host-backup, share-gateway and env-converge already do.
+  - github-sync and the user-service guide use `bash -c "uv sync --all-packages --frozen && exec .venv/bin/<name>"`, like host-backup, share-gateway and env-converge already do; the `bootstrap` window uses the same form with `;`.
 - A user service whose program line uses `uv run` fails a root test, so the update worker rewrites it during the merge.
 
 ### For guards and external callers
@@ -126,7 +126,7 @@
 
 ### PR 1 -- `gabriel/python-launch-discipline` (template; base `main`)
 
-- **`.mngr/settings.toml`**: `extra_window = ["bootstrap='uv run bootstrap'"]` becomes `bash -c "uv sync --all-packages --frozen; exec .venv/bin/bootstrap"` (`;`, so a failed sync still boots). mngr's `NamedCommand.from_string` strips the outer single quotes and runs the rest as the window command.
+- **`.mngr/settings.toml`**: `extra_window = ["bootstrap='uv run bootstrap'"]` becomes `bash -c "uv sync --all-packages --frozen; exec .venv/bin/bootstrap"` (`;`, so a failed sync still boots). mngr's `NamedCommand.from_string` strips the outer single quotes and runs the rest as the window command. `uv run` had also put `.venv/bin` first on `PATH` (and set `VIRTUAL_ENV`) for everything supervisord runs, which program lines naming an entry point bare rely on, so `bootstrap` execs supervisord with that environment itself.
 - **`.agents/skills/github-sync/SKILL.md`** (program line at ~174): `uv run github-sync run` becomes the same exec form.
 - **`.agents/shared/references/service-processes.md`**:
   - The example program line (line 22) becomes the exec form.
@@ -139,7 +139,6 @@
     - then `uv sync --all-packages --frozen`.
   - `.claude/settings.json` and `.codex/hooks.json` `SessionStart` call it (claude instead of `uv sync --all-packages`).
   - Worker provisioning's `uv sync --all-packages` becomes `--frozen` too.
-  - `.codex/hooks.json` has no `SessionStart` sync, so nothing changes there.
 - **`uv run` → `uv run --no-sync`**, everywhere agents call a command, except skill and system script calls (PR 2 rewrites those):
   - `AGENTS.md`, `.mngr/settings.toml` prompts, `SKILL.md`s and references, `.sh` scripts.
   - Commands: `pytest`, `python`, `mngr`, `app-manifest`, `env-converge`, `host-backup-*`, `tk`, `ruff`, `ty`, `agentic-browser-fleet`, etc.
