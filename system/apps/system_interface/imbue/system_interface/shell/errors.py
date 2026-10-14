@@ -118,7 +118,10 @@ class LaunchRefusedError(LaunchFailureError, ValueError):
 
 class LaunchUnavailableError(LaunchFailureError, RuntimeError):
     """A POST launch could not be completed: the app could not be reached, timed out, or answered something other
-    than a page path (answered 502)."""
+    than a page path (answered 502). Every one carries a sentence for people."""
+
+    def __init__(self, message: str, user_facing_message: str, kind: RefusalKind | None = None) -> None:
+        super().__init__(message, user_facing_message, kind)
 
 
 class WindowNotFoundError(ShellError, LookupError):

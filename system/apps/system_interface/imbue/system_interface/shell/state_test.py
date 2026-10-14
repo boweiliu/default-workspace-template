@@ -259,7 +259,9 @@ def test_a_post_launch_to_a_stopped_stoppable_app_wakes_it_and_waits_for_it_to_a
 
 
 def _refusing_launch_poster(post: LaunchPost) -> LaunchPostOutcome:
-    raise LaunchUnavailableError(f"{post.app} could not be reached for the launch: refused")
+    raise LaunchUnavailableError(
+        f"{post.app} could not be reached for the launch: refused", could_not_open_sentence(post.display_name)
+    )
 
 
 def _launch_waking_manager(

@@ -35,7 +35,10 @@ const REFUSAL_KINDS: ReadonlySet<string> = new Set<RefusalKind>([
   "not_saved",
 ]);
 
-export const REPORT_A_BUG_ACTION: ToastAction = { label: REPORT_A_BUG_LABEL, run: openBugReport };
+/** "Report a bug", opening the bug report with ``reportBug``. */
+export function reportBugAction(reportBug: () => void = openBugReport): ToastAction {
+  return { label: REPORT_A_BUG_LABEL, run: reportBug };
+}
 
 /** What a window, a shortcut, or a launcher row says of an app that is not running and that the workspace does not
  *  start on a request: one it does not run itself, or one it treats as part of how it runs. */
@@ -50,26 +53,32 @@ export function refusalKindOf(error: unknown): RefusalKind | null {
   return typeof kind === "string" && REFUSAL_KINDS.has(kind) ? (kind as RefusalKind) : null;
 }
 
-/** ``message`` with its "Report a bug" when it asks for one, after ``actions``. */
+/** ``message`` with its "Report a bug" (which runs ``reportBug``) when it asks for one, after ``actions``. */
 export function noticeOf(
   message: string,
   details: string | null,
   actions: readonly ToastAction[] = [],
+  reportBug: () => void = openBugReport,
 ): FailureNotice {
-  return { message, details, actions: asksForBugReport(message) ? [...actions, REPORT_A_BUG_ACTION] : actions };
+  return { message, details, actions: asksForBugReport(message) ? [...actions, reportBugAction(reportBug)] : actions };
 }
 
 /**
  * ``error`` as a surface whose own sentence for the failure is ``fallback`` shows it: the shell's sentence for
  * people, or the no-answer sentence, as it is; otherwise ``fallback``, with the reason it replaces behind the
- * details. ``actions`` come before "Report a bug".
+ * details. ``actions`` come before "Report a bug", which runs ``reportBug``.
  */
-export function failureNotice(fallback: string, error: unknown, actions: readonly ToastAction[] = []): FailureNotice {
+export function failureNotice(
+  fallback: string,
+  error: unknown,
+  actions: readonly ToastAction[] = [],
+  reportBug: () => void = openBugReport,
+): FailureNotice {
   const failure = describeRequestFailure(error);
   if (failure.isUserFacing || isNotAnsweredSentence(failure.message)) {
-    return noticeOf(failure.message, failure.details, actions);
+    return noticeOf(failure.message, failure.details, actions, reportBug);
   }
   // A fallback of the shared helper's own says nothing the surface's sentence does not.
   const reason = failure.isReportable ? null : failure.message;
-  return noticeOf(fallback, joinDetails([failure.details, reason]), actions);
+  return noticeOf(fallback, joinDetails([failure.details, reason]), actions, reportBug);
 }

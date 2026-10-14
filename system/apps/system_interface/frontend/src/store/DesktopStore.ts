@@ -28,7 +28,7 @@ import { FOCUS_CHAT } from "@imbue/workspace-ui/src/embed";
 import { READ_NOT_ANSWERED, fallbackSentence, joinDetails } from "@imbue/workspace-ui/src/models/failure";
 import { HttpError } from "@imbue/workspace-ui/src/models/http";
 import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
-import { REPORT_A_BUG_ACTION, failureNotice, noticeOf, refusalKindOf, stoppedSentence } from "../model/failures";
+import { failureNotice, noticeOf, refusalKindOf, reportBugAction, stoppedSentence } from "../model/failures";
 import type { FailureNotice } from "../model/failures";
 import {
   NO_DRAFT_APP_REASON,
@@ -333,6 +333,8 @@ export interface StoreDependencies {
   readonly popOut?: PopOutBridge;
   /** Where external links open when no app takes them; absent opens none. */
   readonly outsideLinks?: OutsideLinkOpener;
+  /** Open the bug report a failure's "Report a bug" asks for; absent opens none. */
+  readonly reportBug?: () => void;
   /** The one window this shell shows edge to edge (a pulled-out window's own desktop window), else null. */
   readonly soloWindowId?: string | null;
   /** Whether the chrome reopened the solo window's desktop window (a session restore, a reopen of the app, a
@@ -457,6 +459,7 @@ export class DesktopStore {
   private markAppsLoaded: () => void = () => undefined;
   private readonly popOut: PopOutBridge;
   private readonly outsideLinks: OutsideLinkOpener;
+  private readonly reportBug: () => void;
   private readonly soloWindowId: string | null;
   /** Whether the embedder can pull a window out; off until it says so (an older chrome, a plain browser). */
   private canPopOut = false;
@@ -486,6 +489,7 @@ export class DesktopStore {
     this.metrics = deps.metrics;
     this.popOut = deps.popOut ?? NULL_POP_OUT_BRIDGE;
     this.outsideLinks = deps.outsideLinks ?? NULL_OUTSIDE_LINK_OPENER;
+    this.reportBug = deps.reportBug ?? (() => undefined);
     this.soloWindowId = deps.soloWindowId ?? null;
     this.isSoloFirstLayoutPending = this.soloWindowId !== null;
     this.appsLoaded = new Promise((resolve) => {
@@ -497,6 +501,16 @@ export class DesktopStore {
   /** Tell the user about a refusal. */
   private toast(message: string): void {
     this.toasts.show(message);
+  }
+
+  /** ``noticeOf``, its "Report a bug" opening this store's bug report. */
+  private notice(message: string, details: string | null, actions: readonly ToastAction[] = []): FailureNotice {
+    return noticeOf(message, details, actions, this.reportBug);
+  }
+
+  /** ``failureNotice``, its "Report a bug" opening this store's bug report. */
+  private failure(fallback: string, error: unknown, actions: readonly ToastAction[] = []): FailureNotice {
+    return failureNotice(fallback, error, actions, this.reportBug);
   }
 
   private toastNotice(notice: FailureNotice): void {
@@ -522,32 +536,32 @@ export class DesktopStore {
     switch (refusalKindOf(error)) {
       case "app_unavailable":
         if (app === undefined) break;
-        return noticeOf(
+        return this.notice(
           `${app.display_name} isn't available in this workspace right now, so nothing was changed.`,
           details,
         );
       case "launch_path_gone":
         if (app === undefined || asked.launchLabel === undefined) break;
-        return noticeOf(
+        return this.notice(
           `${app.display_name} no longer offers “${asked.launchLabel}”, so nothing was changed.`,
           details,
         );
       case "launch_failed":
-        return noticeOf(fallback, details);
+        return this.notice(fallback, details);
       case "window_gone":
         void this.refreshInventory();
         break;
       case "out_of_space":
-        return failureNotice(fallback, error, [
+        return this.failure(fallback, error, [
           { label: "Ask an agent to free up space", run: () => void this.startWithText(FREE_SPACE_REQUEST) },
           ...tryAgain,
         ]);
       case "not_saved":
-        return failureNotice(fallback, error, tryAgain);
+        return this.failure(fallback, error, tryAgain);
       case null:
         break;
     }
-    return failureNotice(fallback, error);
+    return this.failure(fallback, error);
   }
 
   /** Tell the user, in a toast, that what they asked for failed with ``error`` (see ``noticeFor``). */
@@ -567,7 +581,7 @@ export class DesktopStore {
     const isOwnSentence = failure.isUserFacing || failure.message === READ_NOT_ANSWERED;
     const reload: ToastAction = { label: "Reload", run: () => this.deps.reloadInterface() };
     return isOwnSentence
-      ? noticeOf(failure.message, failure.details, [reload])
+      ? this.notice(failure.message, failure.details, [reload])
       : {
           message: BOOT_READ_FAILED_SENTENCE,
           details: joinDetails([failure.details, failure.isReportable ? null : failure.message]),
@@ -715,7 +729,11 @@ export class DesktopStore {
     const sentence = stoppedSentence(app);
     const askedThrough = freeTextRowsOf(openableApps(this.state))[0]?.app.name ?? null;
     if (askedThrough === null || askedThrough === app.name) {
-      return { message: `${sentence} If this persists, report a bug.`, details: null, actions: [REPORT_A_BUG_ACTION] };
+      return {
+        message: `${sentence} If this persists, report a bug.`,
+        details: null,
+        actions: [reportBugAction(this.reportBug)],
+      };
     }
     const request = `${app.display_name} (${app.name}) isn't running in this workspace. Please start it again.`;
     return {
@@ -1741,11 +1759,11 @@ export class DesktopStore {
         : [];
     switch (reason.kind) {
       case "app_gone":
-        return noticeOf("This shortcut's app is no longer part of this workspace.", null, removal);
+        return this.notice("This shortcut's app is no longer part of this workspace.", null, removal);
       case "launch_gone":
-        return noticeOf(`${reason.displayName} can no longer open this shortcut.`, null, removal);
+        return this.notice(`${reason.displayName} can no longer open this shortcut.`, null, removal);
       case "no_desktop":
-        return noticeOf("Choose a desktop in the tray, then try again.", null);
+        return this.notice("Choose a desktop in the tray, then try again.", null);
     }
   }
 
@@ -1769,7 +1787,7 @@ export class DesktopStore {
     const app = appByName(this.state, appName);
     const launchPath = app === undefined ? null : launchPathOf(app, launchId);
     if (app === undefined || launchPath === null) {
-      report(noticeOf(`${this.displayNameOf(appName)} changed while this menu was open. Try again.`, null));
+      report(this.notice(`${this.displayNameOf(appName)} changed while this menu was open. Try again.`, null));
       return null;
     }
     return { app, launchPath };
@@ -1806,7 +1824,7 @@ export class DesktopStore {
     if (found === null) return false;
     const disabledReason = textRowDisabledReason(found.launchPath, text);
     if (disabledReason !== null) {
-      toReport(noticeOf(disabledReason, null));
+      toReport(this.notice(disabledReason, null));
       return false;
     }
     const params = freeTextParams(found.launchPath, text);

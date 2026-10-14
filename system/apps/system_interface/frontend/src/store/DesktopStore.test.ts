@@ -90,6 +90,7 @@ let api: FakeDesktopApi;
 let socket: FakeDesktopSocket;
 let stores: DesktopStore[];
 let reloads: number;
+let bugReports: number;
 
 /** The toasts every store of the test has on screen, oldest first. */
 function notices(): string[] {
@@ -108,6 +109,7 @@ function makeStore(
     modes: MODES,
     redraw,
     reloadInterface: () => void (reloads += 1),
+    reportBug: () => void (bugReports += 1),
     ...extra,
   });
   store.setBackdropSize({ width: 1000, height: 800 });
@@ -128,6 +130,7 @@ beforeEach(() => {
   socket = new FakeDesktopSocket();
   stores = [];
   reloads = 0;
+  bugReports = 0;
   api.apps = [appRecord("docs"), appRecord("notes")];
   api.desktops = [
     desktopRecord("home", { windows: [windowRecord("win-1", "docs", "/a"), windowRecord("win-2", "notes", "/b")] }),
@@ -914,6 +917,34 @@ describe("windows", () => {
   });
 });
 
+describe("a stopped app's window", () => {
+  it("offers an agent to start an app the workspace does not start itself, through the app agents are asked in", async () => {
+    const chat = appRecord("chat", {
+      display_name: "Chat",
+      launch_paths: [launchPathRecord({ id: "new", path: "/new", params: ["message"], text_param: "message" })],
+    });
+    const terminal = appRecord("terminal", { display_name: "Terminal", is_running: false, program: "" });
+    api.apps = [chat, terminal];
+    const store = await startedStore();
+
+    const stopped = store.stoppedNotice(terminal);
+    expect(stopped.message).toBe("Terminal isn't running.");
+    expect(stopped.actions.map((action) => action.label)).toEqual(["Ask an agent to start it"]);
+    stopped.actions[0].run();
+    await settle();
+    expect(last(api.calls.filter((call) => call.startsWith("launch")))).toBe(
+      `launch:home:chat:new:${JSON.stringify({ message: "Terminal (terminal) isn't running in this workspace. Please start it again." })}:new`,
+    );
+
+    // Chat itself, stopped, has no agent to ask: it can only be reported.
+    const chatStopped = store.stoppedNotice({ ...chat, is_running: false });
+    expect(chatStopped.message).toBe("Chat is not running right now. If this persists, report a bug.");
+    expect(chatStopped.actions.map((action) => action.label)).toEqual(["Report a bug"]);
+    chatStopped.actions[0].run();
+    expect(bugReports).toBe(1);
+  });
+});
+
 describe("failure toasts", () => {
   it("says what failed in its own words and keeps it up, with the status behind See details and Report a bug", async () => {
     const store = await startedStore();
@@ -924,6 +955,8 @@ describe("failure toasts", () => {
     expect(toast.message).toBe("This window couldn't be closed. Try again. If this persists, report a bug.");
     expect(toast.details).toBe("HTTP 500\nTraceback ...");
     expect(toast.actions.map((action) => action.label)).toEqual(["Report a bug"]);
+    toast.actions[0].run();
+    expect(bugReports).toBe(1);
     vi.advanceTimersByTime(TOAST_DURATION_MS * 2);
     expect(store.toasts.current()).toHaveLength(1);
     store.toasts.dismiss(toast.id);
