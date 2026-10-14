@@ -1,4 +1,4 @@
-"""Test helper for the PreToolUse guard scripts beside this file."""
+"""Test helper for the PreToolUse guard scripts in ``system/scripts/``."""
 
 import json
 import subprocess
