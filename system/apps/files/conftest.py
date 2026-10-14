@@ -4,7 +4,9 @@ It answers the reads `dufs --allow-all` answers for a small fixed tree: a folder
 and a file's editor page are `assets/index.html` with dufs's two placeholders filled (the
 listing JSON base64-encoded, as dufs 0.46 encodes it), a file's plain GET is its content, and
 the assets are served under dufs's assets prefix. Writes never reach it: every page's `fetch`
-is stubbed to record the non-GET requests dufs makes and answer them as dufs would.
+is stubbed to record the non-GET requests dufs makes and answer them as dufs would, unless a test
+set ``window.fetchRefusals[<method>]`` to ``{status, body}`` (answered so, a GET included) or to
+``"no answer"`` (the request rejects, as one nothing answered does).
 """
 
 import base64
@@ -27,8 +29,14 @@ _SEPT_21 = 1790000000000
 _SEPT_27 = 1790500000000
 _OCT_3 = 1791000000000
 
+# A folder deep enough that a file's view page in it is longer than a window's path can be.
+LONG_FOLDER = f"{WORKSPACE}/{'deep-folder-' * 180}"
+
 # Each folder's listing in the order dufs sends it (it sorts server-side).
 LISTINGS: dict[str, list[dict[str, Any]]] = {
+    LONG_FOLDER: [
+        {"path_type": "File", "name": "far.txt", "mtime": _OCT_3, "size": 12},
+    ],
     WORKSPACE: [
         {"path_type": "Dir", "name": ".git", "mtime": _SEPT_21, "size": 12},
         {"path_type": "Dir", "name": "data", "mtime": _SEPT_27, "size": 3},
@@ -67,6 +75,9 @@ _FETCH_STUB = """
   const pageFetch = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {
     const method = (init.method || "GET").toUpperCase();
+    const refusal = (window.fetchRefusals || {})[method];
+    if (refusal === "no answer") throw new TypeError("Failed to fetch");
+    if (refusal !== undefined) return new Response(refusal.body, { status: refusal.status });
     if (method === "GET") return pageFetch(input, init);
     const headers = init.headers || {};
     await window.recordFetch({
@@ -160,6 +171,12 @@ def dufs_origin() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@pytest.fixture
+def long_folder() -> str:
+    """A folder of the stand-in's whose files' view pages are longer than a window's path can be."""
+    return LONG_FOLDER
 
 
 @pytest.fixture

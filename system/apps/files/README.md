@@ -42,8 +42,13 @@ click through the listing leaves it), is raised instead of opening another.
 
 Beyond the manifest (`app.toml`) and its icon (`icon.svg`), this directory
 holds `assets/`: a vendored copy of dufs's own frontend (its `assets/`
-directory at the pinned release, served via `--assets`), carrying seven
-workspace patches -- the app contract (below); a toolbox toggle that hides "system files" (any path
+directory at the pinned release, served via `--assets`), carrying eight
+workspace patches -- the app contract (below); failures told in the page
+rather than in a browser alert (a create or a move the server refuses opens
+the page's own dialog, a file whose contents cannot be loaded says so in place
+of the editor with a Try again, a failed upload's row says why, and a file too
+deep for a window of its own is told rather than asked of the shell), each with
+the server's status and text behind "See details"; a toolbox toggle that hides "system files" (any path
 whose name, or any segment of a search result's path, starts with `.`) by
 default, with the choice kept in the browser's localStorage; the `?path=`
 redirect (a rooted path on this origin, honoured before anything renders); a
