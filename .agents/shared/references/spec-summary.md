@@ -12,7 +12,8 @@ scripts, references, or assets. The SKILL.md reads like a recipe: "do X,
 then Y, then Z." Each step of that process is one of three kinds:
 
 - **`[script]`** -- deterministic. Runs the same code every time, only the
-  data varies. Lives in `.agents/skills/<name>/scripts/`.
+  data varies. Lives in the skill's `python/` package, run through an entry
+  file in `.agents/skills/<name>/scripts/`.
 - **`[ai-script]`** -- needs a model's judgement, but is a *fixed part of
   the flow* (the same prompt/criteria every run, only the data varies).
   Script it as an AI call following the `use-ai-integration` skill (see
@@ -131,7 +132,8 @@ deterministic or model-driven, it belongs in a script. Use scripts where
 they earn their keep; don't force a script for genuine executor meta-work.
 
 When you do include `run.py`, write the flow's logic as small helper
-functions (one per step) and expose them two ways:
+functions (one per step) in the skill's package (see Packaging below), and
+have `run.py` expose them two ways:
 
 - **A subcommand per step**, whenever the step's inputs and outputs serialize
   cleanly -- data, not live handles. (A step that hands the next one an open

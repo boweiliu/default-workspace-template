@@ -33,7 +33,8 @@ pipeline is part of this skill, not a separate creation:
 ## Where a skill's behavior lives
 
 A skill's behavior is split between its scripts (`[script]` / `[ai-script]`, in
-`.agents/skills/<name>/scripts/`) and its SKILL.md prose, so a change -- or a
+its `python/` package, run through `.agents/skills/<name>/scripts/`) and its
+SKILL.md prose, so a change -- or a
 fix -- may touch either or both. When a wrong behavior traces to an ambiguous
 or incorrect prose instruction, the edit is a SKILL.md edit even if the skill
 has scripts; a pure-prose skill (no scripts) has all of its behavior in
