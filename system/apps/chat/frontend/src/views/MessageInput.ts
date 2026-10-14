@@ -39,7 +39,13 @@ import {
 } from "../models/PendingLane";
 import type { ProviderAccount } from "../models/Providers";
 import { beginSwitchToAccountId, openSwitchDialog } from "./SwitchDialog";
-import { addOutgoing, clearOutgoing, dropOutgoing, getOutgoingMessages } from "../models/OutgoingMessages";
+import {
+  addOutgoing,
+  clearOutgoing,
+  dropOutgoing,
+  getOutgoingMessages,
+  noteOutgoingAccepted,
+} from "../models/OutgoingMessages";
 import {
   describeRequestError,
   describeRequestErrorKind,
@@ -749,8 +755,8 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
           await sendMessage(chatId, finalText, messageId);
           // The send resolved: the message is now real (committed, queued, or held for the
           // agent the chat is switching to), so its "Sending…" bubble is removed by the arriving
-          // transcript turn, queued snapshot, or held-send snapshot (see
-          // OutgoingMessages) -- nothing to do here.
+          // transcript turn, queued snapshot, or held-send snapshot (see OutgoingMessages).
+          noteOutgoingAccepted(chatId, outgoingId);
         } catch (err) {
           // The send genuinely failed (the backend confirms delivery before
           // resolving, so a rejection means the message was NOT accepted). Drop the
@@ -1181,6 +1187,7 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
         try {
           await whenChatRegistered(recovery.chatId);
           await sendMessage(recovery.chatId, recovery.sentText, messageId);
+          noteOutgoingAccepted(recovery.chatId, outgoingId);
           // Landed, so take the restored copy back out of the composer.
           clearRestoredMessage(recovery.chatId, recovery.text, recovery.attachments);
           clearActionFailureNotice();
