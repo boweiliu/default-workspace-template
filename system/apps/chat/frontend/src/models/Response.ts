@@ -8,7 +8,8 @@ import { apiUrl } from "@imbue/workspace-ui/src/base-path";
 import { getActiveDesktopId, getClientId } from "@imbue/workspace-ui/src/models/ClientIdentity";
 import { isHandoffPromptChip } from "./handoffPrompt";
 import { dropOutgoingByMessageId, noteBackendArrivals } from "./OutgoingMessages";
-import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { describeRequestError, describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
+import type { RequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 
 export interface SubagentMetadata {
   agent_type: string;
@@ -564,7 +565,7 @@ const loadedChatIds = new Set<string>();
 export interface TranscriptLoadState {
   readonly phase: "idle" | "loading" | "error";
   /** Why it failed. Set when `phase` is "error", null otherwise. */
-  readonly error: string | null;
+  readonly error: RequestFailure | null;
 }
 
 const IDLE_LOAD_STATE: TranscriptLoadState = { phase: "idle", error: null };
@@ -840,7 +841,7 @@ async function loadSnapshot(chatId: string): Promise<TranscriptEvent[]> {
       if (requestError.code === 404) {
         notFoundChatIds.add(chatId);
       }
-      loadStateByChat.set(chatId, { phase: "error", error: describeRequestError(error, "read") });
+      loadStateByChat.set(chatId, { phase: "error", error: describeRequestFailure(error, "read") });
     }
     throw error;
   }

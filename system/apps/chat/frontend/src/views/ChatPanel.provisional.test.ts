@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => {
     // Whether the transcript load 404'd, and whether the chat app has sent its chat list yet.
     isConversationNotFound: false,
     isChatListReceived: true,
+    loadState: { phase: "idle", error: null } as unknown,
   };
 });
 
@@ -45,7 +46,7 @@ vi.mock("../models/Response", () => ({
   fetchEvents: (chatId: string) => mocks.fetchEvents(chatId),
   fetchForwardEvents: async () => undefined,
   fetchWindowAtOffset: async () => undefined,
-  getConversationLoadState: () => ({ phase: "idle", error: null }),
+  getConversationLoadState: () => mocks.loadState,
   getEventsForChat: () => [],
   getEventCount: () => 0,
   getFirstOffset: () => 0,
@@ -86,6 +87,8 @@ vi.mock("./FastModeNotice", () => ({ FastModeNotice: { view: () => null } }));
 
 import { chatSnapshotFixture } from "../models/chatSnapshotFixture";
 import { ChatPanel } from "./ChatPanel";
+import { SeeDetails } from "@imbue/workspace-ui/src/components/SeeDetails";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 import { MESSAGE_LIST_CLASS } from "./conversation-rows";
 
 type AnyVnode = { tag?: unknown; attrs?: Record<string, unknown>; children?: unknown };
@@ -408,5 +411,52 @@ describe("ChatPanel over a seeded chat", () => {
     expect(findByClass(tree, "message-list-create-failed")).toBeTruthy();
     expect(renderedText(tree)).toContain("mngr create exited with code 3");
     expect(mocks.fetchEvents).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChatPanel over a transcript that could not be loaded", () => {
+  beforeEach(() => {
+    mocks.proto = undefined;
+    mocks.chat = chatSnapshotFixture(AGENT_ID);
+    mocks.outgoingBubbles = [];
+    mocks.isConversationNotFound = false;
+    mocks.isChatListReceived = true;
+  });
+
+  afterEach(() => {
+    mocks.loadState = { phase: "idle", error: null };
+  });
+
+  it("says the workspace didn't answer for a load nothing answered, with Refresh", () => {
+    mocks.loadState = {
+      phase: "error",
+      error: describeRequestFailure(Object.assign(new Error("Request timed out"), { code: 0 }), "read"),
+    };
+
+    const tree = mountPanel()();
+
+    expect(renderedText(findByClass(tree, "message-list-error-text")).trim()).toBe(
+      "The workspace didn't answer. Try again in a moment.",
+    );
+    expect(findButton(tree, "message-list-reload")).toBeTruthy();
+    expect(renderedText(tree)).not.toContain("Error:");
+  });
+
+  it("names what failed for a refused load and keeps the server's text behind See details", () => {
+    mocks.loadState = {
+      phase: "error",
+      error: describeRequestFailure(
+        Object.assign(new Error("{}"), { code: 500, response: { detail: "transcript file is unreadable" } }),
+        "read",
+      ),
+    };
+
+    const tree = mountPanel()();
+
+    expect(renderedText(findByClass(tree, "message-list-error-text")).trim()).toBe(
+      "This conversation couldn't be loaded. Try again. If this persists, report a bug.",
+    );
+    const details = flatten(tree).find((vnode) => vnode.tag === SeeDetails);
+    expect(details?.attrs?.details).toContain("transcript file is unreadable");
   });
 });

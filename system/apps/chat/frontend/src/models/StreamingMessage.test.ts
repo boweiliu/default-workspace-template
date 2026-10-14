@@ -136,7 +136,7 @@ describe("snapshot retry after reconnect", () => {
       const chatId = `agent-${agentCounter++}`;
       mockRequest.mockRejectedValueOnce(Object.assign(new Error(String(null)), { code: 503, response: null }));
       await expect(loadSnapshotWithStream(chatId)).rejects.toThrow();
-      expect(getConversationLoadState(chatId).error).toBe(READ_NOT_ANSWERED);
+      expect(getConversationLoadState(chatId).error?.message).toBe(READ_NOT_ANSWERED);
 
       mockRequest.mockResolvedValueOnce({ events: [makeEvent("after-recovery", "backend answered")] });
       const deadSource = FakeEventSource.instances[FakeEventSource.instances.length - 1];

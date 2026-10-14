@@ -36,7 +36,19 @@ export function plainFailureLines(
   options: { requestKind?: RequestKind; notAnswered?: string } = {},
 ): FailureLines {
   const requestKind = options.requestKind ?? "change";
-  const failure = describeRequestFailure(error, requestKind);
+  return plainFailureLinesOf(describeRequestFailure(error, requestKind), whatFailed, {
+    ...options,
+    requestKind,
+  });
+}
+
+/** ``plainFailureLines`` for a failure already read. */
+export function plainFailureLinesOf(
+  failure: RequestFailure,
+  whatFailed: string,
+  options: { requestKind?: RequestKind; notAnswered?: string } = {},
+): FailureLines {
+  const requestKind = options.requestKind ?? "change";
   if (failure.isNotAnswered) {
     return {
       body: [options.notAnswered ?? notAnsweredSentence(requestKind)],

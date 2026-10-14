@@ -78,6 +78,10 @@ import { renderHandoffTailNode } from "./handoff-node";
 import { SwitchDialog } from "./SwitchDialog";
 import { hasOpenHandoffRequest } from "./turn-grouping";
 import { Button } from "@imbue/workspace-ui/src/components/Button";
+import { SeeDetails } from "@imbue/workspace-ui/src/components/SeeDetails";
+import { joinDetails } from "@imbue/workspace-ui/src/models/failure";
+import { REPORT_A_BUG_LABEL, openBugReport } from "@imbue/workspace-ui/src/report-bug";
+import { detailsBehind, plainFailureLinesOf, plainFailureSentence } from "./failure-lines";
 
 // The terminal output a page shows in place of a transcript: what mngr printed when a create
 // failed, or the tmux screen of an agent with no session. Shared so the two read the same.
@@ -557,9 +561,14 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     }
 
     if (hasNothingToShow && load.error !== null) {
-      return m("div", { class: "message-list-error flex flex-col items-center justify-center h-full gap-3" }, [
-        m("p", { class: "text-danger" }, `Error: ${load.error}`),
-        m(Button, { sm: true, extra: "message-list-reload", onclick: () => reloadAfterFailure(chatId) }, "Refresh"),
+      const lines = plainFailureLinesOf(load.error, "This conversation couldn't be loaded", { requestKind: "read" });
+      return m("div", { class: "message-list-error flex flex-col items-center justify-center h-full gap-3 p-8" }, [
+        m("p", { class: "message-list-error-text text-danger text-center" }, plainFailureSentence(lines)),
+        m("div", { class: "flex items-center gap-2" }, [
+          m(Button, { sm: true, extra: "message-list-reload", onclick: () => reloadAfterFailure(chatId) }, "Refresh"),
+          lines.isReportable ? m(Button, { sm: true, onclick: openBugReport }, REPORT_A_BUG_LABEL) : null,
+        ]),
+        m("div", { class: "text-secondary" }, m(SeeDetails, { details: lines.details })),
       ]);
     }
 
@@ -574,13 +583,25 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
         ? null
         : m(
             "div",
-            { class: "message-list-stale-notice flex items-center gap-3 border-b border-default px-3 py-1.5" },
+            {
+              class:
+                "message-list-stale-notice flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-default px-3 py-1.5",
+            },
             [
-              m("span", { class: "text-sm text-danger" }, `Couldn't refresh this conversation: ${load.error}`),
+              m(
+                "span",
+                { class: "text-sm text-danger" },
+                "Couldn't refresh this conversation -- what you see may be out of date.",
+              ),
               m(
                 Button,
                 { sm: true, extra: "message-list-reload", onclick: () => reloadAfterFailure(chatId) },
                 "Refresh",
+              ),
+              m(
+                "div",
+                { class: "basis-full text-secondary" },
+                m(SeeDetails, { details: joinDetails([load.error.isUserFacing ? load.error.message : null, detailsBehind(load.error)]) }),
               ),
             ],
           );

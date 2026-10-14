@@ -127,7 +127,7 @@ function effortFillColor(fraction: number): string {
   return `hsl(152 39% ${Math.round(70 - 30 * fraction)}%)`;
 }
 
-/** The chip with no provider signed in: it says so, and a press opens the provider chooser. */
+/** The chip with no provider signed in: it offers to add one, and a press opens the provider chooser. */
 function notConnectedChip(onSignedIn?: (accountId: string) => void): m.Vnode {
   return m(
     "button",
@@ -137,7 +137,7 @@ function notConnectedChip(onSignedIn?: (accountId: string) => void): m.Vnode {
       ...hoverTooltipAttrs("Connect a model provider", "above"),
       onclick: () => openProviderChooser(onSignedIn === undefined ? {} : { onSignedIn }),
     },
-    "Not connected",
+    "Add a provider",
   );
 }
 

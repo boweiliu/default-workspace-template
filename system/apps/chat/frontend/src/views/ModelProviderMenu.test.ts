@@ -272,37 +272,37 @@ describe("the combo card", () => {
     expect(ROOT().querySelector(".model-selector-trigger")).toBeNull();
   });
 
-  it("says a chat with no agent yet is not connected when no provider is signed in, and opens the chooser", () => {
+  it("offers to add a provider for a chat with no agent yet when none is signed in, and opens the chooser", () => {
     agentState.agent = null;
     agentState.provisional = { account_id: "" };
     providerState.accounts = [];
     render();
-    expect(screenText()).toContain("Not connected");
+    expect(screenText()).toContain("Add a provider");
     click(".model-selector-not-connected");
     expect(chooserOpens).toEqual([{ hasOnSignedIn: false }]);
   });
 
-  it("does not call a chat not connected before the account list has loaded", () => {
+  it("does not offer to add a provider before the account list has loaded", () => {
     providerState.isLoaded = false;
     providerState.accounts = [];
     agentState.agent = null;
     agentState.provisional = { account_id: "" };
     render();
-    expect(screenText()).not.toContain("Not connected");
+    expect(screenText()).not.toContain("Add a provider");
     expect(ROOT().querySelector(".model-selector-loading")).not.toBeNull();
     agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
     settingsState.choice = null;
     render();
-    expect(screenText()).not.toContain("Not connected");
+    expect(screenText()).not.toContain("Add a provider");
     expect(ROOT().querySelector(".model-selector-loading")).not.toBeNull();
   });
 
-  it("says a running chat with no provider signed in is not connected, and switches it onto the one signed in", () => {
+  it("offers to add a provider for a running chat with none signed in, and switches it onto the one signed in", () => {
     agentState.agent = chatSnapshotFixture("a1", { active_agent: { harness: "claude", account_id: "" } });
     settingsState.choice = null;
     providerState.accounts = [];
     render();
-    expect(screenText()).toContain("Not connected");
+    expect(screenText()).toContain("Add a provider");
     click(".model-selector-not-connected");
     expect(chooserOpens).toEqual([{ hasOnSignedIn: true }]);
   });
