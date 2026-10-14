@@ -68,12 +68,16 @@ def _run(
     )
 
 
+def _call_id(value: object) -> str:
+    """A script as the repo-relative path its callers name, and its arguments as typed."""
+    if isinstance(value, Path):
+        return str(value.relative_to(_REPO_ROOT))
+    assert isinstance(value, tuple)
+    return " ".join(value) or "no-arguments"
+
+
 @pytest.mark.timeout(60)
-@pytest.mark.parametrize(
-    ("script", "arguments"),
-    _BARE_CALLS,
-    ids=lambda value: str(value).rsplit("/", 2)[-1],
-)
+@pytest.mark.parametrize(("script", "arguments"), _BARE_CALLS, ids=_call_id)
 def test_a_bare_external_path_runs_without_the_venv(
     script: Path, arguments: tuple[str, ...]
 ) -> None:
@@ -125,11 +129,7 @@ def test_the_secrets_wrapper_runs_a_command_without_the_venv(tmp_path: Path) -> 
 
 
 @pytest.mark.timeout(60)
-@pytest.mark.parametrize(
-    ("script", "arguments"),
-    _VENV_CALLS,
-    ids=lambda value: str(value).rsplit("/", 2)[-1],
-)
+@pytest.mark.parametrize(("script", "arguments"), _VENV_CALLS, ids=_call_id)
 def test_a_venv_external_path_runs_from_the_root_venv(
     script: Path, arguments: tuple[str, ...]
 ) -> None:
