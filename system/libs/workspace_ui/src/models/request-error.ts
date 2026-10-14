@@ -3,6 +3,7 @@ import {
   asksForBugReport,
   fallbackSentence,
   joinDetails,
+  nonEmptyString,
   notAnsweredSentence,
   type Failure,
   type RequestKind,
@@ -43,18 +44,13 @@ function informativeMessage(value: unknown): string | null {
   return message !== "" && !UNINFORMATIVE_MESSAGES.has(message) ? message : null;
 }
 
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
-}
-
 /**
  * Read a failed request -- a mithril `m.request` rejection, an ``HttpError``, or an error a caller threw -- as what to
  * show and what goes behind "See details".
  *
  * A mithril rejection carries (when available) the parsed response body, the HTTP status as `code`, and a `message`
- * that is the raw body text. A gateway answer (a 502 from a front-door proxy, say) often has no JSON body, so naive
- * `response.detail` extraction yields `null` and surfaces a useless "null". The server's own `detail` is shown as
- * written; a status with no reason reads as a fallback of ours, with the status and any raw text behind the details.
+ * that is the raw body text. The server's own `detail` is shown as written; a status with no reason reads as a
+ * fallback of ours, with the status and any raw text behind the details.
  */
 export function describeRequestFailure(error: unknown, requestKind: RequestKind = "change"): RequestFailure {
   if (error instanceof HttpError) {

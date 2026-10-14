@@ -5,6 +5,7 @@ import {
   asksForBugReport,
   fallbackSentence,
   joinDetails,
+  nonEmptyString,
   notAnsweredSentence,
   type Failure,
   type RequestKind,
@@ -45,10 +46,6 @@ interface ErrorBody {
   readonly error?: unknown;
   readonly details?: unknown;
   readonly kind?: unknown;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
 /** The failure a non-2xx ``response`` stands for. */
