@@ -26,7 +26,9 @@ _SUPERVISORD_DIR = _REPO_ROOT / "system"
 _MNGR_SETTINGS = _REPO_ROOT / ".mngr" / "settings.toml"
 
 _SHELL_PROGRAMS = frozenset({"bash", "sh", "zsh", "dash"})
-_EXTRA_WINDOW_KEYS = frozenset({"extra_window", "extra_window__extend"})
+_EXTRA_WINDOW_KEYS = frozenset(
+    {"extra_window", "extra_window__extend", "extra_window__assign"}
+)
 
 # The file types agents read commands out of (docs, prompts, config, scripts).
 _AGENT_FACING_SUFFIXES = (".md", ".toml", ".sh", ".conf")
@@ -326,11 +328,14 @@ def test_a_planted_uv_run_window_is_caught_at_any_depth(tmp_path: Path) -> None:
         'extra_window = ["boot=\'bash -c \\"uv sync --frozen; exec uv run --no-sync boot\\"\'"]\n'
         "[create_templates.worker]\n"
         'extra_window__extend = ["setup=uv run setup", "fine=\'bash -c \\"exec .venv/bin/fine\\"\'"]\n'
+        "[create_templates.services]\n"
+        'extra_window__assign = ["svc=uv run svc"]\n'
     )
 
     assert _windows_under_uv_run(settings) == [
         'bash -c "uv sync --frozen; exec uv run --no-sync boot"',
         "uv run setup",
+        "uv run svc",
     ]
 
 
