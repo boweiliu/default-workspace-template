@@ -30,8 +30,9 @@
 #
 #   --setting-sources user   Does NOT load this repo's .claude/settings.json, so
 #                            none of the workspace's project hooks fire for it --
-#                            in particular the SessionStart `uv sync --all-packages`,
-#                            which would rebuild the venv underneath the agent that
+#                            in particular the SessionStart venv sync
+#                            (session_start_sync.sh), which would rewrite the venv
+#                            underneath the agent that
 #                            spawned us. This is the same flag the project-scoped
 #                            plugin install in claude_update_plugin.sh is written to
 #                            protect. It also means project skills are NOT discovered,
