@@ -10,7 +10,8 @@
 import m from "mithril";
 import { Button } from "@imbue/workspace-ui/src/components/Button";
 import { inputClass } from "@imbue/workspace-ui/src/components/Input";
-import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { SeeDetails } from "@imbue/workspace-ui/src/components/SeeDetails";
+import { REPORT_A_BUG_LABEL, openBugReport } from "@imbue/workspace-ui/src/report-bug";
 import { getChatById } from "../models/Chats";
 import type { ChatSnapshot, HandoffState } from "../models/Chats";
 import { retryHandoff } from "../models/Handoffs";
@@ -19,6 +20,8 @@ import type { ProviderAccount } from "../models/Providers";
 import { startChatOnAccount } from "../shell";
 import { raiseNewChatFailure } from "./MessageInput";
 import { harnessLabel } from "./harness-labels";
+import { plainFailureLines, plainFailureSentence } from "./failure-lines";
+import type { FailureLines } from "./failure-lines";
 
 /** The accounts a failed switch may be retried on: any for a handoff, the agent's own harness and lane for a rebind. */
 export function retryableAccounts(chat: ChatSnapshot, handoff: HandoffState): ProviderAccount[] {
@@ -33,7 +36,7 @@ export function HandoffFailedNotice(): m.Component<{ chatId: string }> {
   // The account the retry runs on, once the user picks one; the failed target until then.
   let chosenAccountId: string | null = null;
   let isRetrying = false;
-  let retryError: string | null = null;
+  let retryError: FailureLines | null = null;
 
   return {
     view(vnode) {
@@ -66,7 +69,9 @@ export function HandoffFailedNotice(): m.Component<{ chatId: string }> {
           // Read at the press, not at the render: the picker may have changed since.
           await retryHandoff(chatId, chosenAccountId ?? failedTargetId);
         } catch (error) {
-          retryError = describeRequestError(error);
+          retryError = plainFailureLines(error, "Couldn't try the move again", {
+            notAnswered: "The workspace didn't answer, so Imbue Studio can't tell whether the move was tried again.",
+          });
         } finally {
           isRetrying = false;
           m.redraw();
@@ -84,15 +89,13 @@ export function HandoffFailedNotice(): m.Component<{ chatId: string }> {
         [
           m("p", { class: "handoff-failed-title type-label text-danger" }, title),
           m(
-            "pre",
-            {
-              class:
-                "handoff-failed-reason max-h-40 overflow-auto font-mono text-(length:--font-size-helper) " +
-                "whitespace-pre-wrap text-primary",
-            },
-            handoff.error ??
-              (handoff.failed_step === "model" ? "The model could not be set." : "The agent could not be started."),
+            "p",
+            { class: "handoff-failed-reason text-(length:--font-size-helper) text-primary" },
+            handoff.failed_step === "model"
+              ? `${harness} is running, but the model you picked couldn't be set on it.`
+              : `Imbue Studio couldn't start this chat on ${harness}. Try again, or start a new chat.`,
           ),
+          m("div", { class: "text-secondary" }, m(SeeDetails, { details: handoff.error })),
           m("div", { class: "flex flex-wrap items-center gap-2" }, [
             m(
               "select",
@@ -137,7 +140,15 @@ export function HandoffFailedNotice(): m.Component<{ chatId: string }> {
               "Start a new chat instead",
             ),
           ]),
-          retryError !== null ? m("p", { class: "handoff-retry-error text-sm text-danger" }, retryError) : null,
+          retryError !== null
+            ? m("div", { class: "flex flex-col gap-1" }, [
+                m("p", { class: "handoff-retry-error text-sm text-danger" }, plainFailureSentence(retryError)),
+                m("div", { class: "text-secondary" }, m(SeeDetails, { details: retryError.details })),
+                retryError.isReportable
+                  ? m(Button, { sm: true, extra: "self-start", onclick: openBugReport }, REPORT_A_BUG_LABEL)
+                  : null,
+              ])
+            : null,
         ],
       );
     },
