@@ -108,6 +108,14 @@ export function describeStopFailure(error: unknown): FailureLines {
   });
 }
 
+/** The model and provider menu's Stop agent, refused or unanswered: unlike the composer's Stop it only stops, so a
+ *  refusal leaves the agent running. */
+export function describeMenuStopFailure(error: unknown): FailureLines {
+  return plainFailureLines(error, "Couldn't stop the agent. It's still running", {
+    notAnswered: "The workspace didn't answer, so Imbue Studio can't tell whether the agent stopped.",
+  });
+}
+
 /** A shoulder tap that was refused or got no answer. */
 export function describeTapFailure(error: unknown): FailureLines {
   return plainFailureLines(error, "Your queued messages weren't sent", {

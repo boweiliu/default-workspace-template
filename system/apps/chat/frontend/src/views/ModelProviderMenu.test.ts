@@ -134,8 +134,20 @@ vi.mock("./SwitchDialog", async (importOriginal) => ({
   openSwitchDialog: (_chatId: string, account: { id: string }) => reopened.push(account.id),
 }));
 
+// A failed Stop agent is told on the composer's notice.
+const raisedNotices: {
+  chatId: string;
+  notice: { title: string; describe: (e: unknown) => FailureLines; error: unknown; retry?: () => Promise<void> };
+}[] = [];
+vi.mock("./MessageInput", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./MessageInput")>()),
+  raiseFailureNotice: (chatId: string, notice: (typeof raisedNotices)[number]["notice"]) =>
+    raisedNotices.push({ chatId, notice }),
+}));
+
 import m from "mithril";
 
+import type { FailureLines } from "./failure-lines";
 import { hoverTooltipText } from "@imbue/workspace-ui/src/testing/tooltip";
 
 import type { ChatSnapshot } from "../models/Chats";
@@ -1134,6 +1146,33 @@ describe("the phone layout's card", () => {
       matched: model,
       pending: null,
     };
+  });
+
+  it("tells a refused Stop agent on the composer's notice, with Try again, rather than in an alert", async () => {
+    raisedNotices.length = 0;
+    const body = JSON.stringify({ detail: "Failed to stop agent 'sunny-hollow': mngr exited with code 1" });
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 500, text: async () => body }));
+    vi.stubGlobal("fetch", fetchMock);
+    renderPhone();
+    tap("[data-composer-settings]");
+    const stopRow = [...document.querySelectorAll<HTMLElement>("button, [role='menuitem']")].find(
+      (node) => node.textContent?.trim() === "Stop agent",
+    );
+    stopRow!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const [{ chatId, notice }] = raisedNotices;
+    expect(chatId).toBe("a1");
+    expect(notice.title).toBe("Couldn't stop the agent");
+    const lines = notice.describe(notice.error);
+    expect(lines.body).toEqual([
+      "Couldn't stop the agent. It's still running. Try again. If this persists, report a bug.",
+    ]);
+    expect(lines.details).toContain("mngr exited with code 1");
+    await notice.retry!().catch(() => undefined);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 
   it("opens from a settings button instead of the chip", () => {
