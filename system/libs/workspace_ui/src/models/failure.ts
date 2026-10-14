@@ -43,11 +43,6 @@ export function fallbackSentence(whatFailed: string): string {
   return `${whatFailed}. ${REPORT_A_BUG_ENDING}`;
 }
 
-/** A failure that carries no explanation of its own, as the fallback sentence for ``whatFailed``. */
-export function fallbackFailure(whatFailed: string, details: string | null = null): Failure {
-  return { message: fallbackSentence(whatFailed), details, isReportable: true };
-}
-
 /** The non-empty lines of a "See details" text, joined; null when every one is empty. */
 export function joinDetails(lines: readonly (string | null | undefined)[]): string | null {
   const kept = lines.map((line) => (line ?? "").trim()).filter((line) => line !== "");
