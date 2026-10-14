@@ -52,10 +52,12 @@ _APPS = [
         program="system_interface",
         is_critical=True,
     ),
-    RegisteredApp("web", "web-web111111", "127.0.0.1", 5001, is_grantable=True, program="web"),
-    RegisteredApp("files", "files-files111", "127.0.0.1", 5002, is_grantable=True),
-    RegisteredApp("terminal", "terminal-term1111", "127.0.0.1", 7681, is_grantable=True),
-    RegisteredApp("terminal-pty", "terminal-pty-pty11111", "127.0.0.1", 7683, is_grantable=False),
+    RegisteredApp("web", "web-web111111", "127.0.0.1", 5001, is_grantable=True, program="web", is_critical=False),
+    RegisteredApp("files", "files-files111", "127.0.0.1", 5002, is_grantable=True, program="", is_critical=False),
+    RegisteredApp("terminal", "terminal-term1111", "127.0.0.1", 7681, is_grantable=True, program="", is_critical=False),
+    RegisteredApp(
+        "terminal-pty", "terminal-pty-pty11111", "127.0.0.1", 7683, is_grantable=False, program="", is_critical=False
+    ),
 ]
 _LABELS = build_label_to_name(_APPS)
 _SHELL_HOST = f"system_interface-shell111.{_DOMAIN}"

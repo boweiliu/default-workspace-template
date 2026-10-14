@@ -39,8 +39,8 @@ class RegisteredApp:
         backend_host: str,
         backend_port: int,
         is_grantable: bool,
-        program: str = "",
-        is_critical: bool = False,
+        program: str,
+        is_critical: bool,
     ) -> None:
         self.name = name
         self.label = label
