@@ -16,6 +16,13 @@ import { handHandshakeDown } from "./relay";
 
 export const MAX_HELD_FRAMES = 4;
 
+/** The phone layout's swipe-between-chats gesture (swipeNav.ts): bound to each frame's own document, since a
+ *  touch inside the iframe never reaches a listener on the root's own page, same origin or not. */
+export interface SwipeHandlers {
+  onTouchStart: (event: TouchEvent) => void;
+  onTouchEnd: (event: TouchEvent) => void;
+}
+
 // What the shell grants an app page's frame (the PAGE_FRAME_SANDBOX of its live pages layer); a
 // nested frame can hold no more than its parent, so this asks for the same.
 const FRAME_SANDBOX =
@@ -34,6 +41,7 @@ export class InnerFramePool {
   private handshake: ShellHandshake | null = null;
   private isRootShown = false;
   private isCompact = false;
+  private swipeHandlers: SwipeHandlers | null = null;
 
   constructor(private readonly container: HTMLElement) {}
 
@@ -90,6 +98,13 @@ export class InnerFramePool {
     for (const chatId of this.held.keys()) this.introduce(chatId);
   }
 
+  /** The swipe gesture's listeners, bound to every frame's document as it loads: a touch lands in the iframe's
+   *  own document, never the root's, so the root reaches in rather than listening on its own DOM. Set once,
+   *  before any frame exists (``bootstrap``'s ``oncreate``), so there is nothing already held to rebind. */
+  setSwipeHandlers(handlers: SwipeHandlers): void {
+    this.swipeHandlers = handlers;
+  }
+
   /** Drop a chat's frame (the chat was deleted). */
   destroy(chatId: string): void {
     const held = this.held.get(chatId);
@@ -118,6 +133,11 @@ export class InnerFramePool {
       this.api(chatId)?.setCompact(this.isCompact);
       this.introduce(chatId);
       this.tell(chatId, this.isRootShown && this.shownChatId === chatId ? "shown" : "hidden");
+      const innerDocument = frame.contentWindow?.document;
+      if (innerDocument !== undefined && this.swipeHandlers !== null) {
+        innerDocument.addEventListener("touchstart", this.swipeHandlers.onTouchStart);
+        innerDocument.addEventListener("touchend", this.swipeHandlers.onTouchEnd);
+      }
     });
     this.held.set(chatId, held);
     this.container.appendChild(frame);
