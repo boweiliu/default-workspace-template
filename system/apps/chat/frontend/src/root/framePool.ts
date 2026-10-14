@@ -17,12 +17,15 @@ import { handHandshakeDown } from "./relay";
 export const MAX_HELD_FRAMES = 4;
 
 /** The phone layout's swipe-between-chats gesture (swipeNav.ts): bound to each frame's own document, since a
- *  touch inside the iframe never reaches a listener on the root's own page, same origin or not. */
+ *  pointer inside the iframe never reaches a listener on the root's own page, same origin or not. Pointer
+ *  Events (the same API ``ChatDrawer.ts`` drags with) read uniformly for a touch, a mouse, or a pen, so a
+ *  mouse drag on a narrow desktop window exercises the identical path a phone's touch does -- no touch
+ *  emulation needed to try it. */
 export interface SwipeHandlers {
-  onTouchStart: (event: TouchEvent) => void;
-  onTouchMove: (event: TouchEvent) => void;
-  onTouchEnd: (event: TouchEvent) => void;
-  onTouchCancel: (event: TouchEvent) => void;
+  onPointerDown: (event: PointerEvent) => void;
+  onPointerMove: (event: PointerEvent) => void;
+  onPointerUp: (event: PointerEvent) => void;
+  onPointerCancel: (event: PointerEvent) => void;
 }
 
 // The snap animation's duration and easing, for both a completed drag and an abandoned one.
@@ -210,9 +213,9 @@ export class InnerFramePool {
     for (const chatId of this.held.keys()) this.introduce(chatId);
   }
 
-  /** The swipe gesture's listeners, bound to every frame's document as it loads: a touch lands in the iframe's
-   *  own document, never the root's, so the root reaches in rather than listening on its own DOM. Set once,
-   *  before any frame exists (``bootstrap``'s ``oncreate``), so there is nothing already held to rebind. */
+  /** The swipe gesture's listeners, bound to every frame's document as it loads: a pointer lands in the
+   *  iframe's own document, never the root's, so the root reaches in rather than listening on its own DOM. Set
+   *  once, before any frame exists (``bootstrap``'s ``oncreate``), so there is nothing already held to rebind. */
   setSwipeHandlers(handlers: SwipeHandlers): void {
     this.swipeHandlers = handlers;
   }
@@ -247,13 +250,13 @@ export class InnerFramePool {
       this.tell(chatId, this.isRootShown && this.shownChatId === chatId ? "shown" : "hidden");
       const innerDocument = frame.contentWindow?.document;
       if (innerDocument !== undefined && this.swipeHandlers !== null) {
-        const { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel } = this.swipeHandlers;
-        innerDocument.addEventListener("touchstart", onTouchStart);
-        // Not passive: once a drag is engaged, onTouchMove calls preventDefault to hold off the page's own
+        const { onPointerDown, onPointerMove, onPointerUp, onPointerCancel } = this.swipeHandlers;
+        innerDocument.addEventListener("pointerdown", onPointerDown);
+        // Not passive: once a drag is engaged, onPointerMove calls preventDefault to hold off the page's own
         // vertical scroll for the rest of the gesture.
-        innerDocument.addEventListener("touchmove", onTouchMove, { passive: false });
-        innerDocument.addEventListener("touchend", onTouchEnd);
-        innerDocument.addEventListener("touchcancel", onTouchCancel);
+        innerDocument.addEventListener("pointermove", onPointerMove, { passive: false });
+        innerDocument.addEventListener("pointerup", onPointerUp);
+        innerDocument.addEventListener("pointercancel", onPointerCancel);
       }
     });
     this.held.set(chatId, held);
