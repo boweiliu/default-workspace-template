@@ -2,8 +2,10 @@
 
 import {
   GATEWAY_STATUSES,
+  asksForBugReport,
   fallbackSentence,
   joinDetails,
+  nonEmptyString,
   notAnsweredSentence,
   type Failure,
   type RequestKind,
@@ -43,10 +45,6 @@ interface ErrorBody {
   readonly details?: unknown;
 }
 
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
-}
-
 /** The failure a non-2xx ``response`` stands for. */
 export async function readResponseFailure(response: Response, kind: RequestKind): Promise<HttpError> {
   const text = await response.text().catch(() => "");
@@ -69,7 +67,9 @@ export async function readResponseFailure(response: Response, kind: RequestKind)
     nonEmptyString(body.details),
     userFacing === null && reason === null ? text.slice(0, RAW_BODY_LIMIT) : null,
   ]);
-  if (userFacing !== null) return new HttpError(response.status, userFacing, details, false, true, parsedBody);
+  if (userFacing !== null) {
+    return new HttpError(response.status, userFacing, details, asksForBugReport(userFacing), true, parsedBody);
+  }
   if (reason !== null) return new HttpError(response.status, reason, details, false, false, parsedBody);
   if (GATEWAY_STATUSES.has(response.status)) {
     return new HttpError(response.status, notAnsweredSentence(kind), details, false, false, parsedBody);

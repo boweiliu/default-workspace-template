@@ -36,12 +36,15 @@ describe("postJson", () => {
   });
 
   it("shows a sentence written for people on its own, with the developer's detail behind the details", async () => {
-    answering(502, { detail: "chat answered the launch with 500: boom", user_facing_message: "Chat couldn't." });
+    const couldNotOpen = "Chat couldn't open that. Try again. If this persists, report a bug.";
+    answering(502, { detail: "chat answered the launch with 500: boom", user_facing_message: couldNotOpen });
     const failure = await failureOf(postJson("/api/x", {}));
     expect(failure).toMatchObject({
-      message: "Chat couldn't.",
+      message: couldNotOpen,
       details: "HTTP 502\nchat answered the launch with 500: boom",
       isUserFacing: true,
+      // It asks for a bug report, so the surface offers the button.
+      isReportable: true,
     });
   });
 

@@ -924,7 +924,6 @@ describe("failure toasts", () => {
     expect(toast.message).toBe("This window couldn't be closed. Try again. If this persists, report a bug.");
     expect(toast.details).toBe("HTTP 500\nTraceback ...");
     expect(toast.actions.map((action) => action.label)).toEqual(["Report a bug"]);
-    // It carries something to read and press, so it outlasts the five seconds a plain note gets.
     vi.advanceTimersByTime(TOAST_DURATION_MS * 2);
     expect(store.toasts.current()).toHaveLength(1);
     store.toasts.dismiss(toast.id);
@@ -937,7 +936,7 @@ describe("failure toasts", () => {
       502,
       "Docs couldn't open that. Try again. If this persists, report a bug.",
       "HTTP 502\ndocs answered the launch with 503: still loading",
-      false,
+      true,
       true,
     );
     await store.runLaunch("docs", "new", "new");
@@ -949,6 +948,7 @@ describe("failure toasts", () => {
         isLasting: true,
       },
     ]);
+    expect(store.toasts.current()[0].actions.map((action) => action.label)).toEqual(["Report a bug"]);
   });
 
   it("puts the shell's own reason behind See details, under the sentence of what failed", async () => {

@@ -41,8 +41,8 @@ describe("describeRequestFailure", () => {
   });
 
   it("never claims what a gateway status or a dropped connection did, and words a read apart from a change", () => {
-    // A proxy's plain-text 503 under `responseType: "json"`: mithril cannot read the body, so it builds
-    // `new Error(null)` -- message is the word "null". The proxy may have sent it after the request arrived.
+    // A proxy's gateway status with its plain-text body as mithril's message, which goes behind the details. The
+    // proxy may have sent it after the request arrived.
     const gateway = Object.assign(new Error("Backend connection lost"), { code: 502, response: null });
     expect(describeRequestFailure(gateway).message).toBe(CHANGE_NOT_ANSWERED);
     expect(describeRequestFailure(gateway).details).toBe("HTTP 502\nBackend connection lost");

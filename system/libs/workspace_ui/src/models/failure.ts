@@ -12,7 +12,7 @@ export interface Failure {
   readonly message: string;
   /** What goes behind "See details"; null when there is nothing beyond the sentence. */
   readonly details: string | null;
-  /** The sentence is one of ours that ends by asking for a bug report, so the surface offers "Report a bug". */
+  /** The sentence ends by asking for a bug report, so the surface offers "Report a bug". */
   readonly isReportable: boolean;
 }
 
@@ -33,14 +33,14 @@ export function notAnsweredSentence(kind: RequestKind): string {
   return kind === "read" ? READ_NOT_ANSWERED : CHANGE_NOT_ANSWERED;
 }
 
+/** Whether ``sentence`` ends by asking for a bug report, as a server's own sentence may (the shell's failed launch). */
+export function asksForBugReport(sentence: string): boolean {
+  return sentence.endsWith(REPORT_A_BUG_ENDING);
+}
+
 /** The fallback for a failure with no explanation of its own: what failed, then the bug-report ending. */
 export function fallbackSentence(whatFailed: string): string {
   return `${whatFailed}. ${REPORT_A_BUG_ENDING}`;
-}
-
-/** Whether a sentence ends by asking for a bug report, so its surface offers "Report a bug". */
-export function asksForBugReport(sentence: string): boolean {
-  return sentence.endsWith(REPORT_A_BUG_ENDING);
 }
 
 /** Whether a sentence is the one a request nothing answered gets. */
@@ -48,13 +48,13 @@ export function isNotAnsweredSentence(sentence: string): boolean {
   return sentence === READ_NOT_ANSWERED || sentence === CHANGE_NOT_ANSWERED;
 }
 
-/** A failure that carries no explanation of its own, as the fallback sentence for ``whatFailed``. */
-export function fallbackFailure(whatFailed: string, details: string | null = null): Failure {
-  return { message: fallbackSentence(whatFailed), details, isReportable: true };
-}
-
 /** The non-empty lines of a "See details" text, joined; null when every one is empty. */
 export function joinDetails(lines: readonly (string | null | undefined)[]): string | null {
   const kept = lines.map((line) => (line ?? "").trim()).filter((line) => line !== "");
   return kept.length === 0 ? null : kept.join("\n");
+}
+
+/** ``value`` trimmed when it is a string with something in it; null otherwise. */
+export function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
