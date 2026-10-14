@@ -2,6 +2,7 @@ import {
   GATEWAY_STATUSES,
   fallbackSentence,
   joinDetails,
+  nonEmptyString,
   notAnsweredSentence,
   type Failure,
   type RequestKind,
@@ -35,10 +36,6 @@ export interface RequestFailure extends Failure {
 function informativeMessage(value: unknown): string | null {
   const message = typeof value === "string" ? value.trim() : "";
   return message !== "" && !UNINFORMATIVE_MESSAGES.has(message) ? message : null;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   GATEWAY_STATUSES,
   fallbackSentence,
   joinDetails,
+  nonEmptyString,
   notAnsweredSentence,
   type Failure,
   type RequestKind,
@@ -38,10 +39,6 @@ interface ErrorBody {
   readonly detail?: unknown;
   readonly error?: unknown;
   readonly details?: unknown;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
 /** The failure a non-2xx ``response`` stands for. */

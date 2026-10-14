@@ -48,3 +48,8 @@ export function joinDetails(lines: readonly (string | null | undefined)[]): stri
   const kept = lines.map((line) => (line ?? "").trim()).filter((line) => line !== "");
   return kept.length === 0 ? null : kept.join("\n");
 }
+
+/** ``value`` trimmed when it is a string with something in it; null otherwise. */
+export function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
