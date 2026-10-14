@@ -40,3 +40,5 @@ The hooks and `memory_candidates.py` import this package under a bare `python3`
 (no virtualenv), and `create_worker.py` in the isolated environment `uv run`
 gives a script, each via an explicit `sys.path` entry, which is why it is
 **stdlib-only** and must stay that way.
+
+Update probe: a trivial change for testing an update-self run.
