@@ -219,9 +219,10 @@ _FRONTEND_NOT_BUILT_TEMPLATE = """<!doctype html>
   #copy-repair:hover { background: #333a44; }
   #copy-repair[hidden] { display: none; }
   [hidden] { display: none; }
-  #terminal, #agent-chat { width: 100%; height: 24rem; border: 1px solid #2a2f37;
-                           border-radius: 6px; background: #000; }
-  #agent-chat { background: #fff; }
+  #terminal { width: 100%; height: 24rem; border: 1px solid #2a2f37;
+              border-radius: 6px; background: #000; }
+  #agent-chat { width: 100%; height: 24rem; border: 1px solid #2a2f37;
+                border-radius: 6px; background: #fff; }
   .action { font: inherit; padding: 0.4rem 1rem; color: #e6e8eb; background: #2a2f37;
             border: 1px solid #3a414b; border-radius: 6px; cursor: pointer; }
   .action:hover { background: #333a44; }
