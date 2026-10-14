@@ -369,12 +369,14 @@ where the data dies. Encode these, cheapest first:
   uv run python3 .agents/skills/update-app/scripts/preview_app.py down --app <name>
   ```
 
-  The worktree needs its own environment before the first `up`. A fresh
-  `git worktree add` has no `.venv`, and without one the app's command
-  resolves to the live install, so the preview silently serves the live code.
-  Run `uv sync --all-packages` in the worktree first, and again before
-  `refresh` after changing a dependency or entry point. If the app has a
-  frontend, build it there too.
+  Every `up` and `refresh` runs `uv sync --all-packages --frozen` in the
+  worktree and then starts the app from the worktree's own `.venv`, so the
+  preview serves the worktree's code. That boot sync counts against the
+  preview's health wait, so on a fresh `git worktree add` run
+  `uv sync --all-packages --frozen` there once before the first `up`. The
+  sync never relocks: after changing a dependency in the worktree, run
+  `uv lock` there before `refresh`, or the preview boots without the change.
+  If the app has a frontend, build it in the worktree too.
 
   `--with <sibling>` boots a sibling app's preview from the same worktree first
   and points the app's copied registry at it: a shell preview frames the
