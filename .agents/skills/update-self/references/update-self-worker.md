@@ -316,8 +316,10 @@ in your report.
   is a precise blocker (an unparseable root lock means no service in the
   workspace can start); fix it before running anything else. A failure on the
   workspace's own skills, services or docs that the update's changelog ties to
-  a changed rule (for example a user skill's `scripts/` with no
-  `pyproject.toml`) is fixed by following `references/python-packaging-migration.md`.
+  a changed rule (for example a user skill's PEP 723 script that
+  `system/test_entry_point_import_cost.py` cannot import, or a user service
+  whose program line runs under `uv run`) is fixed by following
+  `references/python-packaging-migration.md`.
 - **Suites, lint, ratchets** for what the merged set, the update's changes to
   your creations, 4a's impacted consumers, and your own edits can reach, and
   for nothing else (with none of them, no suite runs at all). The test
