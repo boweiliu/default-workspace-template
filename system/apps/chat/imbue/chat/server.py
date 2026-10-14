@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -1265,9 +1266,22 @@ def _shoulder_tap_atomic_endpoint(chat_id: str) -> Response:
         send_recovery=lambda text: agent_manager.send_message_to_agent(AgentId(agent_info.id), text) is None,
     )
     if outcome.error_detail is not None:
-        error = ErrorResponse(detail=outcome.error_detail)
-        return json_response(error.model_dump(), status_code=outcome.error_status_code)
+        return refusal_response(
+            outcome.error_detail,
+            outcome.error_status_code,
+            user_facing_message=_TAP_FAILURE_SENTENCES.get(outcome.status, _TAP_NOT_SENT_SENTENCE),
+            kind=outcome.status,
+        )
     return json_response(ShoulderTapAtomicResponse(status=outcome.status, block=outcome.block).model_dump())
+
+
+_TAP_NOT_SENT_SENTENCE: Final[str] = "Your queued messages weren't sent. They're still queued -- try again."
+# What a refused shoulder tap says, by the harness's tap status: the cases differ in whether the messages went at all.
+_TAP_FAILURE_SENTENCES: Final[Mapping[str, str]] = {
+    "permissions_waiting": "This chat is waiting on a permission request. Answer it, then try again.",
+    "binding_not_active": "This chat's agent has to restart before queued messages can be sent this way.",
+    "recovery_send_failed": "Your queued messages went through, but the agent may not have noticed them.",
+}
 
 
 def _drain_to_composer_endpoint(chat_id: str) -> Response:

@@ -26,7 +26,14 @@ export const READ_NOT_ANSWERED = "The workspace didn't answer. Try again in a mo
 export const CHANGE_NOT_ANSWERED =
   "The workspace didn't answer, so Imbue Studio can't tell whether this went through.";
 
-const REPORT_A_BUG_ENDING = "Try again. If this persists, report a bug.";
+/** How a sentence about a failure with no explanation of its own ends. */
+export const REPORT_A_BUG_ENDING = "Try again. If this persists, report a bug.";
+
+/** Whether ``sentence`` ends by asking for a bug report, so the surface showing it offers "Report a bug". A server's
+ *  own sentence counts as much as ours. */
+export function asksForBugReport(sentence: string): boolean {
+  return sentence.trimEnd().endsWith("report a bug.");
+}
 
 /** The sentence for a request nothing answered (a gateway status, a dropped connection, a timeout). */
 export function notAnsweredSentence(kind: RequestKind): string {

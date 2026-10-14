@@ -17,6 +17,7 @@ import { retryHandoff } from "../models/Handoffs";
 import { getAccounts } from "../models/Providers";
 import type { ProviderAccount } from "../models/Providers";
 import { startChatOnAccount } from "../shell";
+import { raiseNewChatFailure } from "./MessageInput";
 import { harnessLabel } from "./harness-labels";
 
 /** The accounts a failed switch may be retried on: any for a handoff, the agent's own harness and lane for a rebind. */
@@ -128,7 +129,10 @@ export function HandoffFailedNotice(): m.Component<{ chatId: string }> {
                 sm: true,
                 extra: "handoff-new-chat-button",
                 readonly: isRetrying,
-                onclick: () => void startChatOnAccount(chosenAccountId ?? failedTargetId),
+                onclick: () => {
+                  const startNewChat = (): Promise<void> => startChatOnAccount(chosenAccountId ?? failedTargetId);
+                  startNewChat().catch((error: unknown) => raiseNewChatFailure(chatId, error, startNewChat));
+                },
               },
               "Start a new chat instead",
             ),

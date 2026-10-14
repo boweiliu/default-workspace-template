@@ -801,6 +801,11 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
                     }),
                 m(MessageInput, {
                   chatId,
+                  onTurnOnSourceView: isListed
+                    ? () => {
+                        if (!isFlipped) toggleSourceView();
+                      }
+                    : undefined,
                   leading:
                     isCompact && isListed
                       ? m(ModelProviderMenu, {

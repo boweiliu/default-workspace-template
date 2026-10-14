@@ -18,6 +18,7 @@ import m from "mithril";
 import { makeNoticeDialog } from "@imbue/workspace-ui/src/components/NoticeDialog";
 import { inputClass } from "@imbue/workspace-ui/src/components/Input";
 import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { describeSwitchFailure } from "./composer-failures";
 import { fetchAccountModelOptions } from "../models/AccountModelOptions";
 import { getChatById } from "../models/Chats";
 import type { ChatSnapshot, TransitionKind } from "../models/Chats";
@@ -40,7 +41,8 @@ import { getEventsForChat, isTranscriptLoaded, mintMessageId, whenTranscriptLoad
 import { startChatOnAccount } from "../shell";
 import { harnessLabel } from "./harness-labels";
 import { capitalizeEffort, modelPickLabel } from "./model-pick-label";
-import { raiseFailureNotice, restoreComposerDraft, takeComposerDraft } from "./MessageInput";
+import { raiseFailureNotice, raiseNewChatFailure, restoreComposerDraft, takeComposerDraft } from "./MessageInput";
+import type { TakenComposerDraft } from "./MessageInput";
 import { hasUserTurn } from "./turn-grouping";
 
 /** The value of the model select's first row: no pick, so the target harness's default on a handoff and the
@@ -137,7 +139,9 @@ async function switchFreshChat(chatId: string, target: ProviderAccount): Promise
   } catch (error) {
     raiseFailureNotice(chatId, {
       title: `Couldn't switch to ${target.label}`,
-      detail: describeRequestError(error),
+      describe: (failure) => describeSwitchFailure(failure, target.label, false),
+      error,
+      retry: () => switchChat(chatId, target.id, "", mintMessageId()).then(() => undefined),
     });
   }
   m.redraw();
@@ -324,8 +328,23 @@ async function startNewChat(dialog: OpenDialog): Promise<void> {
     return;
   }
   setPendingAccount(dialog.chatId, null);
-  const isStarted = await startChatOnAccount(dialog.target.id, draft.finalText, pick);
-  if (!isStarted) restoreComposerDraft(dialog.chatId, draft);
+  const { chatId, target } = dialog;
+  const startWith = async (taken: TakenComposerDraft): Promise<void> => {
+    try {
+      await startChatOnAccount(target.id, taken.finalText, pick);
+    } catch (error) {
+      restoreComposerDraft(chatId, taken);
+      throw error;
+    }
+  };
+  try {
+    await startWith(draft);
+  } catch (error) {
+    raiseNewChatFailure(chatId, error, async () => {
+      const again = await takeComposerDraft(chatId);
+      if (again !== null) await startWith(again);
+    });
+  }
   if (open === dialog) open = null;
   m.redraw();
 }

@@ -8,12 +8,17 @@ import { REQUEST_FALLBACK_MESSAGE, describeRequestError, describeRequestFailure 
 // helper is that none of them can reach a user as a bare "null" or a status number.
 describe("describeRequestFailure", () => {
   it("prefers the server's own detail, with the status behind the details", () => {
-    const error = Object.assign(new Error("{}"), { code: 404, response: { detail: "Agent 'x' not found" } });
+    const error = Object.assign(new Error("{}"), {
+      code: 404,
+      response: { detail: "Agent 'x' not found", kind: "chat_gone" },
+    });
     expect(describeRequestFailure(error)).toEqual({
       message: "Agent 'x' not found",
       details: "HTTP 404",
       isReportable: false,
       isUserFacing: false,
+      isNotAnswered: false,
+      kind: "chat_gone",
     });
   });
 
@@ -27,7 +32,20 @@ describe("describeRequestFailure", () => {
       details: "HTTP 502\nchat answered the launch with 503",
       isReportable: false,
       isUserFacing: true,
+      isNotAnswered: false,
+      kind: null,
     });
+  });
+
+  it("offers a bug report for a server's sentence that asks for one", () => {
+    const error = Object.assign(new Error("{}"), {
+      code: 500,
+      response: {
+        detail: "Internal server error: boom",
+        user_facing_message: "Something went wrong in this chat. Try again. If this persists, report a bug.",
+      },
+    });
+    expect(describeRequestFailure(error).isReportable).toBe(true);
   });
 
   it("answers a status with no reason with the fallback, and keeps the status and raw text for the details", () => {
@@ -37,6 +55,8 @@ describe("describeRequestFailure", () => {
       details: 'HTTP 500\n{"oops": true}',
       isReportable: true,
       isUserFacing: false,
+      isNotAnswered: false,
+      kind: null,
     });
   });
 
@@ -55,6 +75,8 @@ describe("describeRequestFailure", () => {
       details: null,
       isReportable: false,
       isUserFacing: false,
+      isNotAnswered: true,
+      kind: null,
     });
     const timedOut = Object.assign(new Error("Request timed out"), { code: 0 });
     expect(describeRequestFailure(timedOut, "read").message).toBe(READ_NOT_ANSWERED);
@@ -68,6 +90,8 @@ describe("describeRequestFailure", () => {
       details: "HTTP 409",
       isReportable: false,
       isUserFacing: false,
+      isNotAnswered: false,
+      kind: null,
     });
   });
 

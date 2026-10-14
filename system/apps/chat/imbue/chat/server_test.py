@@ -45,6 +45,7 @@ from imbue.chat.config import Config
 from imbue.chat.errors import ChatAppError
 from imbue.chat.event_queues import AgentEventQueues
 from imbue.chat.harnesses.claude.tap import ClaudeInterruptToComposer
+from imbue.chat.harnesses.claude.tap import PERMISSIONS_WAITING_MARKER_FILENAME
 from imbue.chat.harnesses.codex.ledger import CodexMessageLedger
 from imbue.chat.harnesses.codex.ledger import ShoulderTapResult
 from imbue.chat.harnesses.codex.live_connection import CodexLiveConnection
@@ -4561,3 +4562,21 @@ def test_a_delete_that_removed_the_agents_but_not_the_folder_says_the_chat_may_c
     assert response.status_code == 500
     assert response.get_json()["kind"] == "partly_deleted"
     assert "If the chat comes back later, delete it again." in response.get_json()["user_facing_message"]
+
+
+def test_a_tap_refused_while_a_permission_request_waits_says_to_answer_it(client: FlaskClient, tmp_path: Path) -> None:
+    state_dir, config_dir = _claude_tap_dirs(tmp_path)
+    (state_dir / PERMISSIONS_WAITING_MARKER_FILENAME).write_text("")
+    agent_info = _agent_info(agent_state_dir=state_dir, claude_config_dir=config_dir)
+    watcher = _FakeClaudeTapWatcher([[{"queued_id": "q1", "content": "hi"}]])
+    with (
+        patch("imbue.chat.server._find_active_agent", return_value=agent_info),
+        patch.object(ChatAppState, "get_or_create_watcher", return_value=watcher),
+    ):
+        response = client.post("/api/chats/agent-123/shoulder-tap-atomic")
+
+    assert response.status_code == 409
+    assert response.get_json()["kind"] == "permissions_waiting"
+    assert response.get_json()["user_facing_message"] == (
+        "This chat is waiting on a permission request. Answer it, then try again."
+    )

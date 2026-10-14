@@ -1,5 +1,6 @@
 import {
   GATEWAY_STATUSES,
+  asksForBugReport,
   fallbackSentence,
   joinDetails,
   notAnsweredSentence,
@@ -30,6 +31,11 @@ export const REQUEST_FALLBACK_MESSAGE = fallbackSentence("The workspace couldn't
 export interface RequestFailure extends Failure {
   /** The server's sentence was written for people, so it stands on its own rather than after what failed. */
   readonly isUserFacing: boolean;
+  /** Nothing answered (a gateway status, a dropped connection, a timeout), so nothing says whether the request was
+   *  carried out. */
+  readonly isNotAnswered: boolean;
+  /** The route's name for the case (its body's ``kind``); null when it named none. */
+  readonly kind: string | null;
 }
 
 function informativeMessage(value: unknown): string | null {
@@ -50,13 +56,15 @@ function nonEmptyString(value: unknown): string | null {
  * `response.detail` extraction yields `null` and surfaces a useless "null". The server's own `detail` is shown as
  * written; a status with no reason reads as a fallback of ours, with the status and any raw text behind the details.
  */
-export function describeRequestFailure(error: unknown, kind: RequestKind = "change"): RequestFailure {
+export function describeRequestFailure(error: unknown, requestKind: RequestKind = "change"): RequestFailure {
   if (error instanceof HttpError) {
     return {
       message: error.message,
       details: error.details,
       isReportable: error.isReportable,
       isUserFacing: error.isUserFacing,
+      isNotAnswered: error.isNotAnswered,
+      kind: error.kind,
     };
   }
   const fallback: RequestFailure = {
@@ -64,6 +72,8 @@ export function describeRequestFailure(error: unknown, kind: RequestKind = "chan
     details: null,
     isReportable: true,
     isUserFacing: false,
+    isNotAnswered: false,
+    kind: null,
   };
   if (error === null || error === undefined) return fallback;
   if (typeof error === "string") {
@@ -71,7 +81,7 @@ export function describeRequestFailure(error: unknown, kind: RequestKind = "chan
     return text === "" ? fallback : { ...fallback, message: text, isReportable: false };
   }
   const err = error as {
-    response?: { user_facing_message?: unknown; detail?: unknown; error?: unknown } | null;
+    response?: { user_facing_message?: unknown; detail?: unknown; error?: unknown; kind?: unknown } | null;
     message?: unknown;
     code?: unknown;
   };
@@ -84,18 +94,33 @@ export function describeRequestFailure(error: unknown, kind: RequestKind = "chan
 
   const userFacing = nonEmptyString(err.response?.user_facing_message);
   const reason = nonEmptyString(err.response?.detail) ?? nonEmptyString(err.response?.error);
+  const kind = nonEmptyString(err.response?.kind);
   const status = err.code === 0 ? null : `HTTP ${err.code}`;
   if (userFacing !== null) {
-    return { message: userFacing, details: joinDetails([status, reason]), isReportable: false, isUserFacing: true };
+    return {
+      message: userFacing,
+      details: joinDetails([status, reason]),
+      isReportable: asksForBugReport(userFacing),
+      isUserFacing: true,
+      isNotAnswered: false,
+      kind,
+    };
   }
   if (reason !== null) {
-    return { message: reason, details: status, isReportable: false, isUserFacing: false };
+    return { message: reason, details: status, isReportable: false, isUserFacing: false, isNotAnswered: false, kind };
   }
   // The body's raw text (mithril's `message`), behind the details. Code 0 is mithril's "no HTTP response at all": a
   // connection refused or dropped, or its own timeout, so nothing says whether the request was carried out.
   const details = joinDetails([status, message]);
   if (err.code === 0 || GATEWAY_STATUSES.has(err.code)) {
-    return { message: notAnsweredSentence(kind), details, isReportable: false, isUserFacing: false };
+    return {
+      message: notAnsweredSentence(requestKind),
+      details,
+      isReportable: false,
+      isUserFacing: false,
+      isNotAnswered: true,
+      kind: null,
+    };
   }
   return { ...fallback, details };
 }
@@ -116,14 +141,22 @@ export function describeRequestError(error: unknown, kind: RequestKind = "change
  * Anything unrecognised (an older backend, a kind added later) reads as "unknown", for which
  * callers offer nothing kind-specific.
  */
-export type SendFailureKind = "input_blocked" | "not_ready" | "agent_unreachable" | "unknown";
+export type SendFailureKind =
+  "input_blocked" | "not_ready" | "agent_unreachable" | "account_signed_out" | "chat_gone" | "unknown";
 
-const KNOWN_SEND_FAILURE_KINDS: ReadonlySet<string> = new Set(["input_blocked", "not_ready", "agent_unreachable"]);
+const KNOWN_SEND_FAILURE_KINDS: ReadonlySet<string> = new Set([
+  "input_blocked",
+  "not_ready",
+  "agent_unreachable",
+  "account_signed_out",
+  "chat_gone",
+]);
 
 export function describeRequestErrorKind(error: unknown): SendFailureKind {
   if (error === null || typeof error !== "object") {
     return "unknown";
   }
-  const kind = (error as { response?: { kind?: unknown } | null }).response?.kind;
+  const kind =
+    error instanceof HttpError ? error.kind : (error as { response?: { kind?: unknown } | null }).response?.kind;
   return typeof kind === "string" && KNOWN_SEND_FAILURE_KINDS.has(kind) ? (kind as SendFailureKind) : "unknown";
 }

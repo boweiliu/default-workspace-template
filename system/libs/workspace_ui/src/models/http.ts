@@ -2,6 +2,7 @@
 
 import {
   GATEWAY_STATUSES,
+  asksForBugReport,
   fallbackSentence,
   joinDetails,
   notAnsweredSentence,
@@ -28,6 +29,11 @@ export class HttpError extends Error implements Failure {
     readonly isReportable: boolean,
     /** The server's sentence was written for people, so it stands on its own rather than after what failed. */
     readonly isUserFacing: boolean = false,
+    /** Nothing answered (a gateway status, a dropped connection), so nothing says whether the request was carried
+     *  out. */
+    readonly isNotAnswered: boolean = false,
+    /** The route's name for the case (its body's ``kind``), for a surface that offers different controls per case. */
+    readonly kind: string | null = null,
   ) {
     super(message);
   }
@@ -38,6 +44,7 @@ interface ErrorBody {
   readonly detail?: unknown;
   readonly error?: unknown;
   readonly details?: unknown;
+  readonly kind?: unknown;
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -62,10 +69,13 @@ export async function readResponseFailure(response: Response, kind: RequestKind)
     nonEmptyString(body.details),
     userFacing === null && reason === null ? text.slice(0, RAW_BODY_LIMIT) : null,
   ]);
-  if (userFacing !== null) return new HttpError(response.status, userFacing, details, false, true);
-  if (reason !== null) return new HttpError(response.status, reason, details, false);
+  const caseKind = nonEmptyString(body.kind);
+  if (userFacing !== null) {
+    return new HttpError(response.status, userFacing, details, asksForBugReport(userFacing), true, false, caseKind);
+  }
+  if (reason !== null) return new HttpError(response.status, reason, details, false, false, false, caseKind);
   if (GATEWAY_STATUSES.has(response.status)) {
-    return new HttpError(response.status, notAnsweredSentence(kind), details, false);
+    return new HttpError(response.status, notAnsweredSentence(kind), details, false, false, true);
   }
   return new HttpError(response.status, REST_FALLBACK_MESSAGE, details, true);
 }
@@ -75,7 +85,7 @@ export async function fetchOrNotAnswered(url: string, init: RequestInit, kind: R
   try {
     return await fetch(url, init);
   } catch (error) {
-    throw new HttpError(0, notAnsweredSentence(kind), joinDetails([(error as Error).message]), false);
+    throw new HttpError(0, notAnsweredSentence(kind), joinDetails([(error as Error).message]), false, false, true);
   }
 }
 
