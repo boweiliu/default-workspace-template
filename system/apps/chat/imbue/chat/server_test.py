@@ -4581,3 +4581,16 @@ def test_a_tap_refused_while_a_permission_request_waits_says_to_answer_it(client
     assert response.get_json()["user_facing_message"] == (
         "This chat is waiting on a permission request. Answer it, then try again."
     )
+
+
+def test_deleting_a_chat_whose_create_failed_drops_it(app: Flask) -> None:
+    manager = state_of(app).agent_manager
+    manager.note_agent_list_known()
+    seed_failed_chat(manager, ChatId("failed-1"), "Chat 1")
+    client = app.test_client()
+
+    response = client.post("/api/chats/failed-1/destroy")
+
+    assert response.status_code == 200
+    assert manager.get_provisional_chat("failed-1") is None
+    assert client.post("/api/chats/failed-1/destroy").status_code == 404

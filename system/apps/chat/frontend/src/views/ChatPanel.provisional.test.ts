@@ -23,8 +23,12 @@ const mocks = vi.hoisted(() => {
     isConversationNotFound: false,
     isChatListReceived: true,
     loadState: { phase: "idle", error: null } as unknown,
+    destroyChat: vi.fn(async (_chatId: string) => undefined),
+    startChat: vi.fn(async (_chatId: string) => undefined),
   };
 });
+
+vi.mock("../root/verbs", () => ({ destroyChat: mocks.destroyChat, startChat: mocks.startChat }));
 
 vi.mock("../models/Chats", () => ({
   getChatById: () => mocks.chat,
@@ -120,6 +124,14 @@ function findByClass(node: unknown, className: string): AnyVnode | undefined {
 /** A Button by the `extra` class the page marks it with. */
 function findButton(node: unknown, extra: string): AnyVnode | undefined {
   return flatten(node).find((vnode) => vnode.attrs?.extra === extra);
+}
+
+/** What each "See details" in the tree holds. */
+function detailsShown(node: unknown): string {
+  return flatten(node)
+    .filter((vnode) => vnode.tag === SeeDetails)
+    .map((vnode) => String(vnode.attrs?.details ?? ""))
+    .join("\n");
 }
 
 function click(button: AnyVnode | undefined): void {
@@ -264,9 +276,32 @@ describe("ChatPanel over a provisional chat", () => {
     const tree = render();
 
     expect(findByClass(tree, "message-list-create-failed")).toBeTruthy();
-    expect(renderedText(tree)).toContain("mngr create exited with code 1");
+    expect(renderedText(tree)).toContain(
+      "The agent for this chat couldn't be started. Try again, or start a new chat on a different provider.",
+    );
+    expect(renderedText(tree)).not.toContain("mngr create exited with code 1");
+    expect(detailsShown(tree)).toContain("mngr create exited with code 1");
     click(findButton(tree, "message-list-create-retry"));
     expect(mocks.launchChat).toHaveBeenCalledWith(AGENT_ID, "acct-1");
+  });
+
+  it("removes a chat whose create failed", async () => {
+    failed("acct-1", "mngr create exited with code 1");
+    const render = mountPanel();
+
+    click(findButton(render(), "message-list-remove-chat"));
+    await flushAsync();
+
+    expect(mocks.destroyChat).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  it("asks for a provider, not a retry, for a failed chat that names no account", () => {
+    failed("", "No provider account is signed in for this workspace.");
+    const tree = mountPanel()();
+
+    expect(renderedText(tree)).toContain("Sign in to a provider to start this chat.");
+    expect(findButton(tree, "message-list-create-retry")).toBeUndefined();
+    expect(findButton(tree, "message-list-choose-provider")).toBeTruthy();
   });
 
   it("shows a refused relaunch's reason beside the create's, and forgets it once the chat is being created", async () => {
@@ -280,8 +315,11 @@ describe("ChatPanel over a provisional chat", () => {
 
     const refused = render();
 
-    expect(renderedText(refused)).toContain("mngr create exited with code 1");
-    expect(renderedText(refused)).toContain("account acct-1 is on a lane this build does not have");
+    expect(detailsShown(refused)).toContain("mngr create exited with code 1");
+    expect(renderedText(refused)).toContain(
+      "This chat couldn't be started. Try again. If this persists, report a bug.",
+    );
+    expect(detailsShown(refused)).toContain("account acct-1 is on a lane this build does not have");
 
     mocks.proto = {
       chat_id: AGENT_ID,
@@ -295,8 +333,8 @@ describe("ChatPanel over a provisional chat", () => {
     failed("acct-1", "mngr create exited with code 2");
     const tree = render();
 
-    expect(renderedText(tree)).toContain("mngr create exited with code 2");
-    expect(renderedText(tree)).not.toContain("is on a lane this build does not have");
+    expect(detailsShown(tree)).toContain("mngr create exited with code 2");
+    expect(detailsShown(tree)).not.toContain("is on a lane this build does not have");
   });
 });
 
@@ -321,14 +359,28 @@ describe("ChatPanel over a transcript that 404'd", () => {
 
     const tree = mountPanel()();
 
-    expect(renderedText(tree)).not.toContain("No conversation data");
+    expect(renderedText(tree)).not.toContain("This chat is no longer here.");
     expect(findByClass(tree, "message-list-loading")).toBeTruthy();
   });
 
-  it("says a chat the app does not list has no conversation", () => {
+  it("says a chat the app does not list is no longer here, and offers a new one", () => {
     const tree = mountPanel()();
 
-    expect(renderedText(tree)).toContain("No conversation data");
+    expect(renderedText(tree)).toContain("This chat is no longer here.");
+    expect(renderedText(tree)).not.toContain("Claude session");
+    expect(findButton(tree, "message-list-new-chat")).toBeTruthy();
+  });
+
+  it("offers to start a listed chat whose agent is stopped and has nothing to show", async () => {
+    mocks.chat = chatSnapshotFixture(AGENT_ID, { active_agent: { state: "STOPPED" } });
+    const render = mountPanel();
+
+    const tree = render();
+
+    expect(renderedText(tree)).toContain("This chat has nothing to show yet -- its agent isn't running.");
+    click(findButton(tree, "message-list-start-chat"));
+    await flushAsync();
+    expect(mocks.startChat).toHaveBeenCalledWith(AGENT_ID);
   });
 
   it("keeps a chat that has just come up empty while its transcript is reloaded", async () => {
@@ -346,7 +398,7 @@ describe("ChatPanel over a transcript that 404'd", () => {
 
     const reloading = render();
 
-    expect(renderedText(reloading)).not.toContain("No conversation data");
+    expect(renderedText(reloading)).not.toContain("This chat has nothing to show yet.");
     mocks.isConversationNotFound = false;
     finishReload();
     await flushAsync();
@@ -409,7 +461,7 @@ describe("ChatPanel over a seeded chat", () => {
     const tree = render();
 
     expect(findByClass(tree, "message-list-create-failed")).toBeTruthy();
-    expect(renderedText(tree)).toContain("mngr create exited with code 3");
+    expect(detailsShown(tree)).toContain("mngr create exited with code 3");
     expect(mocks.fetchEvents).not.toHaveBeenCalled();
   });
 });

@@ -1946,10 +1946,13 @@ def _refuse_primary_agent(agent_state_name: str, labels: dict[str, str], verb: s
 
 
 def _destroy_chat(chat_id: str) -> Response:
-    """Destroy a chat by running ``mngr destroy --force`` on every agent of it."""
+    """Destroy a chat by running ``mngr destroy --force`` on every agent of it; a chat that is not an agent yet (its
+    create failed, or it awaits its first send) is dropped instead."""
     agent_manager: AgentManager = get_state().agent_manager
     agent_info = _find_active_agent(chat_id)
     if agent_info is None:
+        if agent_manager.discard_provisional_chat(chat_id):
+            return json_response(DestroyAgentResponse(status="ok").model_dump())
         return _chat_not_found_response(chat_id)
     refusal = _refuse_primary_agent(agent_info.name, agent_info.labels, "destroy")
     if refusal is not None:
