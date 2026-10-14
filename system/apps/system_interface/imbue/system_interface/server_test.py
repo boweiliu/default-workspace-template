@@ -539,6 +539,29 @@ def test_http_errors_keep_their_status_codes(client: FlaskClient) -> None:
     assert client.put("/api/layout/broadcast").status_code == 405
 
 
+def test_a_page_that_fails_to_load_shows_a_sentence_and_a_try_again_and_a_call_keeps_its_json(
+    tmp_path: Path,
+) -> None:
+    """The workspace frame gets a page of ours, the exception behind "See details", rather than raw JSON; a caller
+    that reads JSON still gets the developer's reason."""
+    static_dir = tmp_path / "static"
+    # A shell document that exists but cannot be read.
+    (static_dir / "index.html").mkdir(parents=True)
+    state = build_test_state()
+    state.static_directory = static_dir
+    test_client = create_application(state).test_client()
+
+    page = test_client.get("/", headers={"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"})
+
+    assert page.status_code == 500 and page.mimetype == "text/html"
+    assert "This workspace couldn't load. Try again. If this persists, report a bug." in page.text
+    assert 'onclick="location.reload()">Try again</button>' in page.text
+    details = page.text.split("<summary>See details</summary><pre>")[1].split("</pre>")[0]
+    assert details.startswith("Internal server error: [Errno ") and "index.html" in details
+    called = test_client.get("/", headers={"Accept": "*/*"})
+    assert called.status_code == 500 and called.get_json()["detail"].startswith("Internal server error: [Errno ")
+
+
 def test_an_unknown_api_path_is_a_json_404_not_the_app_shell(client: FlaskClient) -> None:
     """The SPA catch-all serves the app shell for any unknown GET, which is right for a
     client-side route and wrong for a caller of the API: a 200 page where JSON was expected

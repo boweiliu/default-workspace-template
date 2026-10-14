@@ -18,7 +18,6 @@ afterEach(() => {
 
 const LOADED: TemplateCatalogState = {
   kind: "loaded",
-  isStale: false,
   catalog: {
     generated_at: "",
     templates: [
@@ -29,10 +28,17 @@ const LOADED: TemplateCatalogState = {
   },
 };
 
-function render(catalog: TemplateCatalogState = LOADED): { root: HTMLElement; started: string[] } {
+function render(catalog: TemplateCatalogState = LOADED): { root: HTMLElement; started: string[]; retries: number[] } {
   const started: string[] = [];
-  const root = mountView(() => m(GettingStartedPage, { catalog, onStartWithText: (text) => started.push(text) }));
-  return { root, started };
+  const retries: number[] = [];
+  const root = mountView(() =>
+    m(GettingStartedPage, {
+      catalog,
+      onStartWithText: (text) => started.push(text),
+      onRetryTemplates: () => retries.push(retries.length + 1),
+    }),
+  );
+  return { root, started, retries };
 }
 
 function typeQuery(root: HTMLElement, query: string): void {
@@ -123,7 +129,13 @@ describe("the Getting Started page", () => {
     expect(loading.root.querySelector(".getting-started-templates-status")!.textContent).toContain("Loading");
     unmountViews();
     const failed = render({ kind: "failed" });
-    expect(failed.root.querySelector(".getting-started-templates-status")!.textContent).toContain("Failed");
+    expect(failed.root.querySelector(".getting-started-templates-status")!.textContent).toBe(
+      "Templates couldn't be loaded. Try again. If this persists, report a bug.",
+    );
+    // Its next step is on the line: Try again fetches again, in place.
+    failed.root.querySelector<HTMLElement>(".getting-started-templates-retry")!.click();
+    expect(failed.retries).toEqual([1]);
+    expect(failed.root.querySelector(".getting-started-templates-report")!.textContent).toBe("Report a bug");
     unmountViews();
     const disabled = render({ kind: "disabled" });
     expect(disabled.root.querySelector('[data-section="templates"]')).toBeNull();
