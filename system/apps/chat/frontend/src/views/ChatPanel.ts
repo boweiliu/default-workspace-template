@@ -601,7 +601,12 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
               m(
                 "div",
                 { class: "basis-full text-secondary" },
-                m(SeeDetails, { details: joinDetails([load.error.isUserFacing ? load.error.message : null, detailsBehind(load.error)]) }),
+                m(SeeDetails, {
+                  details: joinDetails([
+                    load.error.isUserFacing ? load.error.message : null,
+                    detailsBehind(load.error),
+                  ]),
+                }),
               ),
             ],
           );
