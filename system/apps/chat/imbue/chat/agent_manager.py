@@ -496,6 +496,8 @@ def _queued_message_state(entry: Mapping[str, Any]) -> QueuedMessageState:
         to_update(queued.field_ref().display, decision.display),
         to_update(queued.field_ref().display_label, decision.display_label),
         to_update(queued.field_ref().display_body, decision.display_body),
+        to_update(queued.field_ref().resolution, decision.resolution),
+        to_update(queued.field_ref().display_details, decision.display_details),
     )
 
 

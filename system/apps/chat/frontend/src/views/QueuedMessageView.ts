@@ -42,6 +42,7 @@ import {
   NOTICE_ROW_SPACING_CLASS,
   USER_BUBBLE_CLASS,
   USER_MESSAGE_ROW_CLASS,
+  noticeOutcomeOf,
   renderNotice,
 } from "./user-message-display";
 import { classifyUserMessage } from "./message-classification";
@@ -173,7 +174,7 @@ function renderQueuedBubble(queued: QueuedMessage, isInGroup: boolean): m.Vnode 
       .filter((part) => part !== null)
       .join(" ");
     return m("div", { class: rowClass, key: `queued-${queued.queued_id}` }, [
-      renderNotice(cls.label ?? NOTICE_FALLBACK_LABEL, cls.body),
+      renderNotice(cls.label ?? NOTICE_FALLBACK_LABEL, cls.body, noticeOutcomeOf(queued)),
     ]);
   }
   if (queued.is_sending === true) {

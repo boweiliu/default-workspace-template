@@ -114,8 +114,11 @@ export interface UserMessageEvent extends BaseTranscriptEvent {
   display_body?: string;
   // permission_resolution / secret_resolution only: the verdict written onto the
   // earlier card (granted / denied / error for a permission card; stored / declined /
-  // superseded for a secret card).
-  resolution?: "granted" | "denied" | "error" | "stored" | "declined" | "superseded";
+  // superseded for a secret card). notice only: failed, for a background task that did
+  // not exit cleanly.
+  resolution?: "granted" | "denied" | "error" | "stored" | "declined" | "superseded" | "failed";
+  // notice only: what goes behind "See details" (a failed task's exit code or signal).
+  display_details?: string;
   // permission_resolution / secret_resolution only: the resolved request's own id,
   // when the notice carries one (absent for a permission notice recorded before
   // request-id embedding shipped, which the walk instead correlates by arrival

@@ -304,6 +304,8 @@ class QueuedMessageState(FrozenModel):
     )
     display_label: str | None = Field(default=None, description="The decision's chip or notice label")
     display_body: str | None = Field(default=None, description="The decision's body, when it is not the content")
+    resolution: str | None = Field(default=None, description="The decision's resolution (a notice's ``failed``)")
+    display_details: str | None = Field(default=None, description="The decision's text behind See details")
 
 
 class AgentStateItem(FrozenModel):
