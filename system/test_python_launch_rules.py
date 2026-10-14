@@ -397,10 +397,13 @@ def test_the_plain_uv_run_scan_catches_a_planted_command_and_skips_mentions() ->
             "Then `uv run --no-sync tk start x`; never wrap a service in `uv run`.",
             "uv run --no-project --with 'pydantic>=2' python check.py",
             "uv run --frozen --package app-manifest app-manifest footprint",
+            "uv run system/scripts/smoketest_app.py todo",
+            "uv run python3 .agents/skills/notify-user/scripts/notify_user.py done",
+            "uv run --no-sync system/scripts/smoketest_app.py todo",
         ]
     )
 
-    assert [number for number, _ in _plain_uv_runs(text)] == [1, 2, 5]
+    assert [number for number, _ in _plain_uv_runs(text)] == [1, 2, 5, 6, 7]
 
 
 def test_the_python_scan_catches_strings_and_argv_and_skips_comparisons() -> None:
