@@ -5,7 +5,7 @@ Each skill's Python now lives in its own uv project, `.agents/skills/<name>/pyth
 - **What existing workspaces need:** a workspace's own skills with Python need the same layout. The update worker converts them by following the new `update-self/references/python-packaging-migration.md`, which also covers a skill test that loads its module from a file: it imports the module from the package instead.
 
 - **Commands that changed:**
-  - `notify_user.py`, `request_secret.py`, `preview_app.py`, `serve_isolated_instance.py`, `refresh_workspace_view.py` and `smoketest_app.py` are now run with `uv run --no-sync` instead of `python3`.
+  - `notify_user.py`, `request_secret.py`, `serve_isolated_instance.py`, `refresh_workspace_view.py` and `smoketest_app.py` are now run with `uv run --no-sync` instead of `python3`, and `preview_app.py` with `uv run --no-sync` instead of `uv run python3`.
   - `claude_p.py` lives at `python/use_ai_integration_skill/claude_p.py`.
   - update-self's apply refreshes the open views with `uv run --no-sync`.
 
