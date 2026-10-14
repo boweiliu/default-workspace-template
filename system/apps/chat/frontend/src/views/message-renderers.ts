@@ -697,7 +697,7 @@ function appendEventParts(
       const details = parseSecretRequest(toolCall, result);
       const note = details ? (secretNotesByRequestId.get(details.requestId) ?? null) : null;
       flushChips();
-      children.push(m(SecretCard, { toolCall, toolResult: result, resolution, note }));
+      children.push(m(SecretCard, { toolCall, toolResult: result, resolution, note, chatId }));
       continue;
     }
     pendingChips.push({ call: toolCall, eventId: event.event_id });
