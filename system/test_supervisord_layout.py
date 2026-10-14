@@ -106,12 +106,12 @@ def test_every_reader_sees_every_program_the_include_glob_reaches() -> None:
         _declared_in(scaffold_flask_lib._supervisord_conf_files(_SUPERVISORD_CONF))
         == canonical
     )
+    # migrate-workspace's REMOTE reader lists the directory over SSH, in shell, so its own suite
+    # runs that shell against a local workspace instead.
     assert (
         _declared_in(migrate_workspace._local_supervisord_configs(_REPO_ROOT))
         == canonical
     )
-    # migrate-workspace's REMOTE reader lists the directory over SSH, in shell, so its own suite
-    # runs that shell against a local workspace instead.
     # An empty read is this reader's ordinary answer ("the app is not registered yet"), so a
     # drift here is silent wherever else it would be loud.
     scope_files = [
