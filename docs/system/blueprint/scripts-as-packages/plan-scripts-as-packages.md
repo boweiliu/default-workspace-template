@@ -146,7 +146,8 @@
 - **Guards** (`system/scripts/agent_secrets_guard_check.py` `_allowed_script`):
   - After `uv run`, skip any of `{"--no-sync", "--frozen", "--quiet"}`, then continue as today.
   - Any other option leaves the call unrecognised, so it is blocked.
-  - Check `agent_latchkey_request_check.py`, which matches by basename (`word.rsplit("/", 1)[-1]`), and the chat app's `harnesses/tool_output.py` regex, which also matches by basename. Add tests for the `--no-sync` forms; no code change is expected there.
+  - The skip list lives in one shared helper, `tk_command_parsing.uv_run.unwrap_uv_run` (stdlib-only, like `parser`). The secrets guard and the chat app's tk-lifecycle detection (`harnesses/tool_output.py`, `is_tk_lifecycle_anywhere`) both call it, so they agree on which `uv run` forms they see through.
+  - Check `agent_latchkey_request_check.py`, which matches by basename (`word.rsplit("/", 1)[-1]`), and the chat app's secret-request regex in `harnesses/tool_output.py`, which also matches by basename. Add tests for the `--no-sync` forms; no code change is expected in either.
 - **New root test `system/test_python_launch_rules.py`**:
   - `test_no_supervisord_program_runs_under_uv_run`: parses `system/supervisord.conf` and `system/supervisord.conf.d/*.conf` (including user-added files) with `configparser` and fails on any `command` that executes `uv run`.
   - `test_no_mngr_window_runs_under_uv_run`: the same check over every `extra_window` entry in `.mngr/settings.toml`.
