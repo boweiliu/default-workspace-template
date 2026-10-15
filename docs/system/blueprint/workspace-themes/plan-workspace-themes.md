@@ -329,10 +329,10 @@ A user starts one in a chat, in their own words ("make it look like BeOS"), or f
 The agent makes a theme from a description or a picture:
 
 1. `workspace-themes new <id> --base <base> --name "<name>" --description "<one sentence>"` lays out the folder.
-2. The agent writes the tokens, the chrome slots, the part styles, and the icon guide, drawing on a CSS library where one fits (section 4.5). A theme with icons of its own is unavailable until it has its generic program icon, so the agent draws that one (section 6.2) here, in the foreground.
+2. The agent writes the tokens, the chrome slots, the part styles, and the icon guide, drawing on a CSS library where one fits (section 4.5). Every theme made this way has icons of its own (`[icons]`); only a variant of a theme that already draws icons in its look keeps its base's. A theme with icons of its own is unavailable until it has its generic program icon, so the agent draws that one (section 6.2) here, in the foreground.
 3. `workspace-themes validate <id>` checks the folder against sections 3 and 4.
 4. It looks at the theme gallery under the theme, and fixes what reads badly.
-5. It makes the apps' icons (section 6.2) in the background, until `workspace-themes icon missing <id>` names no app.
+5. It makes the apps' icons (section 6.2) in the background, always, without asking, until `workspace-themes icon missing <id>` names no app.
 6. It shows the user the theme with the live preview in Desktop settings while they land.
 
 ### 8.2 The theme gallery

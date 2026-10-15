@@ -215,7 +215,8 @@ def _starter_manifest(
         f'base = "{base}"\n'
         "\n[styles]\n"
         'files = ["tokens.css", "parts.css"]\n'
-        "\n# [chrome] and [icons] are taken from the base until this theme sets its own.\n"
+        "\n# [chrome] and [icons] are taken from the base until this theme sets its own; a theme made with the\n"
+        "# create-theme skill draws its own icons, so it adds [icons].\n"
     )
 
 

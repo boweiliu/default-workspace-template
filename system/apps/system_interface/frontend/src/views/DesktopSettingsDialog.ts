@@ -63,8 +63,8 @@ export const THEME_PREVIEW_APP = "files";
 
 /** The prompt "Make your own..." drafts, unsent, into the pinned window's chat. */
 export const THEME_DESIGN_PROMPT =
-  "I'd like to make my own workspace theme. Design it, show me how it looks, and let me try it " +
-  "in Desktop settings before anything changes. Here's the look I want: ";
+  "I'd like to make my own workspace theme. Design it with its own icons, show me how it looks, and let me " +
+  "try it in Desktop settings before anything changes. Here's the look I want: ";
 
 /** Under the Theme row of a desktop that is not on screen, where a picked theme cannot show before it is saved. */
 export const THEME_PREVIEW_ELSEWHERE_HINT = "Switch to this desktop to see a theme before you save it.";

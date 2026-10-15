@@ -30,7 +30,8 @@ From the user's description or picture, decide, before writing anything:
   machine has, or a font file shipped in the theme's `fonts/` under a license that allows it;
 - the shape: corner radii, borders, bevels or shadows, how a pressed button looks;
 - the title bar: which controls sit left and right, and whether the title is centred;
-- the icons: what an icon looks like in this style (it becomes the icon guide).
+- the icons: what an icon looks like in this style (it becomes the icon guide). Every theme made
+  here draws its own icons; they are part of the look, not an extra to offer.
 
 For a look the user named after a real system, ask nothing more: draw on what that system
 looked like. Ask only when the description leaves the look genuinely open.
@@ -60,11 +61,12 @@ style, chrome setting, and icon its base has, and sets only what differs.
 - **Files the styles use** (a wallpaper, a font, a texture) go in `assets/` or `fonts/` and are
   named relative to the style file, in a token as anywhere else:
   `--desk-default-wallpaper: url("assets/bubbles.svg")`. No need for a `data:` URI.
-- **`theme.toml`**: add `[chrome]` (section 4.3) when the controls move, and `[icons]`
-  (section 6.1) with `icons/guide.md` when the icons look different from the base's. A theme
-  with its own `[icons]` also needs `icons/app.<format>`, the generic program icon, and is
-  unavailable (and fails step 4's check) until it has one: once the icon guide is written, draw
-  it yourself, in the foreground, with the `make-theme-icon` skill, installed with `--app app`.
+- **`theme.toml`**: add `[chrome]` (section 4.3) when the controls move, and always `[icons]`
+  (section 6.1) with `icons/guide.md`. Only a variant of a theme that already draws icons in this
+  look (a dark Windows 2000 on `--base windows-2000`) may keep its base's. A theme with its own
+  `[icons]` also needs `icons/app.<format>`, the generic program icon, and is unavailable (and
+  fails step 4's check) until it has one: once the icon guide is written, draw it yourself, in
+  the foreground, with the `make-theme-icon` skill, installed with `--app app`.
 - **`apps/<app>.css`**, optional: styles for parts an app declares in its `app.toml`
   (`[theming] mode = "parts"`; chat declares `chat.user-message`, `chat.composer`,
   `chat.tool-call`). List each such app by its name under `[styles] apps` (`apps = ["chat"]`).
@@ -106,7 +108,8 @@ theme that paints a window's frame or content hides that page there, and would h
 
 ## 6. Make the icons
 
-A theme with icons of its own (an `[icons]` table) needs one for every app in the workspace,
+Always: do not ask whether to, and do not offer them as a later extra. A theme with icons of its
+own (an `[icons]` table) needs one for every app in the workspace,
 built-in and user-made, and its generic program icon (`icons/app.<format>`). Until an app has one,
 the shell derives one from the app's standard icon (`derive` in `[icons]`), a stopgap rather than
 the theme's look.
@@ -120,12 +123,12 @@ draws that one; the theme is unavailable until it has it, though the icon comman
 (the `launch-task` skill) when there are more than one or two (a background agent installs into the
 live workspace, as that skill says, and names the icons it put in `themes/<id>/icons/`; commit them
 with the theme once they land), and show the user the theme while they land. The theme is finished when the command prints `every theme has an icon for every app`.
-A theme that keeps the standard icons (no `[icons]` in it or in any theme it builds on) has nothing
-to draw here; one built on a theme with icons of its own draws its own for the apps it lacks.
+A variant that keeps its base's icons draws its own for the apps its base lacks.
 
 ## 7. Show the user
 
-Tell the user the theme is ready, and that they can try it in **Desktop settings > Theme**,
+Tell the user the theme is ready, that its icons are being drawn and show up as each lands, and
+that they can try it in **Desktop settings > Theme**,
 which previews it live before they keep it, and can put it on one desktop or make it the
 workspace default, which every desktop without a theme of its own wears.
 Do not switch their desktop to it yourself unless they asked you to.
