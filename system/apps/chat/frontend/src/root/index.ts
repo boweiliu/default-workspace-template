@@ -338,14 +338,14 @@ function onFramePointerCancel(event: PointerEvent): void {
  *  usually, a decaying "inertia" tail once the fingers lift -- so it is read as over once `WHEEL_IDLE_MS`
  *  passes with no new event, by `endWheelGesture`, rather than from a discrete release.
  *
- *  Direction convention matches a drag's: under macOS's default "natural scrolling" (content follows the
- *  fingers), a left swipe's `deltaX` carries the same sign a touch drag's would, so it is fed into the exact
- *  same `swipeDirectionFromDelta`/`swipeTarget` logic with no translation. Unverified against real trackpad
- *  hardware -- this sandbox has none to try it on -- so the sign may need flipping once tried for real. */
+ *  Direction convention matches a drag's, negated from the first guess after trying it on real macOS
+ *  hardware: `deltaX` is the amount the *content* should scroll by, so a left swipe's `deltaX` is positive,
+ *  the opposite sign a touch drag's would carry for the same finger motion -- negated here so it feeds into
+ *  the exact same `swipeDirectionFromDelta`/`swipeTarget` logic a drag does. */
 function onFrameWheel(event: WheelEvent): void {
   if (!compactQuery.matches || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
   if (wheelEndTimer !== null) clearTimeout(wheelEndTimer);
-  wheelAccumulatedDeltaX += event.deltaX;
+  wheelAccumulatedDeltaX -= event.deltaX;
   wheelAccumulatedDeltaY += event.deltaY;
   if (engagedDrag === null) {
     const direction = swipeDirectionFromDelta(wheelAccumulatedDeltaX, wheelAccumulatedDeltaY);
