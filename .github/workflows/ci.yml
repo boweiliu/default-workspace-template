@@ -56,7 +56,7 @@ jobs:
         run: uv sync --frozen --package workspace-scripts
 
       - name: Check changelog entries
-        run: uv run --no-sync system/scripts/check_changelog_entries.py
+        run: uv run --no-sync system/scripts/workspace_scripts/check_changelog_entries.py
 
   # The mngr pin must name the public mirror before a branch merges: a private
   # pin builds only with a credential, which no user's machine and no CI here

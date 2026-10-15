@@ -213,7 +213,7 @@ For [ai-script] steps, make sure to read and follow the instructions in the **`u
 
 ## Validation
 
-`uv run --no-sync .agents/shared/scripts/validate_skill.py <skill_dir>` checks SKILL.md
+`uv run --no-sync .agents/shared/scripts/agents_shared/validate_skill.py <skill_dir>` checks SKILL.md
 frontmatter, the kebab-case name rules, directory-name match, description
 length and the 500-line body limit. When the skill has Python (entry files in
 `scripts/`, or a `python/` dir) it also checks that `python/pyproject.toml`

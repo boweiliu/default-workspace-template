@@ -28,7 +28,7 @@ The two shapes:
 - **Preview (surface to the user).** Add ``--service-name`` to also register the
   instance as a service (served raw at its own browser origin), and
   ``--preview-service-name`` + ``--preview-title`` to wrap it in a labeled
-  "preview" frame (``preview_wrapper_server.py``) the user opens as a window. With
+  "preview" frame (``preview_wrapper_server``) the user opens as a window. With
   a wrapper, the inner service registers ``--internal`` -- only the frame is an
   app to open, so one preview adds one app to the launcher and the window list
   rather than two -- and the frame registers ``--preview-title`` as its display
@@ -147,10 +147,9 @@ FAILED_LOG_SUFFIX = "-failed.log"
 # verb would not be runnable.
 _SELF_HINT = ".agents/shared/scripts/serve_isolated_instance.py"
 
-# The wrapper server's entry ships beside this script's entry and is stdlib-only,
-# so it runs under the same interpreter that runs this script.
-WRAPPER_SCRIPT = "preview_wrapper_server.py"
-_WRAPPER_SCRIPT_PATH = Path(__file__).resolve().parents[1] / WRAPPER_SCRIPT
+# The wrapper server ships in this package, so it runs as a module under the same
+# interpreter that runs this script.
+WRAPPER_MODULE = "agents_shared.preview_wrapper_server"
 
 # Boot budget: a fresh instance (first import + startup) runs alongside whatever
 # else is on the box, so give it a generous grace before declaring it dead.
@@ -995,7 +994,8 @@ def up(
                         repo_root,
                         [
                             sys.executable,
-                            str(_WRAPPER_SCRIPT_PATH),
+                            "-m",
+                            WRAPPER_MODULE,
                             "--port",
                             str(wrapper_port),
                             "--inner-service",

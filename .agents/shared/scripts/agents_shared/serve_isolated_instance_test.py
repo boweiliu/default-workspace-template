@@ -483,7 +483,7 @@ def test_up_preview_boots_wrapper_registers_both_and_reports_tab(
     # Two detached servers: the instance, then the wrapper chrome page.
     assert spawner.detached_spawns[0] == _LAUNCH
     wrapper_argv = spawner.detached_spawns[1]
-    assert wrapper_argv[1] == str(_SCRIPT.with_name(mod.WRAPPER_SCRIPT))
+    assert wrapper_argv[1:3] == ["-m", wrapper_mod.__name__]
     assert "--inner-service" in wrapper_argv
     assert "demo-app" in wrapper_argv
     assert "my change" in wrapper_argv

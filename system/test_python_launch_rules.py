@@ -11,7 +11,8 @@ Each rule is checked against the real tree and against a planted violation:
   never relock or sync the workspace behind the agent's back.
 - A ``python3 <path>.py`` written into an agent-facing file names a bare entry point: the
   system ``python3`` has no venv, so a venv-tier script run that way fails at its first
-  third-party import.
+  third-party import. A ``uv run <path>.py`` names a script that exists, so a path that
+  moved is rewritten wherever it is written down.
 - Code imports packages. Edits to the import path (``sys.path``, ``PYTHONPATH``, pytest's
   ``pythonpath``) and loading a module from a file path are counted, and the counts only go
   down.
@@ -397,9 +398,9 @@ def test_the_plain_uv_run_scan_catches_a_planted_command_and_skips_mentions() ->
             "Then `uv run --no-sync tk start x`; never wrap a service in `uv run`.",
             "uv run --no-project --with 'pydantic>=2' python check.py",
             "uv run --frozen --package app-manifest app-manifest footprint",
-            "uv run system/scripts/smoketest_app.py todo",
+            "uv run system/scripts/workspace_scripts/smoketest_app.py todo",
             "uv run python3 .agents/skills/notify-user/scripts/notify_user.py done",
-            "uv run --no-sync system/scripts/smoketest_app.py todo",
+            "uv run --no-sync system/scripts/workspace_scripts/smoketest_app.py todo",
         ]
     )
 
@@ -469,30 +470,56 @@ _REPO_ROOT_PREFIXES = (
 )
 
 
-def _named_python3_scripts(text: str, file_dir: Path, repo_root: Path) -> list[tuple[str, Path | None]]:
-    """Every ``(as written, resolved path)`` a ``python3`` in ``text`` runs; None when it cannot be resolved.
+def _resolve_written_path(written: str, file_dir: Path, repo_root: Path) -> Path | None:
+    """Where a script path written in a command points; None when a variable leaves it unknown."""
+    path = written
+    base = repo_root
+    for prefix in _REPO_ROOT_PREFIXES:
+        if path.startswith(prefix):
+            path = path.removeprefix(prefix)
+            break
+    else:
+        if path.startswith("$script_dir/"):
+            path, base = path.removeprefix("$script_dir/"), file_dir
+    return None if "$" in path else (base / path).resolve()
 
-    A placeholder (``<name>``) or a scratch path under /tmp names no file in the tree and is skipped.
-    """
+
+def _names_no_tree_file(written: str) -> bool:
+    """A placeholder (``<name>``) or a scratch path under /tmp names no file in the tree."""
+    return "<" in written or written.startswith("/tmp/")
+
+
+def _named_python3_scripts(text: str, file_dir: Path, repo_root: Path) -> list[tuple[str, Path | None]]:
+    """Every ``(as written, resolved path)`` a ``python3`` in ``text`` runs; None when it cannot be resolved."""
     found: list[tuple[str, Path | None]] = []
     for line in text.splitlines():
         for match in _PYTHON3_SCRIPT_RE.finditer(line):
             if _UNDER_UV_RUN_RE.search(line[: match.start()]):
                 continue
             written = match.group(2)
-            if "<" in written or written.startswith("/tmp/"):
+            if _names_no_tree_file(written):
                 continue
-            path = written
-            base = repo_root
-            for prefix in _REPO_ROOT_PREFIXES:
-                if path.startswith(prefix):
-                    path = path.removeprefix(prefix)
-                    break
-            else:
-                if path.startswith("$script_dir/"):
-                    path, base = path.removeprefix("$script_dir/"), file_dir
-            found.append((written, None if "$" in path else (base / path).resolve()))
+            found.append((written, _resolve_written_path(written, file_dir, repo_root)))
     return found
+
+
+# ``uv run [options] <path>.py``, the path optionally quoted (JSON escapes its quotes).
+_UV_RUN_SCRIPT_RE = re.compile(r"\buv run((?:\s+--[\w-]+)*)\s+\\?[\"']?([^\s\"'`)\\]+\.py)\b")
+
+
+def _missing_uv_run_scripts(files: list[Path], repo_root: Path) -> list[tuple[Path, str]]:
+    """Every ``(file, path as written)`` for a ``uv run <path>.py`` whose script is not in the tree."""
+    missing: list[tuple[Path, str]] = []
+    for path in files:
+        for line in path.read_text(errors="replace").splitlines():
+            for match in _UV_RUN_SCRIPT_RE.finditer(line):
+                written = match.group(2)
+                if _names_no_tree_file(written):
+                    continue
+                resolved = _resolve_written_path(written, path.parent, repo_root)
+                if resolved is not None and not resolved.is_file():
+                    missing.append((path, written))
+    return missing
 
 
 def _python3_violations(files: list[Path], repo_root: Path) -> list[str]:
@@ -537,6 +564,34 @@ def test_the_python3_scan_catches_a_venv_script_and_a_stale_path(tmp_path: Path)
         ".agents/skills/notify-user/scripts/notify_user.py",
         "system/scripts/no_such_script.py",
     ]
+
+
+def test_uv_run_invocations_name_scripts_that_exist() -> None:
+    offenders = [
+        f"{path.relative_to(_REPO_ROOT)}: uv run {written}"
+        for path, written in _missing_uv_run_scripts(_scanned_files(_PYTHON3_SCANNED_SUFFIXES), _REPO_ROOT)
+    ]
+    assert not offenders, (
+        "These run a script that is not in the tree, likely one that moved into its package "
+        "(see .agents/shared/references/running-python.md):\n" + "\n".join(offenders)
+    )
+
+
+def test_the_uv_run_scan_catches_a_moved_script(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "\n".join(
+            [
+                "uv run --no-sync .agents/shared/scripts/validate_skill.py .agents/skills/x",
+                "uv run --no-sync .agents/shared/scripts/agents_shared/validate_skill.py .agents/skills/x",
+                'eval "$(uv run --no-sync .agents/shared/scripts/parse_task_frontmatter.py task.md)"',
+                "uv run --no-sync .agents/skills/<name>/python/<name>_skill/run.py",
+                "uv run --no-sync pytest system/no_such_test.py",
+            ]
+        )
+    )
+
+    assert _missing_uv_run_scripts([doc], _REPO_ROOT) == [(doc, ".agents/shared/scripts/validate_skill.py")]
 
 
 # Calls that put a directory on the import path without naming ``sys.path``.

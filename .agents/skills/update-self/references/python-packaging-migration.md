@@ -42,7 +42,7 @@ plus `_skill`; a `scripts/` dir of shell scripts only needs nothing):
 3. `uv lock`, then `uv sync --all-packages`. A dependency that cannot
    co-resolve with the workspace fails here; pick a compatible version (the
    skill shares the workspace's lock now), and say so in the report.
-4. `uv run --no-sync .agents/shared/scripts/validate_skill.py .agents/skills/<name>`
+4. `uv run --no-sync .agents/shared/scripts/agents_shared/validate_skill.py .agents/skills/<name>`
    must print `ok`, and the skill's tests must pass by path.
 5. If the import-cost test names the entry, move the heavy import into the
    function that uses it, or declare it as the test's message says.

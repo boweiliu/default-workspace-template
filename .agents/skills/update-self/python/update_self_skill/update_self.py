@@ -515,7 +515,7 @@ def _cmd_changelog_entries(args: argparse.Namespace) -> int:
     # Per-PR changelog entries live in a ``changelog/`` dir under each project
     # bucket -- ``system/changelog/``, ``.agents/changelog/``, and
     # ``system/{libs,services,apps}/<name>/changelog/`` (see
-    # system/scripts/check_changelog_entries.py for the bucket definition).
+    # system/scripts/workspace_scripts/check_changelog_entries.py for the bucket definition).
     # Match every one of them at any depth with a single glob rather than one
     # dir alone, or the "what's new" digest silently drops everything landed
     # under the bucketed layout. Exclude system/vendor, whose snapshots carry

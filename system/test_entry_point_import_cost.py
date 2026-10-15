@@ -24,6 +24,7 @@ from entry_points_testing import (
     declared_heavy_imports,
     entry_files,
     is_bare_entry,
+    module_entry_points,
     scripts_dirs,
 )
 
@@ -62,6 +63,7 @@ def _all_entry_points() -> list[Path]:
         path for directory in STANDALONE_BARE_DIRS for path in entry_files(directory)
     ]
     entries += list(STANDALONE_BARE_SCRIPTS)
+    entries += module_entry_points()
     return entries
 
 
@@ -160,6 +162,30 @@ def test_a_declared_heavy_import_passes(tmp_path: Path) -> None:
         '[tool.workspace-template.entry-points."probe.py"]\nheavy-imports = ["pydantic"]\n',
     )
 
+    assert _undeclared_heavy_imports(entry, bare=False) == set()
+
+
+@pytest.mark.timeout(60)
+def test_a_package_module_run_by_path_is_probed_and_declares_in_its_project(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / ".agents" / "skills" / "probe" / "python"
+    package = project / "probe_skill"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "lib.py").write_text("import pydantic\n")
+    (package / "cli.py").write_text(
+        "import pydantic\n\n\ndef main() -> None:\n    pass\n\n\n"
+        'if __name__ == "__main__":\n    main()\n'
+    )
+
+    [entry] = module_entry_points(tmp_path)
+
+    assert entry == package / "cli.py"
+    assert _undeclared_heavy_imports(entry, bare=False) == {"pydantic"}
+    (project / "pyproject.toml").write_text(
+        '[tool.workspace-template.entry-points."cli.py"]\nheavy-imports = ["pydantic"]\n'
+    )
     assert _undeclared_heavy_imports(entry, bare=False) == set()
 
 

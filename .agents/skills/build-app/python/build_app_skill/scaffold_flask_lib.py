@@ -22,7 +22,7 @@ show up as a dirty file in the tree, so it is not accurate to say a scaffold
 touches nothing shared.
 
 Usage:
-    uv run --no-sync .agents/skills/build-app/scripts/scaffold_flask_lib.py \\
+    uv run --no-sync .agents/skills/build-app/python/build_app_skill/scaffold_flask_lib.py \\
         --name inbox-status --description "inbox status dashboard" \\
         --icon-file icon.svg [--display-name "Inbox status"] \\
         [--port 8081] [--extra-dep "jinja2>=3.1"] [--extra-dep "anthropic>=0.40"]
@@ -827,3 +827,7 @@ def main() -> None:
         f"Next: implement your routes in src/{package}/runner.py, then verify per "
         f"references/verify.md (smoketest_app.py or curl + Playwright against http://127.0.0.1:{port}/)."
     )
+
+
+if __name__ == "__main__":
+    main()
