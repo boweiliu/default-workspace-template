@@ -26,6 +26,9 @@ export interface SwipeHandlers {
   onPointerMove: (event: PointerEvent) => void;
   onPointerUp: (event: PointerEvent) => void;
   onPointerCancel: (event: PointerEvent) => void;
+  // A trackpad's two-finger swipe (macOS, under its default "natural scrolling") has no pointer down or up --
+  // it only ever shows up as a stream of `wheel` events.
+  onWheel: (event: WheelEvent) => void;
 }
 
 // The snap animation's duration and easing, for both a completed drag and an abandoned one.
@@ -250,13 +253,15 @@ export class InnerFramePool {
       this.tell(chatId, this.isRootShown && this.shownChatId === chatId ? "shown" : "hidden");
       const innerDocument = frame.contentWindow?.document;
       if (innerDocument !== undefined && this.swipeHandlers !== null) {
-        const { onPointerDown, onPointerMove, onPointerUp, onPointerCancel } = this.swipeHandlers;
+        const { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onWheel } = this.swipeHandlers;
         innerDocument.addEventListener("pointerdown", onPointerDown);
-        // Not passive: once a drag is engaged, onPointerMove calls preventDefault to hold off the page's own
-        // vertical scroll for the rest of the gesture.
+        // Not passive: once a drag is engaged, onPointerMove/onWheel call preventDefault to hold off the
+        // page's own vertical scroll (or, for wheel, the browser's swipe-to-navigate) for the rest of the
+        // gesture.
         innerDocument.addEventListener("pointermove", onPointerMove, { passive: false });
         innerDocument.addEventListener("pointerup", onPointerUp);
         innerDocument.addEventListener("pointercancel", onPointerCancel);
+        innerDocument.addEventListener("wheel", onWheel, { passive: false });
       }
     });
     this.held.set(chatId, held);
