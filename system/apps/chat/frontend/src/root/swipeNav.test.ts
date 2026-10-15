@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it } from "vitest";
+import { findHorizontallyScrollableAncestor, swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
 import type { ChatRow } from "./rows";
 
 function row(chatId: string): ChatRow {
@@ -53,5 +54,76 @@ describe("swipeTarget", () => {
 
   it("surfaces the new-chat edge from a single-row list", () => {
     expect(swipeTarget([row("agent-only")], "agent-only", "older")).toEqual({ kind: "new_chat_edge" });
+  });
+});
+
+describe("findHorizontallyScrollableAncestor", () => {
+  let iframe: HTMLIFrameElement | null = null;
+
+  afterEach(() => {
+    iframe?.remove();
+    iframe = null;
+  });
+
+  function makeScrollable(doc: Document, overflowX: string): HTMLElement {
+    const pre = doc.createElement("pre");
+    pre.style.overflowX = overflowX;
+    Object.defineProperty(pre, "scrollWidth", { value: 2000, configurable: true });
+    Object.defineProperty(pre, "clientWidth", { value: 300, configurable: true });
+    return pre;
+  }
+
+  it("finds a scrollable ancestor even across a realm boundary (an iframe's own Element constructor)", () => {
+    iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const innerDoc = iframe.contentDocument;
+    if (innerDoc === null) throw new Error("iframe has no document");
+    const pre = makeScrollable(innerDoc, "auto");
+    const code = innerDoc.createElement("code");
+    pre.appendChild(code);
+    innerDoc.body.appendChild(pre);
+
+    // `code` is an instance of the iframe's own `Element`, not this test file's -- the exact mismatch a
+    // naive `instanceof Element` check (confirmed live, this module's history) silently fails against.
+    expect(code instanceof Element).toBe(false);
+    expect(findHorizontallyScrollableAncestor(code)).toBe(pre);
+  });
+
+  it("walks up from a non-scrollable descendant to find the row's scrollable ancestor", () => {
+    const pre = makeScrollable(document, "auto");
+    const code = document.createElement("code");
+    pre.appendChild(code);
+    expect(findHorizontallyScrollableAncestor(code)).toBe(pre);
+  });
+
+  it("returns null when nothing in the chain overflows", () => {
+    const span = document.createElement("span");
+    expect(findHorizontallyScrollableAncestor(span)).toBeNull();
+  });
+
+  it("returns null when overflow-x is neither auto nor scroll, even if wider than its box", () => {
+    const pre = makeScrollable(document, "hidden");
+    expect(findHorizontallyScrollableAncestor(pre)).toBeNull();
+  });
+
+  it("returns null for a non-element target", () => {
+    expect(findHorizontallyScrollableAncestor(null)).toBeNull();
+    expect(findHorizontallyScrollableAncestor(window)).toBeNull();
+  });
+
+  it("skips a vertically-scrolling container even though its own overflow-x also reads as auto", () => {
+    // CSS Overflow's "visible is upgraded to auto" rule: setting only `overflow-y: auto` (the transcript's
+    // own scroll container) computes `overflow-x` as `auto` too, with no author intent to scroll
+    // horizontally at all -- confirmed live, this is the exact container that first tripped this up.
+    const transcript = document.createElement("div");
+    transcript.style.overflowX = "auto";
+    Object.defineProperty(transcript, "scrollWidth", { value: 653, configurable: true });
+    Object.defineProperty(transcript, "clientWidth", { value: 390, configurable: true });
+    Object.defineProperty(transcript, "scrollHeight", { value: 9000, configurable: true });
+    Object.defineProperty(transcript, "clientHeight", { value: 800, configurable: true });
+    const message = document.createElement("div");
+    transcript.appendChild(message);
+
+    expect(findHorizontallyScrollableAncestor(message)).toBeNull();
   });
 });
