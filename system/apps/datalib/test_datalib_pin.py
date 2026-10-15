@@ -1,17 +1,23 @@
-"""The datalib pieces outside this directory agree with each other: one pinned version, and a program nothing starts."""
+"""The datalib pieces outside this directory agree with each other: one pinned version, and no program until first use."""
 
 import configparser
 import re
+import subprocess
 from pathlib import Path
 from typing import Final
 
 # system/apps/datalib/test_datalib_pin.py -> the repository root.
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
-_INSTALL_SCRIPT: Final[Path] = _REPO_ROOT / ".agents/skills/datalib/scripts/install_datalib.sh"
+_INSTALL_SCRIPT: Final[Path] = (
+    _REPO_ROOT / ".agents/skills/datalib/scripts/install_datalib.sh"
+)
 _SKILL: Final[Path] = _REPO_ROOT / ".agents/skills/datalib/SKILL.md"
-_PROGRAM_CONF: Final[Path] = _REPO_ROOT / "system/supervisord.conf.d/datalib.conf"
+_PROGRAM_CONF: Final[Path] = _REPO_ROOT / "system/apps/datalib/datalib.conf"
+_INSTALLED_PROGRAM: Final[str] = "system/supervisord.conf.d/datalib.conf"
 
-_PINNED_VERSION: Final[re.Pattern[str]] = re.compile(r'^readonly PINNED_VERSION="(v[0-9.]+)"$', re.MULTILINE)
+_PINNED_VERSION: Final[re.Pattern[str]] = re.compile(
+    r'^readonly PINNED_VERSION="(v[0-9.]+)"$', re.MULTILINE
+)
 _ANY_VERSION: Final[re.Pattern[str]] = re.compile(r"\bv\d+\.\d+\.\d+\b")
 
 
@@ -25,11 +31,39 @@ def test_skill_names_only_the_version_the_install_script_installs() -> None:
 def test_nothing_installs_datalib_at_boot() -> None:
     """A unit under env.d runs in every workspace, which would download datalib for users who never ask for it."""
     env_d = _REPO_ROOT / "system/scripts/env.d"
-    assert [path.name for path in env_d.iterdir() if "datalib" in path.read_text(errors="replace")] == []
+    assert [
+        path.name
+        for path in env_d.iterdir()
+        if "datalib" in path.read_text(errors="replace")
+    ] == []
 
 
-def test_datalib_program_does_not_start_on_its_own() -> None:
-    """An autostarted program registers the app, which would list Datalib in every workspace."""
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_no_datalib_program_ships_in_supervisord_conf_d() -> None:
+    """A program supervisord knows at boot is started by `supervisorctl restart all`, which a backup restore runs.
+
+    Tracked files only: a workspace that has used datalib holds the install script's gitignored copy there.
+    """
+    tracked = _git("ls-files", "system/supervisord.conf.d").split()
+    shipped = [
+        path for path in tracked if "program:datalib" in (_REPO_ROOT / path).read_text()
+    ]
+    assert shipped == []
+
+
+def test_the_installed_program_is_gitignored() -> None:
+    """Otherwise every workspace that used datalib shows the copy as an untracked change."""
+    assert _git("check-ignore", _INSTALLED_PROGRAM).strip() == _INSTALLED_PROGRAM
+
+
+def test_datalib_program_starts_in_the_user_band() -> None:
+    """The repository-wide band checks read system/supervisord.conf.d/ only, which no longer holds this program."""
     parser = configparser.RawConfigParser()
     parser.read(_PROGRAM_CONF)
-    assert parser.get("program:datalib", "autostart") == "false"
+    command = parser.get("program:datalib", "command")
+    assert "oom_tag_service.py user " in command

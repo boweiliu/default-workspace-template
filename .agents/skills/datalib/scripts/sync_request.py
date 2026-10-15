@@ -65,7 +65,7 @@ def read_token(data_root: Path) -> str:
         token = path.read_text(encoding="utf-8").strip()
     except OSError as e:
         raise SyncRequestError(
-            f"cannot read the API token at {path} ({e}); is the Datalib app running? `supervisorctl start datalib`"
+            f"cannot read the API token at {path} ({e}); is the Datalib app running? `bash .agents/skills/datalib/scripts/install_datalib.sh` installs and starts it"
         ) from e
     if not token:
         raise SyncRequestError(f"the API token file {path} is empty")

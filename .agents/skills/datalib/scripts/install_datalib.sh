@@ -3,8 +3,10 @@
 # is used: the binaries (datalib-http for the Datalib app, datalib-dag and the
 # rest for the skill), one pinned release for both so the UI and the agent's
 # tools never disagree about the store format, datalib's guide for agents,
-# and the Node runtime a sync shells out to. Nothing here runs at boot, so a workspace that never uses
-# datalib downloads nothing.
+# and the Node runtime a sync shells out to. Then it adds the Datalib app's
+# program to supervisord, which starts it. Nothing here runs at boot, so a
+# workspace that never uses datalib downloads nothing and has no datalib
+# program.
 #
 # Safe to run every time: each half checks what is already in place first.
 #
@@ -22,6 +24,13 @@ readonly PINNED_VERSION="v0.42.0"
 readonly INSTALL_ROOT="${DATALIB_INSTALL_ROOT:-$HOME/.local/share/datalib}"
 readonly BIN_DIR="${DATALIB_BIN_DIR:-$HOME/.local/bin}"
 readonly RELEASE_DIR="$INSTALL_ROOT/$PINNED_VERSION"
+
+# This script is .agents/skills/datalib/scripts/install_datalib.sh.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+readonly REPO_ROOT
+readonly PROGRAM_SOURCE="$REPO_ROOT/system/apps/datalib/datalib.conf"
+readonly PROGRAM_DIR="${DATALIB_PROGRAM_DIR:-$REPO_ROOT/system/supervisord.conf.d}"
+readonly SUPERVISORCTL="${DATALIB_SUPERVISORCTL:-supervisorctl}"
 
 _log() {
     printf '[install_datalib] %s\n' "$*"
@@ -86,3 +95,24 @@ if "$RELEASE_DIR/datalib-step" pull-runtime; then
 else
     _log "runtime fetch FAILED; the first sync will try again"
 fi
+
+# The Datalib app's program. supervisord reads system/supervisord.conf.d/ only
+# when told to, so `reread` picks up the new or changed file and `update`
+# loads it, which starts it (it autostarts). `update` leaves a program it
+# already has unchanged alone, stopped or not, so a stopped one is started
+# here. Installed last: the program needs the binaries above.
+readonly INSTALLED_PROGRAM="$PROGRAM_DIR/datalib.conf"
+if ! cmp -s "$PROGRAM_SOURCE" "$INSTALLED_PROGRAM"; then
+    # Copied under a name supervisord's *.conf glob does not match first.
+    cp "$PROGRAM_SOURCE" "$INSTALLED_PROGRAM.partial"
+    mv "$INSTALLED_PROGRAM.partial" "$INSTALLED_PROGRAM"
+    _log "added the Datalib app's program at $INSTALLED_PROGRAM"
+fi
+"$SUPERVISORCTL" reread >/dev/null
+"$SUPERVISORCTL" update datalib
+program_state="$("$SUPERVISORCTL" status datalib | awk '{print $2}')" || true
+case "$program_state" in
+    RUNNING | STARTING) ;;
+    *) "$SUPERVISORCTL" start datalib ;;
+esac
+_log "the Datalib app's program is running"

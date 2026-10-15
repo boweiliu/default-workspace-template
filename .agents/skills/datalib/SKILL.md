@@ -34,13 +34,11 @@ mkdir -p "$DATA_ROOT"
 
 # Nothing of datalib is installed until it is first used. This installs the
 # binaries (pinned to datalib v0.42.0), datalib's agent guide, and the Node
-# runtime a sync shells out to, about 195 MB together on the first run; after
-# that it only checks that they are there, so run it every time:
+# runtime a sync shells out to, about 195 MB together on the first run, then
+# adds the Datalib app to the workspace and starts it; from then on the app is
+# listed. After the first run it only checks that all of it is in place and
+# running, so run it every time:
 bash "$HOME/workspace/.agents/skills/datalib/scripts/install_datalib.sh"
-
-# The Datalib app is stopped until someone asks for datalib. Start it; from
-# then on the app is listed. "already started" means it was running already:
-supervisorctl start datalib
 ```
 
 1. **Search the existing mirror first.** The user may already have data

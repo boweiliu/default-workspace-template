@@ -200,7 +200,7 @@ def test_a_missing_token_file_says_to_start_the_app(
 
     assert _run(origin, tmp_path / "no-root", "wait", "r1") == 1
 
-    assert "supervisorctl start datalib" in capsys.readouterr().err
+    assert "install_datalib.sh" in capsys.readouterr().err
 
 
 def test_a_refused_token_is_an_error_at_once_for_open(
