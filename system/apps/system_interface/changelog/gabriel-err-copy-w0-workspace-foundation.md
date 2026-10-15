@@ -1,7 +1,7 @@
 Failure toasts on the workspace desktop can now be read and acted on.
 
-- A toast that carries details or a button stays until it is dismissed, with a close control, its buttons (such as "Report a bug"), and a collapsed "See details" holding the status and the server's own text. A plain note still leaves after five seconds.
+- Each failure says whether its toast stays: a failure whose retry is the control just pressed (closing a window, moving or removing a shortcut, a link) leaves a plain note that goes after five seconds; a launch, a failed startup read, a quit and a page's own move leave a toast that stays until dismissed, with a close control, a collapsed "See details" holding the status and the server's own text, and "Report a bug" where the sentence asks for one and the desktop app opens its bug report. The same toast twice replaces the first, and at most three lasting toasts stay on screen.
 
-- A failed launch names the app by its display name: "Chat couldn't open that. Try again. If this persists, report a bug." (with a "Report a bug" button), or the app's own sentence when its failed answer carries one for people. The app's reason is now passed on for any status, not only a 4xx, and sits behind "See details" instead of in the toast ("chat answered the launch with 503 instead of a page path").
+- A failed launch names the app by its display name: an app's refusal reads "Docs couldn't open that.", and an app that could not answer reads "Docs couldn't open that. Try again. If this persists, report a bug.", with the app's reason behind "See details"; an app's own sentence for people is shown as written. The shell now passes the app's reason on for any status and writes no sentence of its own.
 
-- The desktop's fallbacks follow the shared set: no more bare "HTTP 500", and no claim that "nothing was changed" after a gateway status.
+- Failures no longer read "Could not close the window: <the shell's reason>": the reason goes behind "See details", and a request that got no answer says so on its own.
