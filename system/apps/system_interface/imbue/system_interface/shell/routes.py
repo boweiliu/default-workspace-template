@@ -106,12 +106,7 @@ def _answer_shell_error(error: ShellError) -> ResponseReturnValue:
         case UpdateNoticeCommandError():
             logger.opt(exception=error).error("An update-notice verb failed")
             return detail_response(str(error), HTTP_INTERNAL_ERROR)
-        case (
-            InvalidShellValueError()
-            | AppLifecycleRefusedError()
-            | LayoutOpError()
-            | DesktopValueError()
-        ):
+        case InvalidShellValueError() | AppLifecycleRefusedError() | LayoutOpError() | DesktopValueError():
             return detail_response(str(error), HTTP_BAD_REQUEST)
         case LaunchRefusedError():
             return detail_response(str(error), HTTP_BAD_REQUEST, error.user_facing_message, error.reportable)
