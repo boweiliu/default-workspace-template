@@ -1,0 +1,8 @@
+{
+  "_comment": "Read at runtime by the Studio Discord app (system/apps/studio_discord) from this branch's raw URL. When the invite expires, create a new one on the Imbue server pointing at Imbue Studio #general, then update invite_url and invite_expires_at here. The app falls back to the server widget's own invite if this file is unreachable.",
+  "invite_url": "https://discord.gg/pynvT9nJm",
+  "invite_expires_at": "2026-11-06T20:13:22+00:00",
+  "guild_id": "1391837726583820409",
+  "studio_category_id": "1553913426911174757",
+  "updated_at": "2026-10-14"
+}
