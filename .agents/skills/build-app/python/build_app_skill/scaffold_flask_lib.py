@@ -661,15 +661,17 @@ def _run_checked(argv: list[str], repo_root: Path, description: str) -> None:
 
 
 def _validate_manifest(repo_root: Path, package: str) -> None:
-    # The written manifest is checked against the app_manifest library's rules
-    # (from the root venv, where the library is a workspace member) so a
-    # scaffolded app never registers a manifest its readers would skip.
-    manifest_path = f"system/apps/{package}/app.toml"
-    _run_checked(
-        ["uv", "run", "--no-sync", "app-manifest", "validate-manifest", manifest_path],
-        repo_root,
-        f"uv run --no-sync app-manifest validate-manifest {manifest_path}",
-    )
+    # The written manifest is checked against the app_manifest library's rules so a
+    # scaffolded app never registers a manifest its readers would skip. Imported
+    # here, so only a scaffold that validates pays for the library and its pydantic.
+    from app_manifest.errors import AppManifestError
+    from app_manifest.manifest import load_manifest
+
+    manifest_path = repo_root / "system" / "apps" / package / "app.toml"
+    try:
+        load_manifest(manifest_path)
+    except AppManifestError as error:
+        sys.exit(f"error: {manifest_path.relative_to(repo_root)} is invalid: {error}")
 
 
 def _install_app_tool(repo_root: Path, package: str) -> None:
