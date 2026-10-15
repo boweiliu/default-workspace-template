@@ -106,6 +106,13 @@ type EngagedDrag =
   | { kind: "select"; targetChatId: string; restOffsetPx: number }
   | { kind: "resist"; isAtNewChatEdge: boolean };
 let engagedDrag: EngagedDrag | null = null;
+// A trackpad's two-finger swipe, read from `wheel` events (`onFrameWheel`'s own doc comment has the why):
+// accumulated since the gesture's last pause, and the timer that treats a pause as its end. Shares
+// `engagedDrag` with the pointer gesture above -- the two inputs are never live at once in practice.
+let wheelAccumulatedDeltaX = 0;
+let wheelAccumulatedDeltaY = 0;
+let wheelEndTimer: ReturnType<typeof setTimeout> | null = null;
+const WHEEL_IDLE_MS = 150;
 
 function selectedTitle(): string {
   if (selectedChatId === null) return "";
@@ -273,19 +280,10 @@ function onFramePointerMove(event: PointerEvent): void {
   }
 }
 
-/** The drag's end: past `COMMIT_FRACTION` of the slot's width, it switches chats or, past the newest one,
- *  leaves the "New chat" button showing in its place; short of it, the carousel snaps back to where it
- *  started. A gesture that never engaged (a tap, or a scroll `onFramePointerMove` left to the page) has
- *  nothing to settle. */
-function onFramePointerUp(event: PointerEvent): void {
-  if (event.pointerId !== activeSwipePointerId) return;
-  activeSwipePointerId = null;
-  const start = swipeStartPoint;
-  const drag = engagedDrag;
-  swipeStartPoint = null;
-  engagedDrag = null;
-  if (start === null || drag === null) return;
-  const deltaX = event.screenX - start.x;
+/** A gesture's end, however it was read (a pointer's release, a trackpad's pause): past `COMMIT_FRACTION` of
+ *  the slot's width, it switches chats or, past the newest one, leaves the "New chat" button showing in its
+ *  place; short of it, the carousel snaps back to where it started. */
+function settleDrag(drag: EngagedDrag, deltaX: number): void {
   if (drag.kind === "select") {
     const committed = Math.abs(deltaX) > slotWidthPx() * COMMIT_FRACTION;
     pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, committed);
@@ -299,6 +297,19 @@ function onFramePointerUp(event: PointerEvent): void {
   }
 }
 
+/** The pointer's release. A gesture that never engaged (a tap, or a scroll `onFramePointerMove` left to the
+ *  page) has nothing to settle. */
+function onFramePointerUp(event: PointerEvent): void {
+  if (event.pointerId !== activeSwipePointerId) return;
+  activeSwipePointerId = null;
+  const start = swipeStartPoint;
+  const drag = engagedDrag;
+  swipeStartPoint = null;
+  engagedDrag = null;
+  if (start === null || drag === null) return;
+  settleDrag(drag, event.screenX - start.x);
+}
+
 /** A cancelled gesture (a system interruption -- an incoming call, the app backgrounded mid-drag) settles
  *  exactly like releasing short of the commit threshold: snap back, nothing committed. */
 function onFramePointerCancel(event: PointerEvent): void {
@@ -310,6 +321,57 @@ function onFramePointerCancel(event: PointerEvent): void {
   if (drag === null) return;
   if (drag.kind === "select") pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, false);
   else pool?.endResistDrag();
+}
+
+/** A trackpad's two-finger swipe (macOS; a wheel mouse's horizontal tilt reads the same way): unlike a
+ *  pointer, a `wheel` gesture has no down or up of its own, just a stream of deltas while it is live and,
+ *  usually, a decaying "inertia" tail once the fingers lift -- so it is read as over once `WHEEL_IDLE_MS`
+ *  passes with no new event, by `endWheelGesture`, rather than from a discrete release.
+ *
+ *  Direction convention matches a drag's: under macOS's default "natural scrolling" (content follows the
+ *  fingers), a left swipe's `deltaX` carries the same sign a touch drag's would, so it is fed into the exact
+ *  same `swipeDirectionFromDelta`/`swipeTarget` logic with no translation. Unverified against real trackpad
+ *  hardware -- this sandbox has none to try it on -- so the sign may need flipping once tried for real. */
+function onFrameWheel(event: WheelEvent): void {
+  if (!compactQuery.matches || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
+  if (wheelEndTimer !== null) clearTimeout(wheelEndTimer);
+  wheelAccumulatedDeltaX += event.deltaX;
+  wheelAccumulatedDeltaY += event.deltaY;
+  if (engagedDrag === null) {
+    const direction = swipeDirectionFromDelta(wheelAccumulatedDeltaX, wheelAccumulatedDeltaY);
+    if (direction === null) {
+      wheelEndTimer = setTimeout(endWheelGesture, WHEEL_IDLE_MS);
+      return;
+    }
+    const outcome = swipeTarget(railRows(), selectedChatId, direction);
+    if (outcome.kind === "select") {
+      const restOffsetPx = direction === "older" ? slotWidthPx() : -slotWidthPx();
+      pool?.beginCarouselDrag(outcome.chatId, restOffsetPx);
+      engagedDrag = { kind: "select", targetChatId: outcome.chatId, restOffsetPx };
+    } else {
+      pool?.beginResistDrag();
+      engagedDrag = { kind: "resist", isAtNewChatEdge: outcome.kind === "new_chat_edge" };
+    }
+  }
+  event.preventDefault();
+  if (engagedDrag.kind === "select") {
+    pool?.updateCarouselDrag(engagedDrag.targetChatId, wheelAccumulatedDeltaX, engagedDrag.restOffsetPx);
+  } else {
+    pool?.updateResistDrag(wheelAccumulatedDeltaX * RESIST_RATIO);
+  }
+  wheelEndTimer = setTimeout(endWheelGesture, WHEEL_IDLE_MS);
+}
+
+/** The trackpad gesture's read-as-ended pause; otherwise identical to a pointer's release. */
+function endWheelGesture(): void {
+  const drag = engagedDrag;
+  const deltaX = wheelAccumulatedDeltaX;
+  wheelAccumulatedDeltaX = 0;
+  wheelAccumulatedDeltaY = 0;
+  wheelEndTimer = null;
+  engagedDrag = null;
+  if (drag === null) return;
+  settleDrag(drag, deltaX);
 }
 
 /** Show ``chatId`` once the pending intake is applied or given up, reporting the selection even when it is the one
@@ -493,6 +555,7 @@ const ChatRoot: m.Component = {
                   onPointerMove: onFramePointerMove,
                   onPointerUp: onFramePointerUp,
                   onPointerCancel: onFramePointerCancel,
+                  onWheel: onFrameWheel,
                 });
                 pool.show(selectedChatId);
               },
