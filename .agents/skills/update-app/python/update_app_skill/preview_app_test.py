@@ -235,7 +235,13 @@ def test_an_app_with_no_table_previews_by_the_scaffold_convention(
     instances = _RecordingInstances(tmp_path)
 
     assert (
-        mod.up("notes", worktree, tmp_path, instances=instances, dump_registry=_dump_registry)
+        mod.up(
+            "notes",
+            worktree,
+            tmp_path,
+            instances=instances,
+            dump_registry=_dump_registry,
+        )
         == 0
     )
 
@@ -265,7 +271,13 @@ def test_an_app_that_runs_under_secret_files_previews_under_the_same_wrapper(
     instances = _RecordingInstances(tmp_path)
 
     assert (
-        mod.up("notes", worktree, tmp_path, instances=instances, dump_registry=_dump_registry)
+        mod.up(
+            "notes",
+            worktree,
+            tmp_path,
+            instances=instances,
+            dump_registry=_dump_registry,
+        )
         == 0
     )
 
@@ -356,7 +368,13 @@ def test_another_passs_preview_of_the_same_app_is_refused_and_the_same_worktrees
     worktree = _write_worktree(tmp_path)
     instances = _RecordingInstances(tmp_path)
     assert (
-        mod.up("notes", worktree, tmp_path, instances=instances, dump_registry=_dump_registry)
+        mod.up(
+            "notes",
+            worktree,
+            tmp_path,
+            instances=instances,
+            dump_registry=_dump_registry,
+        )
         == 0
     )
 
@@ -375,7 +393,13 @@ def test_another_passs_preview_of_the_same_app_is_refused_and_the_same_worktrees
     assert instances.ups() == ["notes-preview"]
     # A re-run from the same worktree is the normal retry path.
     assert (
-        mod.up("notes", worktree, tmp_path, instances=instances, dump_registry=_dump_registry)
+        mod.up(
+            "notes",
+            worktree,
+            tmp_path,
+            instances=instances,
+            dump_registry=_dump_registry,
+        )
         == 0
     )
     assert instances.ups() == ["notes-preview", "notes-preview"]
@@ -480,7 +504,9 @@ def test_a_failed_boot_keeps_the_record_of_the_siblings_it_booted(
         )
     )
     monkeypatch.setenv("MINDS_APPS_FILE", str(live_registry))
-    instances = _RecordingInstances(tmp_path, failing_names=["system_interface-preview"])
+    instances = _RecordingInstances(
+        tmp_path, failing_names=["system_interface-preview"]
+    )
 
     assert (
         mod.up(
@@ -581,7 +607,10 @@ def test_re_upping_a_framed_sibling_on_its_own_moves_the_shells_registry_copy_wi
     assert rows["chat"]["label"] == "chat-preview-x1y2"
 
     # Taken down on its own, the chat's row goes back to the live chat.
-    assert mod.down("chat", tmp_path, instances=instances, dump_registry=_dump_registry) == 0
+    assert (
+        mod.down("chat", tmp_path, instances=instances, dump_registry=_dump_registry)
+        == 0
+    )
     rows = _shell_registry_rows(tmp_path)
     assert rows["chat"] == {
         "name": "chat",

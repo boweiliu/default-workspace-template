@@ -47,7 +47,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agents_shared import serve_isolated_instance
-
 from app_manifest.errors import ManifestLoadError
 from app_manifest.manifest import (
     MANIFEST_FILENAME,
@@ -533,7 +532,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     up_parser = subparsers.add_parser(
-        "up", help="Boot the app's preview from a worktree and surface it as an app to open."
+        "up",
+        help="Boot the app's preview from a worktree and surface it as an app to open.",
     )
     up_parser.add_argument(
         "--app", required=True, help="The app's registered name (its manifest's name)."
