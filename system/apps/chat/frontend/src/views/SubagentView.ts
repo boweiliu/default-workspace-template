@@ -1,7 +1,8 @@
 import m from "mithril";
 import { apiUrl } from "@imbue/workspace-ui/src/base-path";
 import type { TranscriptEvent, SubagentMetadata } from "../models/Response";
-import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { failureSentence } from "@imbue/workspace-ui/src/models/failure";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 import { parseJsonMessage } from "@imbue/workspace-ui/src/models/ws-json";
 import {
   buildConversationRows,
@@ -94,7 +95,10 @@ export function SubagentView(): m.Component<SubagentViewAttrs> {
       loading = false;
     } catch (error) {
       loading = false;
-      loadingError = describeRequestError(error, "read");
+      loadingError = failureSentence(
+        describeRequestFailure(error, "read"),
+        "This side conversation couldn't be loaded",
+      ).message;
     }
   }
 
@@ -201,7 +205,7 @@ export function SubagentView(): m.Component<SubagentViewAttrs> {
         content = m(
           "div",
           { class: "message-list-error flex items-center justify-center h-full" },
-          m("p", { class: "text-danger" }, `Error: ${loadingError}`),
+          m("p", { class: "text-danger" }, loadingError),
         );
       } else if (events.length === 0) {
         content = m(

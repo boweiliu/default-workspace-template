@@ -676,13 +676,13 @@ describe("snapshot load state", () => {
     expect(getConversationLoadState(agent)).toEqual({ phase: "error", error: READ_NOT_ANSWERED });
   });
 
-  it("prefers the server's own detail when the body has one", async () => {
+  it("names the chat as what failed when the server refused with a reason of its own", async () => {
     const agent = freshChat();
     mockRequest.mockRejectedValueOnce(
       Object.assign(new Error("{}"), { code: 404, response: { detail: "Agent 'x' not found" } }),
     );
     await expect(fetchEvents(agent)).rejects.toThrow();
-    expect(getConversationLoadState(agent).error).toBe("Agent 'x' not found");
+    expect(getConversationLoadState(agent).error).toBe("This chat couldn't be loaded.");
   });
 
   it("reads as loading while the fetch is in flight, so nothing reports an empty transcript", async () => {

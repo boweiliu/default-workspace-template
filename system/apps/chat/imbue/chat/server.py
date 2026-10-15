@@ -764,9 +764,12 @@ def _send_to_chat(
             # than the generic failure below -- it is the only thing here the user can act on.
             # The kind travels beside the detail so the chat can decide what to offer: trying again
             # can clear a blocked input and cannot help when there is nothing left to talk to.
-            # A /compact the chat declines is its own refusal, not a failure.
-            status_code = 409 if send_failure.kind in _DECLINED_SEND_FAILURE_KINDS else 500
-            return json_response({"detail": send_failure.detail, "kind": send_failure.kind}, status_code=status_code)
+            # A /compact the chat declines is its own refusal, not a failure, and its detail is the chat's own sentence
+            # for people, which the page shows as written.
+            if send_failure.kind in _DECLINED_SEND_FAILURE_KINDS:
+                declined = {"detail": send_failure.detail, "user_facing_message": send_failure.detail}
+                return json_response({**declined, "kind": send_failure.kind}, status_code=409)
+            return json_response({"detail": send_failure.detail, "kind": send_failure.kind}, status_code=500)
         if outcome is SendOutcome.NOT_READY:
             failure = ErrorResponse(
                 detail=f"Agent '{agent_info.name}' is not ready to receive messages yet (its daemon is starting)."

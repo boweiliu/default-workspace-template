@@ -8,7 +8,8 @@ import { apiUrl } from "@imbue/workspace-ui/src/base-path";
 import { getActiveDesktopId, getClientId } from "@imbue/workspace-ui/src/models/ClientIdentity";
 import { isHandoffPromptChip } from "./handoffPrompt";
 import { dropOutgoingByMessageId, noteBackendArrivals } from "./OutgoingMessages";
-import { describeRequestError } from "@imbue/workspace-ui/src/models/request-error";
+import { failureSentence } from "@imbue/workspace-ui/src/models/failure";
+import { describeRequestFailure } from "@imbue/workspace-ui/src/models/request-error";
 
 export interface SubagentMetadata {
   agent_type: string;
@@ -846,7 +847,10 @@ async function loadSnapshot(chatId: string): Promise<TranscriptEvent[]> {
       if (requestError.code === 404) {
         notFoundChatIds.add(chatId);
       }
-      loadStateByChat.set(chatId, { phase: "error", error: describeRequestError(error, "read") });
+      loadStateByChat.set(chatId, {
+        phase: "error",
+        error: failureSentence(describeRequestFailure(error, "read"), "This chat couldn't be loaded").message,
+      });
     }
     throw error;
   }

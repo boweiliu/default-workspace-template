@@ -284,7 +284,7 @@ describe("status hydration", () => {
 });
 
 describe("submit and decline", () => {
-  it("passes the route's own reason on, and never says whether an unanswered answer went through", async () => {
+  it("words a refusal and an unanswered answer through the shared reader, never saying whether the latter went through", async () => {
     vi.stubGlobal(
       "fetch",
       vi
@@ -299,7 +299,7 @@ describe("submit and decline", () => {
     expect(await submitSecret("secret-1", { SVC_TOKEN: "t" })).toEqual({ ok: true, detail: "" });
     expect(await submitSecret("secret-1", { SVC_TOKEN: "t" })).toEqual({
       ok: false,
-      detail: "Request secret-1 is not pending",
+      detail: "The workspace couldn't do that.",
     });
     expect(await declineSecret("secret-1", "")).toEqual({ ok: false, detail: CHANGE_NOT_ANSWERED });
     expect(await submitSecret("secret-1", { SVC_TOKEN: "t" })).toEqual({ ok: false, detail: CHANGE_NOT_ANSWERED });

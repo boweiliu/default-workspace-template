@@ -85,6 +85,7 @@ vi.mock("../models/AccountModelOptions", () => ({
 }));
 
 import m from "mithril";
+import { REQUEST_FALLBACK_MESSAGE } from "@imbue/workspace-ui/src/models/request-error";
 import type { ChatSnapshot } from "../models/Chats";
 import { chatSnapshotFixture } from "../models/chatSnapshotFixture";
 import { getPendingAccountId, getPendingPick, setPendingAccount } from "../models/PendingLane";
@@ -279,7 +280,7 @@ describe("the switch dialog", () => {
     vi.mocked(switchChat).mockRejectedValueOnce(new Error("no such account"));
     beginSwitchTo("agent-1", CODEX as ProviderAccount);
     await flush();
-    expect(state.notices).toEqual([{ title: "Couldn't switch to OpenAI (Codex)", detail: "no such account" }]);
+    expect(state.notices).toEqual([{ title: "Couldn't switch to OpenAI (Codex)", detail: REQUEST_FALLBACK_MESSAGE }]);
   });
 
   it("asks a chat with context, and arms the switch with the model picked", async () => {
@@ -433,8 +434,8 @@ describe("the switch dialog", () => {
     await flush();
     render();
     const text = ROOT().textContent ?? "";
-    expect(text).toContain("Could not load Codex's models");
-    expect(text).toContain("the daemon is not answering");
+    expect(text).toContain("Couldn't load the list of models. Codex starts on its default model");
+    expect(ROOT().querySelector(".see-details pre")?.textContent).toBe("the daemon is not answering");
     // The switch itself needs no model, so the dialog stays usable.
     expect(text).toContain("Switch this chat");
   });
