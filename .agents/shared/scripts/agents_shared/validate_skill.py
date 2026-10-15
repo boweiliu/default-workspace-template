@@ -21,7 +21,8 @@ Runnability checks (only when the static checks pass and the skill has Python):
 - `uv run --no-sync <entry> --help` exits 0 for every entry file -- each module of
   the package with a top-level `if __name__ == "__main__":` block, and any stub at
   the top of `scripts/` -- so a broken import or a missing dependency is caught here rather
-  than only at scenario time. `--help` is a shallow import check: it exercises
+  than only at scenario time. A package with a module run by its path holds no
+  module named like a standard-library one, which that run would import instead. `--help` is a shallow import check: it exercises
   the top-level imports and argparse wiring, not imports done lazily inside
   subcommand bodies -- those are left to scenario testing.
 
@@ -135,6 +136,19 @@ def _script_stubs(skill_dir: Path) -> list[Path]:
     return sorted(path for path in scripts_dir.glob("*.py") if not _is_test_file(path))
 
 
+def stdlib_shadowing_modules(package_dir: Path) -> list[str]:
+    """The package's modules named like a standard-library module.
+
+    A module run by its own path has its package's directory first on ``sys.path``,
+    so such a sibling would be imported in place of the standard-library module.
+    """
+    return sorted(
+        module.stem
+        for module in package_dir.glob("*.py")
+        if module.stem in sys.stdlib_module_names
+    )
+
+
 def _entry_files(skill_dir: Path) -> list[Path]:
     """The entry points: the package's modules that run as scripts, then the stubs."""
     project_dir = skill_dir / "python"
@@ -236,6 +250,13 @@ def check_runnable(skill_dir: Path, runner: CommandRunner = _run_via_uv) -> str 
     except SyntaxError as exc:
         return f"{exc.filename} cannot be parsed: {exc}"
     for entry in entries:
+        is_module = (entry.parent / "__init__.py").is_file()
+        shadowing = stdlib_shadowing_modules(entry.parent) if is_module else []
+        if shadowing:
+            return (
+                f"{entry} runs by its own path, so its package's {', '.join(shadowing)} "
+                "would shadow the standard-library module of that name; rename it"
+            )
         error = _run_checked(
             ["uv", "run", "--no-sync", str(entry), "--help"],
             entry.parent,

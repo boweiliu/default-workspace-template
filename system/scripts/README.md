@@ -1,10 +1,10 @@
 # system/scripts/
 
-Provisioning and utility scripts. The Python ones are entry stubs at the paths
-below; their code lives in one of two packages beside them (one uv project,
-`pyproject.toml`): `workspace_bare_scripts/`, which the system `python3` runs
-with no venv and which imports only the standard library, and `workspace_scripts/`,
-which runs from the root venv (`uv run --no-sync`). See
+Provisioning and utility scripts. Their Python lives in one of two packages
+here (one uv project, `pyproject.toml`): `workspace_bare_scripts/`, which the
+system `python3` runs with no venv and which imports only the standard library,
+through entry stubs at the paths below, and `workspace_scripts/`, whose modules
+run by their own path from the root venv (`uv run --no-sync`). See
 `.agents/shared/references/running-python.md`.
 
 - Image build / provisioning: `setup_system.sh`, `install_dependencies.sh`,
@@ -49,7 +49,7 @@ which runs from the root venv (`uv run --no-sync`). See
   create gate), `refresh_workspace_view.py` (rebuild the user's view after the
   interface changes).
 - Boot recovery: `minds_start_services_agent.sh`, `minds_lima_autostart.sh`.
-- The changelog gate: `check_changelog_entries.py`.
+- The changelog gate: `workspace_scripts/check_changelog_entries.py`.
 
 Cohesive machinery lives in packages instead: the recurring-job/automation
 scripts in `system/libs/automations/`, the Caretaker check in

@@ -221,7 +221,8 @@ exists and names the project
 `<name>-skill` and the package `<name_with_underscores>_skill`, that `uv lock
 --check` passes (the workspace lock includes the skill's dependencies), and
 that `uv run --no-sync <entry> --help` exits 0 for every entry file at the top
-of `scripts/` -- so a broken import or a missing dependency fails validation
+of `scripts/` and every package module with its own `if __name__ == "__main__":`
+block -- so a broken import or a missing dependency fails validation
 here rather than only at scenario time. (This is a shallow import check:
 `--help` exercises top-level imports and the argparse wiring, not imports done
 lazily inside subcommand bodies -- those are left to scenario testing.) Prints

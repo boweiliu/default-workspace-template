@@ -287,6 +287,23 @@ def test_check_runnable_checks_the_lock_then_runs_every_entry(tmp_path: Path) ->
     ]
 
 
+def test_check_runnable_refuses_a_module_shadowing_the_standard_library(
+    tmp_path: Path,
+) -> None:
+    skill = _write_skill(tmp_path, "s", include_scripts=True)
+    (skill / "python" / "s_skill" / "email.py").write_text("")
+    runner = _RecordingRunner()
+
+    error = validate_skill.check_runnable(skill, runner=runner)
+
+    entry = (skill / "python" / "s_skill" / "run.py").resolve()
+    assert error == (
+        f"{entry} runs by its own path, so its package's email would shadow the "
+        "standard-library module of that name; rename it"
+    )
+    assert runner.calls == [["uv", "lock", "--check"]]
+
+
 def test_check_runnable_reports_a_module_that_cannot_be_parsed(tmp_path: Path) -> None:
     skill = _write_skill(tmp_path, "s", include_scripts=True)
     (skill / "python" / "s_skill" / "broken.py").write_text("def broken(:\n")

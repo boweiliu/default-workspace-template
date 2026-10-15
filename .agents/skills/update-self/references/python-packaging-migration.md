@@ -32,7 +32,9 @@ plus `_skill`; a `scripts/` dir of shell scripts only needs nothing):
 2. Move every module into `python/<name_with_underscores>_skill/` (with an empty
    `__init__.py`), tests included. Leave a thin entry file in `scripts/` at each
    path the skill's SKILL.md, cron entries or program lines run, importing its
-   module from the package and calling it under `if __name__ == "__main__":`.
+   module from the package and calling it under `if __name__ == "__main__":`;
+   drop the moved module's own `if __name__ == "__main__":` block, since
+   `validate_skill.py` runs any module that has one by its own path.
    Change sibling imports (`import helpers`) to package imports
    (`from <name_with_underscores>_skill import helpers`), and delete any `sys.path` edit that
    existed to make them work. A test that loads its module from a file

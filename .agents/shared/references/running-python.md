@@ -48,12 +48,18 @@ import.
 
 ## The two tiers, and how scripts are laid out
 
-Every Python script here is a thin entry file at a fixed path that imports a
-package. A skill keeps its entry files (and any shell scripts) in `scripts/`
-and its code in its own uv project, `python/` (`python/pyproject.toml`, package
-`python/<skill_name>_skill/`). `.agents/shared/scripts` (package
-`agents_shared`) and `system/scripts` are a project each, with the packages
-beside the entry files. The code runs under one of two interpreters:
+Every Python script here is a module of a package. A skill keeps its code in
+its own uv project, `python/` (`python/pyproject.toml`, package
+`python/<skill_name>_skill/`), and its entry files (and any shell scripts) in
+`scripts/`. `.agents/shared/scripts` (package `agents_shared`) and
+`system/scripts` are a project each, with the packages beside the entry files.
+A built-in script that only this release calls has no entry file: its module
+has its own `if __name__ == "__main__":` block and runs by its path
+(`uv run --no-sync system/scripts/workspace_scripts/smoketest_app.py`). Such a
+run puts the module's own directory first on `sys.path`, so a package with one
+never holds a module named like a standard-library module. An entry file is
+kept where a script runs with no venv or something outside this release calls
+it by a fixed path. The code runs under one of two interpreters:
 
 - **Venv tier** (the default): runs from the root venv, through
   `uv run --no-sync <entry>`. It may use any dependency its `pyproject.toml`
