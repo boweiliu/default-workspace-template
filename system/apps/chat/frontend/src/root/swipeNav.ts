@@ -56,3 +56,42 @@ export function swipeTarget(
   if (targetIndex >= rows.length) return { kind: "new_chat_edge" };
   return { kind: "select", chatId: rows[targetIndex].chatId };
 }
+
+/** Whether `value` is an element node, without `instanceof Element`: the target passed in here always comes
+ *  from a pointer/wheel event bound to a frame's own document (`framePool.ts`'s doc comment on why), so it is
+ *  an instance of *that* document's own `Element`, a different constructor object than this module's global
+ *  `Element` even though it is the identical class -- each browsing context gets its own built-ins, and
+ *  `instanceof` compares constructor identity, not shape. `nodeType` is a plain number, not a constructor
+ *  reference, so comparing it is the one check that reads the same regardless of which realm made the node
+ *  (confirmed live: `instanceof` silently returned false for a real `<pre>` every time). */
+function isElementNode(value: EventTarget | null): value is Element {
+  return value !== null && "nodeType" in value && (value as Node).nodeType === Node.ELEMENT_NODE;
+}
+
+// How much `scrollHeight` is allowed to exceed `clientHeight` and still read as "no vertical overflow of its
+// own" -- rounding from borders/padding, not real content, so a code block (which has none) still qualifies.
+const VERTICAL_SLACK_PX = 2;
+
+/** The nearest ancestor of `target` (inclusive) that scrolls horizontally on its own -- a long code block's
+ *  `<pre>`, which keeps `overflow-x: auto` -- or `null` short of one. A touch landing on one of these is the
+ *  chat page's own content to scroll, not ours to read as a swipe: CSS can't give it back once an ancestor
+ *  restricts `touch-action` (confirmed live -- an explicit `pan-x pan-y` on the `<pre>` itself did not undo
+ *  the page's own `pan-y`), so driving its `scrollLeft` by hand, from this same gesture, is what keeps the
+ *  two working side by side instead of a dead zone with neither.
+ *
+ *  Also requires no vertical overflow of its own (confirmed live: the transcript's `overflow-y: auto`
+ *  container matched otherwise). CSS Overflow's "visible is upgraded to auto" rule computes `overflow-x` as
+ *  `auto` on ANY element whose `overflow-y` is set to something else, whether or not the author meant it to
+ *  scroll horizontally at all -- a code block's `<pre>` only sets `overflow-x`, so this excludes the
+ *  transcript's own scroller (overwhelmingly vertical) without excluding the thing this is actually for. */
+export function findHorizontallyScrollableAncestor(target: EventTarget | null): HTMLElement | null {
+  let element: Element | null = isElementNode(target) ? target : null;
+  while (element !== null) {
+    if (element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + VERTICAL_SLACK_PX) {
+      const overflowX = getComputedStyle(element).overflowX;
+      if (overflowX === "auto" || overflowX === "scroll") return element as HTMLElement;
+    }
+    element = element.parentElement;
+  }
+  return null;
+}

@@ -66,7 +66,13 @@ import { groupedRows, rowsFromSnapshots } from "./rows";
 import type { ChatRow } from "./rows";
 import { intakeTokenFromSearch, rootPathFor, selectionFromSearch, slotFill } from "./selection";
 import type { SlotFill } from "./selection";
-import { COMMIT_FRACTION, RESIST_RATIO, swipeDirectionFromDelta, swipeTarget } from "./swipeNav";
+import {
+  COMMIT_FRACTION,
+  RESIST_RATIO,
+  findHorizontallyScrollableAncestor,
+  swipeDirectionFromDelta,
+  swipeTarget,
+} from "./swipeNav";
 import { prependToComposer } from "../views/MessageInput";
 
 const ROOT_TITLE = "Chats";
@@ -98,13 +104,19 @@ let isDrawerOpen = false;
 let activeSwipePointerId: number | null = null;
 let swipeStartPoint: { x: number; y: number } | null = null;
 let isAtNewChatEdge = false;
+// A code block's own horizontal scrollbar (`findHorizontallyScrollableAncestor`'s doc comment has the why):
+// the element to drive by hand, and its `scrollLeft` when the gesture started, for the life of a gesture that
+// landed on one; null for an ordinary gesture.
+let swipeManualScrollTarget: { element: HTMLElement; startScrollLeft: number } | null = null;
 // What the current gesture has engaged into, once it has gone far enough to read as a swipe rather than a tap
 // or a vertical scroll (``null`` before that, and again once the gesture ends). ``restOffsetPx`` is where
 // ``targetChatId``'s frame rests before any drag delta, for ``framePool.ts``'s carousel; the resisted cases
-// (nothing to switch to) carry none, since only the shown frame itself moves, scaled down.
+// (nothing to switch to) carry none, since only the shown frame itself moves, scaled down; the manual-scroll
+// case drives `swipeManualScrollTarget` directly instead of either.
 type EngagedDrag =
   | { kind: "select"; targetChatId: string; restOffsetPx: number }
-  | { kind: "resist"; isAtNewChatEdge: boolean };
+  | { kind: "resist"; isAtNewChatEdge: boolean }
+  | { kind: "manual-scroll" };
 let engagedDrag: EngagedDrag | null = null;
 // A trackpad's two-finger swipe, read from `wheel` events (`onFrameWheel`'s own doc comment has the why):
 // accumulated since the gesture's last pause, and the timer that treats a pause as its end. Shares
@@ -241,12 +253,15 @@ function onFramePointerDown(event: PointerEvent): void {
   activeSwipePointerId = event.pointerId;
   swipeStartPoint = { x: event.screenX, y: event.screenY };
   engagedDrag = null;
+  const scrollable = findHorizontallyScrollableAncestor(event.target);
+  swipeManualScrollTarget = scrollable === null ? null : { element: scrollable, startScrollLeft: scrollable.scrollLeft };
 }
 
-/** Each move past engagement follows the pointer 1:1 (the carousel case) or at `RESIST_RATIO` (the resisted
- *  edge cases), live, through `framePool.ts` -- this is the carousel itself, not just its trigger. Engaging
- *  also claims the gesture from the page's own vertical scroll (`preventDefault`), since a drag that has
- *  already committed to a direction reading as a scroll too, mid-swipe, would fight the frame underneath it.
+/** Each move past engagement follows the pointer 1:1 (the carousel case), at `RESIST_RATIO` (the resisted
+ *  edge cases), or drives `swipeManualScrollTarget` directly (a code block under the touch) -- live, through
+ *  `framePool.ts` for the first two, this is the carousel itself, not just its trigger. Engaging also claims
+ *  the gesture from the page's own vertical scroll (`preventDefault`), since a drag that has already
+ *  committed to a direction reading as a scroll too, mid-swipe, would fight whatever is underneath it.
  *
  *  Reads `screenX`/`screenY` (position on the physical screen), not `clientX`/`clientY`: once a frame starts
  *  moving under `updateCarouselDrag`, a pointer's `clientX` inside that same frame is computed against its own
@@ -262,28 +277,36 @@ function onFramePointerMove(event: PointerEvent): void {
   if (engagedDrag === null) {
     const direction = swipeDirectionFromDelta(deltaX, event.screenY - start.y);
     if (direction === null) return;
-    const outcome = swipeTarget(railRows(), selectedChatId, direction);
-    if (outcome.kind === "select") {
-      const restOffsetPx = direction === "older" ? slotWidthPx() : -slotWidthPx();
-      pool?.beginCarouselDrag(outcome.chatId, restOffsetPx);
-      engagedDrag = { kind: "select", targetChatId: outcome.chatId, restOffsetPx };
+    if (swipeManualScrollTarget !== null) {
+      engagedDrag = { kind: "manual-scroll" };
     } else {
-      pool?.beginResistDrag();
-      engagedDrag = { kind: "resist", isAtNewChatEdge: outcome.kind === "new_chat_edge" };
+      const outcome = swipeTarget(railRows(), selectedChatId, direction);
+      if (outcome.kind === "select") {
+        const restOffsetPx = direction === "older" ? slotWidthPx() : -slotWidthPx();
+        pool?.beginCarouselDrag(outcome.chatId, restOffsetPx);
+        engagedDrag = { kind: "select", targetChatId: outcome.chatId, restOffsetPx };
+      } else {
+        pool?.beginResistDrag();
+        engagedDrag = { kind: "resist", isAtNewChatEdge: outcome.kind === "new_chat_edge" };
+      }
     }
   }
   if (event.cancelable) event.preventDefault();
   if (engagedDrag.kind === "select") {
     pool?.updateCarouselDrag(engagedDrag.targetChatId, deltaX, engagedDrag.restOffsetPx);
-  } else {
+  } else if (engagedDrag.kind === "resist") {
     pool?.updateResistDrag(deltaX * RESIST_RATIO);
+  } else if (swipeManualScrollTarget !== null) {
+    swipeManualScrollTarget.element.scrollLeft = swipeManualScrollTarget.startScrollLeft - deltaX;
   }
 }
 
 /** A gesture's end, however it was read (a pointer's release, a trackpad's pause): past `COMMIT_FRACTION` of
  *  the slot's width, it switches chats or, past the newest one, leaves the "New chat" button showing in its
- *  place; short of it, the carousel snaps back to where it started. */
+ *  place; short of it, the carousel snaps back to where it started. A gesture that scrolled a code block by
+ *  hand has nothing further to settle -- its `scrollLeft` just stays where the drag left it. */
 function settleDrag(drag: EngagedDrag, deltaX: number): void {
+  if (drag.kind === "manual-scroll") return;
   if (drag.kind === "select") {
     const committed = Math.abs(deltaX) > slotWidthPx() * COMMIT_FRACTION;
     pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, committed);
@@ -305,6 +328,7 @@ function onFramePointerUp(event: PointerEvent): void {
   const start = swipeStartPoint;
   const drag = engagedDrag;
   swipeStartPoint = null;
+  swipeManualScrollTarget = null;
   engagedDrag = null;
   if (start === null || drag === null) return;
   settleDrag(drag, event.screenX - start.x);
@@ -317,8 +341,9 @@ function onFramePointerCancel(event: PointerEvent): void {
   activeSwipePointerId = null;
   const drag = engagedDrag;
   swipeStartPoint = null;
+  swipeManualScrollTarget = null;
   engagedDrag = null;
-  if (drag === null) return;
+  if (drag === null || drag.kind === "manual-scroll") return;
   if (drag.kind === "select") pool?.endCarouselDrag(drag.targetChatId, drag.restOffsetPx, false);
   else pool?.endResistDrag();
 }
@@ -334,6 +359,14 @@ function onFramePointerCancel(event: PointerEvent): void {
  *  the exact same `swipeDirectionFromDelta`/`swipeTarget` logic a drag does. */
 function onFrameWheel(event: WheelEvent): void {
   if (!compactQuery.matches || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return;
+  // A code block's own horizontal scrollbar: unlike a touch's `touch-action`, nothing stops this gesture's
+  // native wheel-scroll on its own, so leave it alone entirely -- not just once engaged, since claiming it
+  // only after crossing the engage threshold would still cut a sustained scroll off mid-gesture. True on
+  // every tick while this reads as the gesture's start (nothing accumulated, nothing engaged yet), so this
+  // keeps bailing out for as long as the pointer stays over it.
+  if (engagedDrag === null && wheelAccumulatedDeltaX === 0 && wheelAccumulatedDeltaY === 0) {
+    if (findHorizontallyScrollableAncestor(event.target) !== null) return;
+  }
   if (wheelEndTimer !== null) clearTimeout(wheelEndTimer);
   wheelAccumulatedDeltaX -= event.deltaX;
   wheelAccumulatedDeltaY += event.deltaY;
