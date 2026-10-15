@@ -12,6 +12,17 @@
    with `@source inline("...")`. */
 @source "./**/*.ts";
 
+/* The phone layout's swipe-between-chats gesture (root/index.ts): a trackpad's horizontal swipe is also the
+   gesture macOS browsers read as "go back/forward," and that read happens at the browser's own native layer
+   -- Firefox in particular acts on it regardless of a page's `wheel` listener calling `preventDefault()`.
+   `overscroll-behavior-x` is the one thing browsers do honor for this: it stops horizontal scroll from
+   chaining past this document's edge into the browser's own gesture, which is exactly the chain the
+   swipe-nav read rides on. Neither page scrolls horizontally on its own, so this has no other effect. */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
 /* The chat root's list (root/ChatRail.ts): a chat that is working wears a dot that breathes,
    so the eye finds the live one without reading. Reduced motion holds it steady. */
 @keyframes chat-rail-pulse {
