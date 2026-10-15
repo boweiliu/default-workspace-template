@@ -17,10 +17,19 @@
    -- Firefox in particular acts on it regardless of a page's `wheel` listener calling `preventDefault()`.
    `overscroll-behavior-x` is the one thing browsers do honor for this: it stops horizontal scroll from
    chaining past this document's edge into the browser's own gesture, which is exactly the chain the
-   swipe-nav read rides on. Neither page scrolls horizontally on its own, so this has no other effect. */
+   swipe-nav read rides on. Neither page scrolls horizontally on its own, so this has no other effect.
+
+   `touch-action: pan-y` is the same idea for a phone's own native scroll recognizer: without it, a touch
+   browser can decide a horizontal drag is its own pan gesture before `onFramePointerMove`'s
+   `preventDefault()` ever runs, and once it has, it can cut the touch stream off mid-gesture (a
+   `pointercancel`) rather than letting JS keep reading it -- which breaks the live, every-move carousel
+   even though the drag's engage-and-commit logic is otherwise correct. `pan-y` leaves vertical scrolling
+   (the transcript) native and smooth, and tells the browser not to claim horizontal movement at all, so it
+   is JS's from the first pixel. */
 html,
 body {
   overscroll-behavior-x: none;
+  touch-action: pan-y;
 }
 
 /* The chat root's list (root/ChatRail.ts): a chat that is working wears a dot that breathes,
