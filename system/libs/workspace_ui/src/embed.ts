@@ -61,7 +61,9 @@ export const WINDOW_DRAG_ENDED: "minds:window-drag-ended" =
 // Payload: { windows: [{ windowId, title }] }.
 export const DETACHED_WINDOWS: "minds:detached-windows" =
   "DETACHED_WINDOWS" in embedContract ? embedContract.DETACHED_WINDOWS : "minds:detached-windows";
-// Embedder -> workspace: what the chrome can do, right after WORKSPACE_READY. Payload: { canPopOut }.
+// Embedder -> workspace: what the chrome can do, right after WORKSPACE_READY. Payload: { canPopOut,
+// opensExternalLinks?, opensHelp? } (opensHelp from contract v9): ``opensHelp: true`` says it opens its bug report on
+// OPEN_HELP, so a failure's "Report a bug" can work; absent, the workspace offers no such button.
 export const EMBEDDER_CAPABILITIES: "minds:embedder-capabilities" =
   "EMBEDDER_CAPABILITIES" in embedContract ? embedContract.EMBEDDER_CAPABILITIES : "minds:embedder-capabilities";
 // Embedder -> workspace: return a pulled-out window to the desktop. Payload: { windowId, frame? }.
@@ -118,7 +120,11 @@ const handlerByType: Partial<Record<string, EmbedderMessageHandler>> = {};
 // type: the shell's relay to the apps registered for it.
 let messageObserver: EmbedderMessageHandler | null = null;
 
+// Whether the embedder said it opens its bug report on OPEN_HELP; false until it says so.
+let isOpeningHelp = false;
+
 function dispatchEmbedderMessage(message: ContractMessage): void {
+  if (message.type === EMBEDDER_CAPABILITIES) isOpeningHelp = message.opensHelp === true;
   handlerByType[message.type]?.(message);
   messageObserver?.(message);
 }
@@ -162,6 +168,12 @@ export function setEmbedderMessageObserver(observer: EmbedderMessageHandler): vo
   messageObserver = observer;
 }
 
+/** Whether the embedder opens its bug report when asked (``opensHelp`` in its EMBEDDER_CAPABILITIES). A page the
+ *  capabilities never reach (a shared visit, the hosted web client, an older chrome) reads false. */
+export function embedderOpensHelp(): boolean {
+  return isOpeningHelp;
+}
+
 /** What a page says it handles when it announces itself ready. */
 export interface ReadyAnnouncement {
   /** Whether it opens the links Imbue Studio hands it with OPEN_LINK. */
@@ -187,4 +199,5 @@ export function resetEmbedEndpointForTesting(): void {
   }
   for (const type of Object.keys(handlerByType)) delete handlerByType[type];
   messageObserver = null;
+  isOpeningHelp = false;
 }

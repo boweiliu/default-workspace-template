@@ -22,19 +22,26 @@ workspace rooted at `system/package.json` (one `npm ci`, one lockfile).
   `src/models/` (`ClientIdentity`, `http`, `backoff`, `ws-json`,
   `request-error`, `failure`): the base helpers every page shares.
 - How a failed request is told (`models/failure.ts`, `models/http.ts`,
-  `models/request-error.ts`): a sentence of ours on the visible line and
-  everything underneath it (the status, the server's own text) behind "See
-  details". A route's `user_facing_message` is shown as written; its `detail`
-  is shown where no such sentence was given; a gateway status (502, 503, 504)
-  or a request nothing answered reads "The workspace didn't answer. Try again in
-  a moment." for a read and "The workspace didn't answer, so Imbue Studio can't
-  tell whether this went through." for a change (never "nothing was changed":
-  Imbue Studio's forward proxy can send a gateway status after the request
-  arrived); any other status with no reason reads as the fallback "<what
-  failed>. Try again. If this persists, report a bug.". Their screen pieces are
-  `src/components/SeeDetails.ts` (the collapsed details, which `NoticeDialog`
-  draws from its `details`) and `src/report-bug.ts` (the "Report a bug" button,
-  which opens Imbue Studio's bug report).
+  `models/request-error.ts`): one reader, `readFailure`, says what went wrong,
+  for the REST helpers (`HttpError.failure`) and for a mithril rejection
+  (`describeRequestFailure`) alike: a route's `user_facing_message` (a sentence
+  for people, reportable only when the body says `reportable: true`), else its
+  `detail` or `error` (a reason, developer text), else no answer (nothing
+  answered, or a gateway status 502, 503 or 504 with no JSON reason), else
+  nothing. `failureSentence(failure, whatFailed)` is the one place that becomes
+  words, `whatFailed` being a sentence stem ("This window couldn't be closed"):
+  the server's sentence as written; no answer as "The workspace didn't answer.
+  Try again in a moment." for a read and "The workspace didn't answer, so
+  Imbue Studio can't tell whether this went through." for a change, never
+  prefixed with what failed (and never "nothing was changed": Imbue Studio's
+  forward proxy can send a gateway status after the request arrived); a refusal
+  (4xx) with a reason as "<what failed>."; anything else as the fallback "<what
+  failed>. Try again. If this persists, report a bug.". The status and the
+  server's own text go behind "See details" (`src/components/SeeDetails.ts`,
+  which `NoticeDialog` draws from its `details`). "Report a bug"
+  (`src/report-bug.ts`) opens Imbue Studio's bug report, and is offered only
+  where the embedder said `opensHelp` in its capabilities (`embedderOpensHelp`
+  in `src/embed.ts`).
 - `src/app_contract.ts`: an app page's side of the browser-side contract
   (contracts.md section 10 of the workspace app model, extended by section 7
   of the desktop interface's contracts.md), which the shell's frontend also
