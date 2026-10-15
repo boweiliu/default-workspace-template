@@ -84,7 +84,7 @@ worker side:
 
 ``reply``
     Sends the lead's answer to a worker's gate (or any nudge) to the worker's
-    chat, through the chat app (``system/scripts/message_chat.py``), addressed
+    chat, through the chat app (``workspace_bare_scripts.message_chat``), addressed
     by the ``worker_agent_id`` that ``launch`` stamped into the task file. The
     send revives a worker that is not running: one ``stop`` stopped, one that
     crashed, and one the OOM daemon shed. Once the message is delivered, an
@@ -144,7 +144,7 @@ Launch lifecycle commands:
     mngr rsync  ./<RUNTIME_DIR>/   <NAME>:<RUNTIME_DIR>/   --uncommitted-changes=clobber
     mngr rsync  ./<ARTIFACTS_DIR>/ <NAME>:<ARTIFACTS_DIR>/ --uncommitted-changes=clobber
                 (when frontmatter declares it)
-    python3 system/scripts/message_chat.py <WORKER_ID> --message-file <TASK_FILE>
+    message_chat.send(<WORKER_ID>, <the TASK_FILE's text>)
 
 The task message goes through the chat app by the worker's id rather than
 through ``mngr message`` by its name: a chat is addressed by id (a rename
@@ -220,11 +220,9 @@ from pathlib import Path
 from typing import Callable, Mapping, NamedTuple, Sequence, TextIO
 
 import yaml
+from workspace_bare_scripts import message_chat
 
 _COMMON_TRANSCRIPT_REL = Path("commands/common_transcript.sh")
-
-# The in-workspace chat messenger, relative to the repo root (see ``_repo_root``).
-_MESSAGE_CHAT_SCRIPT_REL = Path("system") / "scripts" / "message_chat.py"
 
 _LEAD_AGENT_FIELD = "lead_agent"
 _LEAD_WORK_DIR_FIELD = "lead_work_dir"
@@ -590,37 +588,19 @@ def _stamp_worker_agent_id(task_file: Path, agent_id: str) -> None:
     )
 
 
-def _repo_root() -> Path:
-    """The template repo root: the ancestor of this file that holds ``system/scripts``.
-
-    Found by walking up rather than counting a fixed number of parent directories,
-    so the lookup keeps working if this script is ever relocated within the repo.
-    Raises ``RuntimeError`` if no ancestor qualifies: the script only makes sense
-    inside the template repo, so that is a real misconfiguration.
-    """
-    for ancestor in Path(__file__).resolve().parents:
-        if (ancestor / "system" / "scripts").is_dir():
-            return ancestor
-    raise RuntimeError(
-        f"could not locate the template repo root above {Path(__file__).resolve()}"
-        " -- the launch-task script must run from within the template repo"
-    )
-
-
-def _message_chat_argv(chat_id: str) -> list[str]:
-    """The messenger invocation for one chat; the caller appends the message source."""
-    return [sys.executable, str(_repo_root() / _MESSAGE_CHAT_SCRIPT_REL), chat_id]
-
-
 class Runner:
-    """Indirection over ``subprocess.run`` so tests can intercept commands.
+    """Indirection over the commands this script runs and the messages it sends.
 
-    The default implementation calls ``subprocess.run`` directly. Tests
-    inject a recording stub instead.
+    The default implementation calls ``subprocess.run`` and the chat messenger
+    directly. Tests inject a recording stub instead.
     """
 
     def run(self, argv: Sequence[str], **kwargs):
         return subprocess.run(list(argv), **kwargs)
+
+    def send_message(self, chat_id: str, text: str) -> int:
+        """Send ``text`` to the chat; returns the messenger's exit code (``mngr message``'s codes)."""
+        return message_chat.send(chat_id, text)
 
 
 def _flush_common_transcript(state_dir: Path | None, runner: Runner) -> None:
@@ -1172,10 +1152,15 @@ def launch(
 
     _flush_common_transcript(state_dir, runner)
 
-    runner.run(
-        [*_message_chat_argv(worker_agent_id), "--message-file", str(task_file)],
-        check=True,
-    )
+    send_rc = runner.send_message(worker_agent_id, task_file.read_text())
+    if send_rc != 0:
+        print(
+            f"create_worker: the task message to {name} failed (messenger exit code "
+            f"{send_rc}), so the worker exists with no task: destroy it "
+            f"(create_worker.py destroy --name {name}) before launching again.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(
         f"create_worker: worker {name} launched and runtime synced "
@@ -1185,8 +1170,11 @@ def launch(
 
 
 # The messenger's exit codes for a message that reached the worker: delivered (or
-# queued), and delivered but blocked on a dialog (``system/scripts/message_chat.py``).
-_MESSENGER_DELIVERED_RCS = (0, 7)
+# queued), and delivered but blocked on a dialog.
+_MESSENGER_DELIVERED_RCS = (
+    message_chat.EXIT_DELIVERED,
+    message_chat.EXIT_DELIVERED_BUT_BLOCKED,
+)
 
 
 def reply(
@@ -1214,14 +1202,13 @@ def reply(
     if not task_file.is_file():
         print(f"create_worker: --task-file not found: {task_file}", file=sys.stderr)
         return 2
-    # ``--message=<text>`` rather than ``-m <text>``: the messenger parses with argparse,
-    # which reads a separate dash-initial value (a reply that is a markdown bullet, or
-    # ``-continue``) as an option and rejects it.
-    source = (
-        ["--message-file", str(message_file)]
-        if message_file is not None
-        else [f"--message={message}"]
-    )
+    if message_file is not None and not message_file.is_file():
+        print(
+            f"create_worker: --message-file not found: {message_file}", file=sys.stderr
+        )
+        return 2
+    text = message_file.read_text() if message_file is not None else message
+    assert text is not None
     worker_agent_id = _read_frontmatter_field(task_file, _WORKER_AGENT_ID_FIELD)
     if worker_agent_id is None:
         print(
@@ -1230,8 +1217,7 @@ def reply(
             file=sys.stderr,
         )
         return 2
-    result = runner.run([*_message_chat_argv(worker_agent_id), *source], check=False)
-    returncode = int(getattr(result, "returncode", 0) or 0)
+    returncode = runner.send_message(worker_agent_id, text)
     if returncode in _MESSENGER_DELIVERED_RCS and _may_be_archived(
         worker_agent_id, runner
     ):

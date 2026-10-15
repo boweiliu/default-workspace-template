@@ -17,7 +17,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -26,14 +25,12 @@ from uuid import uuid4
 import pytest
 from mngr_cli_contract.contract import assert_mngr_argv_valid
 from oom_priority.ledger import append_shed_record
-from workspace_bare_scripts import message_chat
 
 from launch_task_skill import create_worker as create_worker_mod
 
-# The messenger's entry stub, which sits beside its package in system/scripts.
-_MESSAGE_CHAT_SCRIPT = (
-    Path(message_chat.__file__).resolve().parents[1] / "message_chat.py"
-)
+# How the recording runner files a message send among the commands it records:
+# ``[_SEND, chat_id, text]``, answered from the same canned results.
+_SEND = "send-message"
 _WORKER_ID = "agent-00000000000000000000000000abcdef"
 _CREATED_EVENT = (
     json.dumps({"event": "created", "agent_id": _WORKER_ID, "host_id": "host-1"}) + "\n"
@@ -65,6 +62,9 @@ class _RecordingRunner(create_worker_mod.Runner):
 
     def respond(self, prefix: tuple[str, ...], result: Any) -> None:
         self._responses[prefix] = result
+
+    def send_message(self, chat_id: str, text: str) -> int:
+        return int(self.run([_SEND, chat_id, text]).returncode)
 
     def run(self, argv: Sequence[str], **kwargs):
         argv_list = list(argv)
@@ -178,13 +178,7 @@ def _write_task(task: Path, source_artifacts_dir: str | None) -> None:
 
 
 def _task_message_argv(task: Path) -> list[str]:
-    return [
-        sys.executable,
-        str(_MESSAGE_CHAT_SCRIPT),
-        _WORKER_ID,
-        "--message-file",
-        str(task),
-    ]
+    return [_SEND, _WORKER_ID, task.read_text()]
 
 
 def _create_argv(runtime: Path, lead: str = "lead") -> list[str]:
@@ -793,7 +787,7 @@ def test_launch_proceeds_when_report_path_is_clear(tmp_path: Path) -> None:
         ["mngr", "list"],
         ["mngr", "create"],
         ["mngr", "rsync"],
-        [sys.executable, str(_MESSAGE_CHAT_SCRIPT)],
+        [_SEND, _WORKER_ID],
     ]
 
 
@@ -3253,7 +3247,7 @@ def test_main_launch_sync_emits_result_json(tmp_path: Path) -> None:
     class _WorkerRespondsRunner(_RecordingRunner):
         def run(self, argv: Sequence[str], **kwargs):
             result = super().run(argv, **kwargs)
-            if list(argv)[:2] == [sys.executable, str(_MESSAGE_CHAT_SCRIPT)]:
+            if list(argv)[:1] == [_SEND]:
                 report.write_text("---\ntype: status\nname: done\n---\n\ndone\n")
             return result
 
@@ -3317,10 +3311,31 @@ def test_a_refused_mngr_create_is_reported_not_raised(
     assert rc == 2
     argvs = [c.argv for c in runner.calls]
     assert not any(argv[:2] == ["mngr", "rsync"] for argv in argvs)
-    assert not any(
-        argv[:2] == [sys.executable, str(_MESSAGE_CHAT_SCRIPT)] for argv in argvs
-    )
+    assert not any(argv[:1] == [_SEND] for argv in argvs)
     assert "`mngr create demo-worker` failed" in capsys.readouterr().err
+
+
+def test_a_failed_task_send_is_reported_not_raised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The worker already exists by then, so the lead is told to destroy it rather
+    # than handed a traceback.
+    runtime, task, _ = _make_layout(tmp_path)
+    runner = _RecordingRunner()
+    runner.respond((_SEND,), _StubResult(returncode=1))
+
+    rc = create_worker_mod.launch(
+        name="demo-worker",
+        template="worker",
+        runtime_dir=runtime,
+        task_file=task,
+        runner=runner,
+    )
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "the task message to demo-worker failed (messenger exit code 1)" in err
+    assert "create_worker.py destroy --name demo-worker" in err
 
 
 # --- report subcommand: the worker's side of the contract -------------------
@@ -4014,9 +4029,7 @@ def test_reply_goes_through_the_chat_messenger_by_the_stamped_worker_id(
 ) -> None:
     task = _stamped_task_file(tmp_path)
     runner = _RecordingRunner()
-    runner.respond(
-        (sys.executable, str(_MESSAGE_CHAT_SCRIPT)), _StubResult(returncode=7)
-    )
+    runner.respond((_SEND,), _StubResult(returncode=7))
     runner.respond(("mngr", "list"), _worker_listing("STOPPED", archived=True))
 
     rc = create_worker_mod.reply(
@@ -4027,7 +4040,7 @@ def test_reply_goes_through_the_chat_messenger_by_the_stamped_worker_id(
     # "delivered but blocked" still counts as delivered for the label.
     assert rc == 7
     assert [c.argv for c in runner.calls if c.argv[:2] != ["mngr", "list"]] == [
-        [sys.executable, str(_MESSAGE_CHAT_SCRIPT), _WORKER_ID, "--message=-continue"],
+        [_SEND, _WORKER_ID, "-continue"],
         _UNARCHIVE_ARGV,
     ]
     assert_mngr_argv_valid(_UNARCHIVE_ARGV)
@@ -4070,9 +4083,7 @@ def test_reply_leaves_the_label_when_the_send_fails(tmp_path: Path) -> None:
     nobody restarts it as a crash."""
     task = _stamped_task_file(tmp_path)
     runner = _RecordingRunner()
-    runner.respond(
-        (sys.executable, str(_MESSAGE_CHAT_SCRIPT)), _StubResult(returncode=1)
-    )
+    runner.respond((_SEND,), _StubResult(returncode=1))
 
     rc = create_worker_mod.reply(
         task_file=task, message="go", message_file=None, runner=runner
@@ -4111,13 +4122,22 @@ def test_reply_takes_a_message_file(tmp_path: Path) -> None:
     )
 
     assert rc == 0
-    assert runner.calls[0].argv == [
-        sys.executable,
-        str(_MESSAGE_CHAT_SCRIPT),
-        _WORKER_ID,
-        "--message-file",
-        str(answer),
-    ]
+    assert runner.calls[0].argv == [_SEND, _WORKER_ID, "yes, do that"]
+
+
+def test_reply_refuses_a_missing_message_file(tmp_path: Path) -> None:
+    task = _stamped_task_file(tmp_path)
+    runner = _RecordingRunner()
+
+    rc = create_worker_mod.reply(
+        task_file=task,
+        message=None,
+        message_file=tmp_path / "no-such-answer.md",
+        runner=runner,
+    )
+
+    assert rc == 2
+    assert runner.calls == []
 
 
 def test_reply_refuses_a_task_file_without_the_stamp(tmp_path: Path) -> None:
@@ -4146,7 +4166,7 @@ def test_main_reply_requires_exactly_one_message_source(tmp_path: Path) -> None:
         ["reply", "--task-file", str(task), "-m", "go"], runner=runner
     )
     assert rc == 0
-    assert runner.calls[0].argv[-1] == "--message=go"
+    assert runner.calls[0].argv == [_SEND, _WORKER_ID, "go"]
 
 
 @pytest.mark.parametrize(
