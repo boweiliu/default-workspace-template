@@ -171,7 +171,10 @@ def test_a_registration_that_changes_nothing_leaves_the_file_untouched(
     assert apps_file.read_text() == contents_before
 
     # A real change still lands.
-    assert _run(["--name", "web", "--url", "http://localhost:5001"], apps_file).returncode == 0
+    assert (
+        _run(["--name", "web", "--url", "http://localhost:5001"], apps_file).returncode
+        == 0
+    )
     assert _read_apps(apps_file)[0]["url"] == "http://localhost:5001"
     assert apps_file.stat().st_ino != before.st_ino
 
@@ -391,7 +394,7 @@ def test_an_empty_program_is_rejected(tmp_path: Path) -> None:
         apps_file,
     )
     assert result.returncode != 0
-    assert "--program must not be empty" in result.stderr
+    assert "program must not be empty" in result.stderr
     assert not apps_file.exists()
 
 
@@ -795,7 +798,13 @@ def test_manifest_registration_copies_every_field_onto_the_row(tmp_path: Path) -
     # The row carries each launch path's param NAMES (the launcher reads them), its presets, and its method, text
     # and draft params, and none of those keys at all for a launch path that declares none of them.
     assert row["launch_paths"] == [
-        {"id": "new", "label": "New File Viewer", "path": "/", "params": ["path"], "text_param": "path"},
+        {
+            "id": "new",
+            "label": "New File Viewer",
+            "path": "/",
+            "params": ["path"],
+            "text_param": "path",
+        },
         {"id": "recent", "label": "Recent files", "path": "/recent"},
         {
             "id": "draft",
@@ -807,20 +816,30 @@ def test_manifest_registration_copies_every_field_onto_the_row(tmp_path: Path) -
             "presets": {"target": "current_note", "is_draft": "true"},
         },
     ]
-    assert row["pin"] == {"path": "/", "style": "avatar", "scope": "independent", "default_mode": "floating"}
+    assert row["pin"] == {
+        "path": "/",
+        "style": "avatar",
+        "scope": "independent",
+        "default_mode": "floating",
+    }
     assert row["message_handlers"] == [
         {"type": "minds:focus-chat", "path": "/api/focus-chat"},
         {"type": "open:file", "show": "{path}?view", "showing": ["{path}", "{path}/"]},
     ]
 
 
-def test_manifest_registration_copies_only_the_pin_keys_the_manifest_wrote(tmp_path: Path) -> None:
+def test_manifest_registration_copies_only_the_pin_keys_the_manifest_wrote(
+    tmp_path: Path,
+) -> None:
     apps_file = tmp_path / "apps.toml"
     manifest = _write_manifest(
-        tmp_path, 'name = "files"\ndisplay_name = "Files"\nicon = "icon.svg"\n\n[pin]\npath = "/inbox"\n'
+        tmp_path,
+        'name = "files"\ndisplay_name = "Files"\nicon = "icon.svg"\n\n[pin]\npath = "/inbox"\n',
     )
 
-    result = _run(["--manifest", str(manifest), "--url", "http://localhost:8300"], apps_file)
+    result = _run(
+        ["--manifest", str(manifest), "--url", "http://localhost:8300"], apps_file
+    )
 
     assert result.returncode == 0, result.stderr
     assert _read_apps(apps_file)[0]["pin"] == {"path": "/inbox"}
@@ -905,7 +924,9 @@ def test_manifest_registration_refuses_a_malformed_manifest_declaration(
         f'name = "files"\ndisplay_name = "Files"\nicon = "icon.svg"\n\n{declaration}',
     )
 
-    result = _run(["--manifest", str(manifest), "--url", "http://localhost:8300"], apps_file)
+    result = _run(
+        ["--manifest", str(manifest), "--url", "http://localhost:8300"], apps_file
+    )
 
     assert result.returncode != 0
     assert expected_error in result.stderr
@@ -1185,7 +1206,12 @@ def test_the_writer_round_trips_an_icon_with_quotes_newlines_and_the_real_files_
             "internal": True,
             "default_shortcut": {"launch": "new", "mode": "focus"},
             "launch_paths": [
-                {"id": "new", "label": 'Say "hi"', "path": "/new", "params": ["message", "account_id"]},
+                {
+                    "id": "new",
+                    "label": 'Say "hi"',
+                    "path": "/new",
+                    "params": ["message", "account_id"],
+                },
                 {"id": "other", "label": "Other", "path": "/other"},
             ],
             "launcher_rank": 10,
@@ -1246,7 +1272,14 @@ def test_the_writer_refuses_a_value_type_the_registry_never_holds() -> None:
     # An inline table's array holds strings only (a launch path's param names).
     with pytest.raises(TypeError, match="cannot hold an inline-table array element"):
         forward_port.dump_registry(
-            [{"name": "web", "launch_paths": [{"id": "new", "label": "New", "path": "/new", "params": [1]}]}]
+            [
+                {
+                    "name": "web",
+                    "launch_paths": [
+                        {"id": "new", "label": "New", "path": "/new", "params": [1]}
+                    ],
+                }
+            ]
         )
 
 
@@ -1304,3 +1337,59 @@ def test_the_script_imports_under_an_isolated_stdlib_only_interpreter() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "data/.state/apps.toml"
+
+
+def test_register_and_remove_in_process_edit_the_same_registry_as_the_script(
+    tmp_path: Path,
+) -> None:
+    apps_file = tmp_path / "apps.toml"
+    forward_port.register(
+        apps_file,
+        "preview-1",
+        "http://localhost:9001",
+        is_icon_declined=True,
+        internal=True,
+        display_name="Preview of Todo",
+    )
+
+    [row] = _read_apps(apps_file)
+    assert (row["name"], row["url"], row["internal"], row["display_name"]) == (
+        "preview-1",
+        "http://localhost:9001",
+        True,
+        "Preview of Todo",
+    )
+    assert _run(["--remove", "--name", "preview-1"], apps_file).returncode == 0
+    assert _read_apps(apps_file) == []
+
+    forward_port.register(
+        apps_file, "preview-2", "http://localhost:9002", is_icon_declined=True
+    )
+    forward_port.remove(apps_file, "preview-2")
+    forward_port.remove(apps_file, "never-registered")
+    assert _read_apps(apps_file) == []
+
+
+def test_register_refuses_what_the_script_refuses(tmp_path: Path) -> None:
+    apps_file = tmp_path / "apps.toml"
+
+    with pytest.raises(forward_port.RegistrationError, match="invalid app name"):
+        forward_port.register(
+            apps_file, "Bad_Name-", "http://localhost:9001", is_icon_declined=True
+        )
+    with pytest.raises(forward_port.RegistrationError, match="has no icon"):
+        forward_port.register(apps_file, "web", "http://localhost:9001")
+    assert not apps_file.exists()
+
+
+def test_the_registry_path_resolves_against_the_callers_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(forward_port.ENV_APPS_FILE, raising=False)
+    assert forward_port.apps_file(tmp_path) == tmp_path / "data/.state/apps.toml"
+
+    monkeypatch.setenv(forward_port.ENV_APPS_FILE, "elsewhere/apps.toml")
+    assert forward_port.apps_file(tmp_path) == tmp_path / "elsewhere/apps.toml"
+
+    monkeypatch.setenv(forward_port.ENV_APPS_FILE, str(tmp_path / "abs.toml"))
+    assert forward_port.apps_file(Path("/unrelated")) == tmp_path / "abs.toml"

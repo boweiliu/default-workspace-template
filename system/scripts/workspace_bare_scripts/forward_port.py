@@ -64,6 +64,7 @@ generic letter monogram -- it does not hide the entry (that is
 """
 
 import argparse
+import contextlib
 import fcntl
 import os
 import re
@@ -72,7 +73,7 @@ import sys
 import tempfile
 import tomllib
 import xml.etree.ElementTree as ElementTree
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +129,20 @@ RESERVED_NAME_PREFIXES = ("host-", "agent-")
 # the first label of every standalone supervisord program with a hyphen in
 # its name: an app named ``share`` would claim ``share-gateway`` as its
 # ``share-<role>`` sidecar when its footprint is computed.
-RESERVED_NAMES = frozenset({"localhost", "auth", "share", "app", "owner", "vm", "host", "env", "github", "agent"})
+RESERVED_NAMES = frozenset(
+    {
+        "localhost",
+        "auth",
+        "share",
+        "app",
+        "owner",
+        "vm",
+        "host",
+        "env",
+        "github",
+        "agent",
+    }
+)
 
 # Cap on the stored SVG markup. Generous for a hand-drawn or exported glyph
 # (icons in this repo run from a few hundred bytes to a couple of kilobytes)
@@ -220,6 +234,10 @@ class UnsupportedRegistryValueError(RegistryError, TypeError):
 
 class MalformedRegistryError(RegistryError, ValueError):
     """A registry file whose top-level shape is not ``[[apps]]`` tables."""
+
+
+class RegistrationError(RegistryError):
+    """A registration or removal the registry refuses; the message says why."""
 
 
 def _local_name(tag: str) -> str:
@@ -370,15 +388,16 @@ def validate_service_name(name: str) -> str | None:
     return None
 
 
-def _apps_file() -> Path:
+def apps_file(repo_root: Path = Path(".")) -> Path:
     """Path to the agent's apps.toml registry.
 
-    Defaults to ``data/.state/apps.toml`` relative to cwd. Override
-    via ``MINDS_APPS_FILE`` -- used by tests and by callers that
+    Defaults to ``data/.state/apps.toml`` under ``repo_root`` (the cwd for the
+    script). Override via ``MINDS_APPS_FILE`` -- used by tests and by callers that
     need to point at a non-default registry (e.g. when running outside
-    the agent's repo root). Mirrors ``app_manifest.registry.registry_path``.
+    the agent's repo root); a relative override is relative to ``repo_root`` too.
+    Mirrors ``app_manifest.registry.registry_path``.
     """
-    return Path(os.environ.get(ENV_APPS_FILE, DEFAULT_APPS_FILE))
+    return repo_root / os.environ.get(ENV_APPS_FILE, DEFAULT_APPS_FILE)
 
 
 def _toml_string(value: str) -> str:
@@ -589,7 +608,9 @@ def _read_manifest(
     for key, copy_entry in _MANIFEST_TABLE_ARRAY_COPIERS:
         entries = raw.get(key)
         if entries is not None:
-            copied_entries, entries_error = _copied_tables(entries, path, key, copy_entry)
+            copied_entries, entries_error = _copied_tables(
+                entries, path, key, copy_entry
+            )
             if copied_entries is None:
                 return {}, None, entries_error
             fields[key] = copied_entries
@@ -679,9 +700,14 @@ def _copied_launch_path(
         value = launch_path.get(key)
         if value is not None:
             if not isinstance(value, str):
-                return None, f"manifest {str(path)!r}: a launch path's {key} must be a string"
+                return (
+                    None,
+                    f"manifest {str(path)!r}: a launch path's {key} must be a string",
+                )
             copied[key] = value
-    param_names, params_error = _copied_param_names(launch_path.get("params"), path, "launch path")
+    param_names, params_error = _copied_param_names(
+        launch_path.get("params"), path, "launch path"
+    )
     if param_names is None:
         return None, params_error
     if param_names:
@@ -689,9 +715,13 @@ def _copied_launch_path(
     presets = launch_path.get("presets")
     if presets is not None:
         if not isinstance(presets, dict) or not all(
-            isinstance(name, str) and isinstance(value, str) for name, value in presets.items()
+            isinstance(name, str) and isinstance(value, str)
+            for name, value in presets.items()
         ):
-            return None, f"manifest {str(path)!r}: a launch path's presets must be a table of strings"
+            return (
+                None,
+                f"manifest {str(path)!r}: a launch path's presets must be a table of strings",
+            )
         if presets:
             copied["presets"] = dict(presets)
     return copied, None
@@ -724,7 +754,10 @@ def _copied_message_handler(
     shell posts the message to) or ``show`` (the page it shows) with ``showing`` when the manifest gives it. Returns
     ``(copied, None)``, or ``(None, error)`` when the entry is not shaped as the manifest requires."""
     if not (isinstance(handler, dict) and isinstance(handler.get("type"), str)):
-        return None, f"manifest {str(path)!r}: every message handler needs a string 'type'"
+        return (
+            None,
+            f"manifest {str(path)!r}: every message handler needs a string 'type'",
+        )
     is_path_given = isinstance(handler.get("path"), str)
     is_show_given = isinstance(handler.get("show"), str)
     if is_path_given == is_show_given:
@@ -735,12 +768,20 @@ def _copied_message_handler(
     showing = handler.get("showing")
     if is_path_given:
         if showing is not None:
-            return None, f"manifest {str(path)!r}: a message handler gives 'showing' only beside 'show'"
+            return (
+                None,
+                f"manifest {str(path)!r}: a message handler gives 'showing' only beside 'show'",
+            )
         return {"type": handler["type"], "path": handler["path"]}, None
     copied: dict[str, object] = {"type": handler["type"], "show": handler["show"]}
     if showing is not None:
-        if not (isinstance(showing, list) and all(isinstance(page, str) for page in showing)):
-            return None, f"manifest {str(path)!r}: a message handler's showing must be an array of strings"
+        if not (
+            isinstance(showing, list) and all(isinstance(page, str) for page in showing)
+        ):
+            return (
+                None,
+                f"manifest {str(path)!r}: a message handler's showing must be an array of strings",
+            )
         copied["showing"] = list(showing)
     return copied, None
 
@@ -868,6 +909,94 @@ def _remove(path: Path, name: str) -> None:
         _save_apps(path, remaining)
 
 
+@contextlib.contextmanager
+def _registry_lock(path: Path) -> Iterator[None]:
+    """Hold the registry's lock: every writer, in any process, takes it before reading."""
+    lock_path = path.parent / ".apps.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def register(
+    path: Path,
+    name: str,
+    url: str,
+    *,
+    icon_path: Path | None = None,
+    is_icon_declined: bool = False,
+    internal: bool = False,
+    program: str | None = None,
+    display_name: str | None = None,
+    manifest_fields: dict[str, object] | None = None,
+) -> None:
+    """Register ``name`` at ``url`` in the registry at ``path``; raises RegistrationError when refused.
+
+    The same rules as the command line: a name the registry cannot route is refused
+    (unless it came from a manifest, which ``_read_manifest`` checked), and so is a
+    brand-new pickable entry with no icon unless ``is_icon_declined``. A bad icon file
+    fails a new entry but only warns on an existing one, so a restart never bricks.
+    """
+    if manifest_fields is None:
+        name_error = validate_service_name(name)
+        if name_error is not None:
+            raise RegistrationError(name_error)
+    if display_name is not None:
+        display_name_error = validate_display_name(display_name)
+        if display_name_error is not None:
+            raise RegistrationError(display_name_error)
+    if program is not None and not program.strip():
+        raise RegistrationError("program must not be empty")
+
+    icon: str | None = None
+    icon_error: str | None = None
+    if icon_path is not None:
+        icon, icon_error = read_icon_file(icon_path)
+
+    is_internal = internal or bool(
+        manifest_fields is not None and manifest_fields.get("internal", False)
+    )
+    with _registry_lock(path):
+        is_new_pickable = not is_internal and not _has_entry(path, name)
+        # A bad icon file fails a NEW registration (the author is present to
+        # fix it) but must not brick an existing app's restart: warn and
+        # register without it, keeping any already-stored icon (the UI
+        # falls back to the letter monogram when none is stored).
+        if icon_error is not None:
+            if is_new_pickable:
+                raise RegistrationError(icon_error)
+            sys.stderr.write(f"warning: {icon_error}; registering without an icon\n")
+        if icon is None and not is_icon_declined and is_new_pickable:
+            raise RegistrationError(
+                f"app {name!r} is new and has no icon: pass --icon-file with a tile icon "
+                "drawn to docs/system/app-icons.md, name one in the manifest, or pass "
+                "--no-icon to keep the generic letter monogram"
+            )
+        _upsert(
+            path,
+            name,
+            url,
+            icon,
+            internal=internal,
+            program=program.strip() if program is not None else None,
+            display_name=display_name,
+            manifest_fields=manifest_fields,
+        )
+
+
+def remove(path: Path, name: str) -> None:
+    """Remove ``name`` from the registry at ``path``; a name with no entry is a no-op."""
+    name_error = validate_service_name(name)
+    if name_error is not None:
+        raise RegistrationError(name_error)
+    with _registry_lock(path):
+        _remove(path, name)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Register or remove an app port")
     parser.add_argument(
@@ -965,14 +1094,6 @@ def main() -> None:
             "--display-name, or --internal"
         )
 
-    if args.program is not None and not args.program.strip():
-        parser.error("--program must not be empty")
-
-    if args.display_name is not None:
-        display_name_error = validate_display_name(args.display_name)
-        if display_name_error is not None:
-            parser.error(display_name_error)
-
     manifest_fields: dict[str, object] | None = None
     icon_path: Path | None = (
         Path(args.icon_file) if args.icon_file is not None else None
@@ -986,55 +1107,21 @@ def main() -> None:
         name = str(manifest_fields["name"])
     else:
         name = args.name
-        name_error = validate_service_name(name)
-        if name_error is not None:
-            parser.error(name_error)
 
-    icon: str | None = None
-    icon_error: str | None = None
-    if icon_path is not None:
-        icon, icon_error = read_icon_file(icon_path)
-
-    is_internal = args.internal or bool(
-        manifest_fields is not None and manifest_fields.get("internal", False)
-    )
-
-    apps_file = _apps_file()
-    lock_path = apps_file.parent / ".apps.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(lock_path, "w") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        try:
-            if args.remove:
-                _remove(apps_file, name)
-            else:
-                is_new_pickable = not is_internal and not _has_entry(apps_file, name)
-                # A bad icon file fails a NEW registration (the author is present to
-                # fix it) but must not brick an existing app's restart: warn and
-                # register without it, keeping any already-stored icon (the UI
-                # falls back to the letter monogram when none is stored).
-                if icon_error is not None:
-                    if is_new_pickable:
-                        parser.error(icon_error)
-                    sys.stderr.write(
-                        f"warning: {icon_error}; registering without an icon\n"
-                    )
-                if icon is None and not args.no_icon and is_new_pickable:
-                    parser.error(
-                        f"app {name!r} is new and has no icon: pass --icon-file with a tile icon "
-                        "drawn to docs/system/app-icons.md, name one in the manifest, or pass "
-                        "--no-icon to keep the generic letter monogram"
-                    )
-                _upsert(
-                    apps_file,
-                    name,
-                    args.url,
-                    icon,
-                    internal=args.internal,
-                    program=args.program.strip() if args.program is not None else None,
-                    display_name=args.display_name,
-                    manifest_fields=manifest_fields,
-                )
-        finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+    try:
+        if args.remove:
+            remove(apps_file(), name)
+        else:
+            register(
+                apps_file(),
+                name,
+                args.url,
+                icon_path=icon_path,
+                is_icon_declined=args.no_icon,
+                internal=args.internal,
+                program=args.program,
+                display_name=args.display_name,
+                manifest_fields=manifest_fields,
+            )
+    except RegistrationError as error:
+        parser.error(str(error))
