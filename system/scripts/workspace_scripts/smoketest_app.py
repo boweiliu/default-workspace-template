@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -174,11 +173,6 @@ def _run_playwright_check(
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        # Re-exec with repo root .venv python if playwright is not in current environment
-        repo_root = _find_repo_root()
-        venv_py = repo_root / ".venv/bin/python"
-        if venv_py.exists() and sys.executable != str(venv_py):
-            os.execv(str(venv_py), [str(venv_py), *sys.argv])
         sys.exit(
             "error: playwright is not installed in the workspace venv. Run `uv sync --all-packages`, then "
             "`uv run --no-sync system/scripts/smoketest_app.py ...`."
