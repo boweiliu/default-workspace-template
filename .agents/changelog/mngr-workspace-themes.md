@@ -1,6 +1,6 @@
 Skills for workspace themes.
 
-- New `create-theme` skill: makes a workspace theme from a description or a picture -- lays out the folder, writes its tokens, chrome, part styles, and icon guide (vendoring a CSS library where one fits), validates it, judges it in the theme gallery, always draws its own icons for every app (in the background, without asking), and points the user at Desktop settings to try it.
+- New `create-theme` skill: makes a workspace theme from a description or a picture -- lays out the folder, writes its tokens, chrome, and part styles (vendoring a CSS library where one fits), validates it, judges it in the theme gallery, and points the user at Desktop settings to try it; it then asks whether to draw new icons in the theme's style for every app, and draws them in the background if the user wants them.
 
 - New `make-theme-icon` skill: draws an app's icon for a theme with whatever is available -- the harness's image tool, Retro Diffusion, any litellm image model, or a pixel grid or SVG the agent writes itself -- then fits, checks, and installs it.
 

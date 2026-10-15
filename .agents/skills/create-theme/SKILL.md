@@ -1,6 +1,6 @@
 ---
 name: create-theme
-description: Use when the user wants a new look for their workspace -- a theme made from a description ("make it look like BeOS", "a dark solarized theme"), a picture, or an existing theme to start from. Lays out a theme folder, writes its colors, type, window chrome, and part styles against the theme contract, checks it, judges it in the theme gallery, makes its icons, and lets the user try it in Desktop settings.
+description: Use when the user wants a new look for their workspace -- a theme made from a description ("make it look like BeOS", "a dark solarized theme"), a picture, or an existing theme to start from. Lays out a theme folder, writes its colors, type, window chrome, and part styles against the theme contract, checks it, judges it in the theme gallery, lets the user try it in Desktop settings, and then offers to draw its icons.
 metadata:
   author: imbue
 ---
@@ -30,8 +30,7 @@ From the user's description or picture, decide, before writing anything:
   machine has, or a font file shipped in the theme's `fonts/` under a license that allows it;
 - the shape: corner radii, borders, bevels or shadows, how a pressed button looks;
 - the title bar: which controls sit left and right, and whether the title is centred;
-- the icons: what an icon looks like in this style (it becomes the icon guide). Every theme made
-  here draws its own icons; they are part of the look, not an extra to offer.
+- the icons: what an icon would look like in this style, for step 7 if the user wants them.
 
 For a look the user named after a real system, ask nothing more: draw on what that system
 looked like. Ask only when the description leaves the look genuinely open.
@@ -61,12 +60,8 @@ style, chrome setting, and icon its base has, and sets only what differs.
 - **Files the styles use** (a wallpaper, a font, a texture) go in `assets/` or `fonts/` and are
   named relative to the style file, in a token as anywhere else:
   `--desk-default-wallpaper: url("assets/bubbles.svg")`. No need for a `data:` URI.
-- **`theme.toml`**: add `[chrome]` (section 4.3) when the controls move, and always `[icons]`
-  (section 6.1) with `icons/guide.md`. Only a variant of a theme that already draws icons in this
-  look (a dark Windows 2000 on `--base windows-2000`) may keep its base's. A theme with its own
-  `[icons]` also needs `icons/app.<format>`, the generic program icon, and is unavailable (and
-  fails step 4's check) until it has one: once the icon guide is written, draw it yourself, in
-  the foreground, with the `make-theme-icon` skill, installed with `--app app`.
+- **`theme.toml`**: add `[chrome]` (section 4.3) when the controls move. Leave `[icons]` out:
+  the theme wears its base's icons until the user asks for its own (step 6).
 - **`apps/<app>.css`**, optional: styles for parts an app declares in its `app.toml`
   (`[theming] mode = "parts"`; chat declares `chat.user-message`, `chat.composer`,
   `chat.tool-call`). List each such app by its name under `[styles] apps` (`apps = ["chat"]`).
@@ -80,10 +75,6 @@ style, chrome setting, and icon its base has, and sets only what differs.
   from `system/` (after `npm ci` there). The built-in themes'
   `system/themes/*/vendor/*.vendor.json` are the examples. Record the library under
   `[[attribution]]` with its license file.
-
-Write the icon guide (`icons/guide.md`) as the built-in themes do: canvas and palette, outline,
-view and light, what one object per app looks like, what to avoid, and which reference icons
-show the style.
 
 ## 4. Check it
 
@@ -106,29 +97,37 @@ of. Fix what reads badly and look again. The page lists any problem with the the
 The gallery lays each window over a stand-in page, as a live window is laid over its app: a
 theme that paints a window's frame or content hides that page there, and would hide the app.
 
-## 6. Make the icons
+## 6. Show the user, and ask about icons
 
-Always: do not ask whether to, and do not offer them as a later extra. A theme with icons of its
-own (an `[icons]` table) needs one for every app in the workspace,
-built-in and user-made, and its generic program icon (`icons/app.<format>`). Until an app has one,
-the shell derives one from the app's standard icon (`derive` in `[icons]`), a stopgap rather than
-the theme's look.
+Tell the user the theme is ready, and that they can try it in **Desktop settings > Theme**,
+which previews it live before they keep it, and can put it on one desktop or make it the
+workspace default, which every desktop without a theme of its own wears.
+Do not switch their desktop to it yourself unless they asked you to.
+
+Then ask whether they want new icons in the theme's style for every app, drawn in the
+background. Until then the theme wears its base's icons: the standard ones, or those of the theme
+it builds on. Make them (step 7) only when they say yes.
+
+## 7. Make the icons, when the user wants them
+
+First give the theme icons of its own: write `icons/guide.md` (as the built-in themes do: canvas
+and palette, outline, view and light, what one object per app looks like, what to avoid, and which
+reference icons show the style), add `[icons]` (section 6.1) to `theme.toml`, and draw
+`icons/app.<format>`, the generic program icon, at once, in the foreground, with the
+`make-theme-icon` skill, installed with `--app app`. A theme with `[icons]` is unavailable until it
+has that icon, and a desktop wearing it shows the standard look meanwhile. Run step 4's check
+again.
+
+Then every app in the workspace, built-in and user-made, needs one. Until an app has one, the shell
+derives one from the app's standard icon (`derive` in `[icons]`), a stopgap rather than the theme's
+look.
 
 ```bash
 uv run workspace-themes icon missing <id>
 ```
 
-names the apps still without one, and `app` while the generic program icon is missing (step 3
-draws that one; the theme is unavailable until it has it, though the icon commands still take it). Make each with the `make-theme-icon` skill, in the background
+names the apps still without one. Make each with the `make-theme-icon` skill, in the background
 (the `launch-task` skill) when there are more than one or two (a background agent installs into the
 live workspace, as that skill says, and names the icons it put in `themes/<id>/icons/`; commit them
-with the theme once they land), and show the user the theme while they land. The theme is finished when the command prints `every theme has an icon for every app`.
-A variant that keeps its base's icons draws its own for the apps its base lacks.
-
-## 7. Show the user
-
-Tell the user the theme is ready, that its icons are being drawn and show up as each lands, and
-that they can try it in **Desktop settings > Theme**,
-which previews it live before they keep it, and can put it on one desktop or make it the
-workspace default, which every desktop without a theme of its own wears.
-Do not switch their desktop to it yourself unless they asked you to.
+with the theme once they land), and tell the user they show up as each lands. The icons are done
+when the command prints `every theme has an icon for every app`.
