@@ -109,7 +109,7 @@ Plain CSS, as a browser reads it: no preprocessor, no `@import` (the bundle orde
 - **Selectors** use only what the contract names: element names, `:root`, `html`, `body`, pseudo-classes and pseudo-elements, and attribute selectors. A class selector (`.x`), an id selector (`#x`), and an attribute selector on `class`, `id`, or `style` are errors: they reach into an app's private markup.
 - **`data-part` values** are contract parts (section 4.2) or app parts the app declares (section 7). Any other value is an error.
 - **Custom properties** a theme sets are contract tokens (section 4.1) or its own, named `--theme-*`. Setting any other custom property is an error.
-- **`url()`** is a relative path to a file in the folder, or a `data:` URI. A remote URL is an error. A URL is written out: a function that takes one (`url()`, `src()`, `image-set()`) may not take `var()`, `env()`, `attr()`, or `if()`, and a URL may not contain a backslash.
+- **`url()`** is a relative path to a file in the folder, or a `data:` URI. A remote URL is an error. A URL is written out: a function that takes one (`url()`, `src()`, `image-set()`) may not take `var()`, `env()`, `attr()`, or `if()`, and a URL may not contain a backslash. A URL in a token's value (`--desk-default-wallpaper: url("assets/bubbles.svg")`) is resolved where `var()` puts it, often a page's own style, so the server sends a style file with each relative URL inside a custom property rewritten to `/_static/themes/<id>/<path>`; a theme writes it relative to the file, as anywhere else.
 - **Fonts** are declared with `@font-face` in the theme's own files, with sources inside the folder.
 
 ## 4. The contract (`contract = 1`)

@@ -15,6 +15,7 @@ from workspace_themes.serving import (
     THEME_STATIC_ROUTE_PREFIX,
     ThemeBundle,
     ThemeFile,
+    ThemeStyleFile,
     resolve_theme_asset,
     theme_file_security_headers,
 )
@@ -49,6 +50,11 @@ def serve_theme_static(
             )
             # Tagged by its own text: which app overlays it imports follows the apps the workspace has, which the
             # theme's revision does not cover.
+            response.set_etag(_etag_of(css))
+            response.make_conditional(request)
+        case ThemeStyleFile(path=path, css=css):
+            response = Response(css, mimetype=CSS_MIMETYPE)
+            response.headers.update(theme_file_security_headers(path))
             response.set_etag(_etag_of(css))
             response.make_conditional(request)
         case _ as unreachable:

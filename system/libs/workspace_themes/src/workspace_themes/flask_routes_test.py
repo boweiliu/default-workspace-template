@@ -84,3 +84,35 @@ def test_theme_files_are_served_with_their_security_headers(tmp_path: Path) -> N
     assert svg.headers["Content-Security-Policy"] == (
         "default-src 'none'; style-src 'unsafe-inline'; sandbox"
     )
+
+
+def test_a_style_file_with_a_relative_url_in_a_token_is_sent_rewritten_as_css(
+    tmp_path: Path,
+) -> None:
+    write_standard_theme(tmp_path)
+    folder = write_test_theme(
+        tmp_path / BUILTIN_THEMES_DIRECTORY,
+        "paper",
+        ':root { --desk-default-wallpaper: url("assets/mark.svg"); }\n',
+    )
+    (folder / "assets").mkdir()
+    (folder / "assets" / "mark.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"/>', encoding="utf-8"
+    )
+    catalog = read_theme_catalog(
+        default_theme_roots(tmp_path), {}, tmp_path / GENERATED_ICONS_DIRECTORY
+    )
+    application = Flask(__name__)
+    register_theme_static_route(application, lambda: catalog)
+    client = application.test_client()
+
+    style = client.get("/_static/themes/paper/parts.css")
+    again = client.get(
+        "/_static/themes/paper/parts.css",
+        headers={"If-None-Match": style.headers["ETag"]},
+    )
+
+    assert style.status_code == 200 and style.mimetype == "text/css"
+    assert b'url("/_static/themes/paper/assets/mark.svg")' in style.data
+    assert style.headers["X-Content-Type-Options"] == "nosniff"
+    assert again.status_code == 304

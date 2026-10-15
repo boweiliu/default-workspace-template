@@ -37,6 +37,7 @@ from workspace_themes.contract import (
     STANDARD_THEME_ID,
     STYLE_FILE_SUFFIX,
     THEME_MANIFEST_FILENAME,
+    URL_FUNCTION_NAMES,
 )
 from workspace_themes.data_types import ResolvedChrome, ThemeIconSpec, ThemeManifest
 from workspace_themes.primitives import ChromeSlot, IconFormat
@@ -44,10 +45,6 @@ from workspace_themes.primitives import ChromeSlot, IconFormat
 _DATA_PART_ATTRIBUTE: Final[str] = "data-part"
 _EXACT_MATCH_OPERATOR: Final[str] = "="
 _NAMESPACE_SEPARATOR: Final[str] = "|"
-# The functions whose string arguments are URLs: in image-set() a bare string is an image, as in url().
-_URL_FUNCTION_NAMES: Final[frozenset[str]] = frozenset(
-    {"url", "src", "image-set", "-webkit-image-set"}
-)
 # The functions that put a value in at run time, where the validator cannot read it.
 _SUBSTITUTION_FUNCTION_NAMES: Final[frozenset[str]] = frozenset(
     {"var", "env", "attr", "if"}
@@ -249,7 +246,7 @@ def _check_url_function_arguments(
     problems: list[str] = []
     for token in tokens:
         if isinstance(token, ast.FunctionBlock):
-            if token.lower_name in _URL_FUNCTION_NAMES:
+            if token.lower_name in URL_FUNCTION_NAMES:
                 problems.extend(
                     f"{context.label}:{argument.source_line}: {token.lower_name}() takes {argument.lower_name}(); "
                     "write the URL out, so it can be checked"
@@ -274,7 +271,7 @@ def _urls_in(tokens: Iterable[ast.Node]) -> list[tuple[str, int]]:
         if isinstance(token, ast.URLToken):
             found.append((token.value, token.source_line))
         elif isinstance(token, ast.FunctionBlock):
-            if token.lower_name in _URL_FUNCTION_NAMES:
+            if token.lower_name in URL_FUNCTION_NAMES:
                 strings = [
                     argument
                     for argument in token.arguments

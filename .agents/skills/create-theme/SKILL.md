@@ -57,6 +57,9 @@ style, chrome setting, and icon its base has, and sets only what differs.
   lists them), `aria-*`, pseudo-classes, and `:root[data-ui-theme]`,
   `[data-touch]`, `[data-phone]`. Never a class, an id, or `style`. Every part name is in the
   contract's list (section 4.2). No `@import`, no remote `url()`.
+- **Files the styles use** (a wallpaper, a font, a texture) go in `assets/` or `fonts/` and are
+  named relative to the style file, in a token as anywhere else:
+  `--desk-default-wallpaper: url("assets/bubbles.svg")`. No need for a `data:` URI.
 - **`theme.toml`**: add `[chrome]` (section 4.3) when the controls move, and `[icons]`
   (section 6.1) with `icons/guide.md` when the icons look different from the base's. A theme
   with its own `[icons]` also needs `icons/app.<format>`, the generic program icon, and is

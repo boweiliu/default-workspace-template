@@ -12,6 +12,7 @@ from workspace_themes.errors import ThemeFileNotFoundError
 from workspace_themes.serving import (
     ThemeBundle,
     ThemeFile,
+    ThemeStyleFile,
     resolve_theme_asset,
     resolve_theme_icon,
     theme_file_security_headers,
@@ -126,3 +127,53 @@ def test_a_theme_file_is_never_sniffed_and_an_svg_runs_nothing() -> None:
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
     }
+
+
+_BUBBLES_CSS = """:root {
+  --desk-default-wallpaper: url("assets/bubbles.svg");
+}
+@media (min-width: 1px) {
+  :root { --theme-tile: image-set("assets/bubbles.svg" 1x), url(data:image/png;base64,AAAA); }
+}
+[data-part="desktop"] {
+  background-image: url("assets/bubbles.svg");
+}
+"""
+
+
+def _bubbles_catalog(tmp_path: Path) -> ThemeCatalog:
+    write_standard_theme(tmp_path)
+    folder = write_test_theme(
+        tmp_path / BUILTIN_THEMES_DIRECTORY, "bubbles", _BUBBLES_CSS
+    )
+    (folder / "assets").mkdir()
+    (folder / "assets" / "bubbles.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>\n',
+        encoding="utf-8",
+    )
+    catalog = read_theme_catalog(
+        default_theme_roots(tmp_path), {}, tmp_path / GENERATED_ICONS_DIRECTORY
+    )
+    assert catalog.find_available("bubbles") is not None
+    return catalog
+
+
+def test_a_relative_url_in_a_custom_property_is_sent_as_the_theme_file_s_own_path(
+    tmp_path: Path,
+) -> None:
+    asset = resolve_theme_asset(_bubbles_catalog(tmp_path), "bubbles/parts.css")
+
+    assert isinstance(asset, ThemeStyleFile)
+    assert (
+        '--desk-default-wallpaper: url("/_static/themes/bubbles/assets/bubbles.svg");'
+        in asset.css
+    )
+    assert 'image-set("/_static/themes/bubbles/assets/bubbles.svg" 1x)' in asset.css
+    assert "url(data:image/png;base64,AAAA)" in asset.css
+    assert 'background-image: url("assets/bubbles.svg");' in asset.css
+
+
+def test_a_style_file_with_no_relative_url_in_a_custom_property_is_sent_as_it_is(
+    catalog: ThemeCatalog,
+) -> None:
+    assert isinstance(resolve_theme_asset(catalog, "paper/parts.css"), ThemeFile)

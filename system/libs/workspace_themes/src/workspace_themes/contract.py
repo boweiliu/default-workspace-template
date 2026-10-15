@@ -47,6 +47,10 @@ ALLOWED_FILE_SUFFIXES: Final[frozenset[str]] = frozenset(
     }
 )
 LICENSE_FILE_PREFIXES: Final[tuple[str, ...]] = ("LICENSE", "COPYING")
+# The CSS functions whose string arguments are URLs: in image-set() a bare string is an image, as in url().
+URL_FUNCTION_NAMES: Final[frozenset[str]] = frozenset(
+    {"url", "src", "image-set", "-webkit-image-set"}
+)
 # What a page may load from a theme folder over the wire: style files and what they reference. The manifest, the
 # guide, and vendoring maps stay on disk.
 SERVED_FILE_SUFFIXES: Final[frozenset[str]] = frozenset(
