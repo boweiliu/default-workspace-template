@@ -209,16 +209,16 @@ describe("ChatPanel over a provisional chat", () => {
     mocks.fetchEvents.mockClear();
   });
 
-  it("shows a chat being created as an empty conversation, with no placeholder text", () => {
+  it("shows a chat being created as an empty conversation that says it is starting", () => {
     creating();
     const tree = mountPanel()();
 
-    expect(renderedText(tree).trim()).toBe("");
+    expect(renderedText(tree).trim()).toBe("Starting your chat…");
     expect(findByClass(tree, "message-list-creating")).toBeTruthy();
     expect(bubbleListOf(tree)?.children).toEqual([]);
   });
 
-  it("draws a created chat with no events as the same empty conversation, with no placeholder text", () => {
+  it("says a created chat with no events is ready, in the same empty conversation", () => {
     creating();
     const render = mountPanel();
     const starting = render();
@@ -227,9 +227,18 @@ describe("ChatPanel over a provisional chat", () => {
 
     const started = render();
 
-    expect(renderedText(started).trim()).toBe("");
+    expect(renderedText(started).trim()).toBe("Your chat is ready.");
     expect(findByClass(started, "message-list-empty")).toBeTruthy();
     expect(bubbleListOf(started)?.attrs).toEqual(bubbleListOf(starting)?.attrs);
+  });
+
+  it("drops the starting line once a message is on its way", () => {
+    mocks.outgoingBubbles = [{ tag: "div", key: "outgoing-0", attrs: { class: "outgoing-message" }, children: [] }];
+    creating();
+
+    const tree = mountPanel()();
+
+    expect(renderedText(tree)).not.toContain("Starting your chat");
   });
 
   it("shows the messages the chat app holds for a chat being created, from its record", () => {
@@ -239,6 +248,7 @@ describe("ChatPanel over a provisional chat", () => {
     const tree = mountPanel()();
 
     expect(renderedText(tree)).toContain("sent from another page");
+    expect(renderedText(tree)).not.toContain("Starting your chat");
   });
 
   it("keeps a failed create's held messages in view above its reason", () => {

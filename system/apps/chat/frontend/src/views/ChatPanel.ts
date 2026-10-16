@@ -82,6 +82,12 @@ import { Button } from "@imbue/workspace-ui/src/components/Button";
 
 // The terminal output a page shows in place of a transcript: what mngr printed when a create
 // failed, or the tmux screen of an agent with no session. Shared so the two read the same.
+// The one quiet line an empty conversation shows while its chat starts, and once it is up.
+const STARTING_STATUS = "Starting your chat…";
+const READY_STATUS = "Your chat is ready.";
+const EMPTY_CONVERSATION_STATUS_CLASS =
+  "message-list-status pointer-events-none absolute inset-x-0 top-1/3 text-center text-sm text-secondary";
+
 const TERMINAL_OUTPUT_CLASS =
   "text-sm bg-gray-900 text-gray-100 p-4 rounded-lg overflow-auto w-full max-h-96 font-mono";
 
@@ -312,21 +318,52 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
   }
 
   /** A conversation with nothing in it yet -- being created, loading, or empty -- drawn as the
-   *  transcript's own empty list with no placeholder text, so a new chat is ready to type into
-   *  at once and moving between these states never changes the page. ``stateClass`` names the
-   *  state for tests and styles; ``nodes`` are messages already on their way (a send typed while
-   *  the chat is created), laid out where the transcript will put them. */
-  function renderEmptyConversation(stateClass: string, nodes: m.Children[]): m.Vnode {
-    return m("div", { class: `message-list-wrapper ${stateClass}` }, [m("div", { class: MESSAGE_LIST_CLASS }, nodes)]);
+   *  transcript's own empty list, so a new chat is ready to type into at once. ``stateClass`` names
+   *  the state for tests and styles; ``nodes`` are messages already on their way (a send typed while
+   *  the chat is created), laid out where the transcript will put them. ``status`` is one quiet line
+   *  over an empty list saying where the chat stands; it gives way to the first message. */
+  function renderEmptyConversation(stateClass: string, nodes: m.Children[], status: string | null = null): m.Vnode {
+    const isStatusShown = status !== null && nodes.length === 0;
+    return m("div", { class: `message-list-wrapper ${stateClass}` }, [
+      isStatusShown ? m("p", { class: EMPTY_CONVERSATION_STATUS_CLASS }, status) : null,
+      m("div", { class: MESSAGE_LIST_CLASS }, nodes),
+    ]);
   }
+
+  /** A conversation whose transcript is on its way: the shape of a few turns, faded in only once the
+   *  load has taken long enough to notice, so a quick switch shows nothing at all. */
+  function renderLoadingConversation(): m.Vnode {
+    return renderEmptyConversation("message-list-loading", [
+      m("div", { class: "message-list-skeleton", "aria-hidden": "true" }, [
+        m("div", { class: "message-list-skeleton-bar message-list-skeleton-bar--user" }),
+        m("div", { class: "message-list-skeleton-bar" }),
+        m("div", { class: "message-list-skeleton-bar message-list-skeleton-bar--short" }),
+      ]),
+    ]);
+  }
+
+  /** The page of a chat whose transcript is still loading: the starting line for the chat this page just
+   *  watched being created (its first load follows the create), the loading shape otherwise. */
+  function renderWhileLoading(chatId: string): m.Vnode {
+    if (chatId === lastStartingChatId) {
+      return renderEmptyConversation("message-list-loading", renderOutgoingMessages(chatId), STARTING_STATUS);
+    }
+    return renderLoadingConversation();
+  }
+
+  // The chat this page last showed as being created: the transcript load that follows its create keeps the
+  // starting line up rather than flashing the loading shape between "starting" and "ready".
+  let lastStartingChatId: string | null = null;
 
   /** The page of a chat whose create is running. A message typed now is held by the chat app until the
    *  agent lands (see MessageInput), and shows from its record on any page. */
   function renderStarting(chatId: string): m.Vnode {
-    return renderEmptyConversation("message-list-creating", [
-      ...renderProvisionalHeldSends(chatId),
-      ...renderOutgoingMessages(chatId),
-    ]);
+    lastStartingChatId = chatId;
+    return renderEmptyConversation(
+      "message-list-creating",
+      [...renderProvisionalHeldSends(chatId), ...renderOutgoingMessages(chatId)],
+      STARTING_STATUS,
+    );
   }
 
   /** The messages a failed create kept, above its reason: Try again sends them once the chat starts. */
@@ -525,7 +562,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     }
 
     if (isConversationNotFound(chatId) && !isNotFoundSettled(chatId)) {
-      return renderEmptyConversation("message-list-loading", []);
+      return renderWhileLoading(chatId);
     }
     if (isConversationNotFound(chatId)) {
       fetchScreenCapture(chatId);
@@ -566,7 +603,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     // fall through to the empty state, which claims an answer it does not have.
     const load = getConversationLoadState(chatId);
     if (hasNothingToShow && load.phase === "loading") {
-      return renderEmptyConversation("message-list-loading", []);
+      return renderWhileLoading(chatId);
     }
 
     if (hasNothingToShow && load.error !== null) {
@@ -602,7 +639,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
 
     if (events.length === 0) {
       if (tailNodes.length === 0) {
-        return renderEmptyConversation("message-list-empty", []);
+        return renderEmptyConversation("message-list-empty", [], READY_STATUS);
       }
       return m("div", { class: "message-list-wrapper" }, [
         failedReloadNotice,
