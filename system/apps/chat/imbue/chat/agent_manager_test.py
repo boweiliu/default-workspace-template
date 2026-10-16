@@ -96,6 +96,7 @@ from imbue.chat.models import ChatConvergingError
 from imbue.chat.models import HandoffError
 from imbue.chat.models import HandoffFailedStep
 from imbue.chat.models import HandoffPhase
+from imbue.chat.models import HeldSend
 from imbue.chat.models import HeldSendOrigin
 from imbue.chat.models import ModelApplyError
 from imbue.chat.models import ModelPick
@@ -1041,8 +1042,29 @@ def test_create_chat_relaunches_a_failed_chat_under_its_id_and_name(
         "phase": "creating",
         "error": None,
         "is_seeded": False,
+        "held_sends": [],
     }
     assert [proto.chat_id for proto in agent_manager.get_provisional_chats()] == ["failed-1"]
+
+
+def test_create_chat_relaunches_a_failed_chat_with_the_sends_it_kept(agent_manager: AgentManager) -> None:
+    """Try again delivers what the failed attempt held, once this create lands."""
+    (signed_in,) = read_index().accounts
+    failed = seed_failed_chat(agent_manager, ChatId("failed-1"), "Chat 1", account_id=signed_in.id)
+    held = HeldSend(
+        message_id="m-1", text="kept", origin=HeldSendOrigin.CLIENT, received_at=datetime.now(timezone.utc)
+    )
+    with agent_manager._lock:
+        agent_manager._provisional_chats[ChatId("failed-1")] = failed.model_copy_update(
+            to_update(failed.field_ref().held_sends, (held,))
+        )
+
+    agent_manager.create_chat("", chat_id="failed-1", account_id=signed_in.id)
+    relaunched = agent_manager.get_provisional_chat("failed-1")
+    agent_manager.stop()
+
+    assert relaunched is not None
+    assert [entry.text for entry in relaunched.held_sends] == ["kept"]
 
 
 def test_create_chat_relaunches_a_failed_chat_on_the_terms_it_was_minted_with(
@@ -1558,6 +1580,84 @@ def test_the_observe_stream_owns_a_created_agent_once_it_reports_it(
     agent_manager._handle_observe_event(make_agent_removed_event(created.id, created.name, created.host.id))
 
     assert agent_manager.get_agent_by_id(str(created_id)) is None
+
+
+def test_a_send_to_a_chat_being_created_is_held_on_its_record_and_pushed_to_every_page(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
+) -> None:
+    """The record, not the page that sent it, keeps the message: a page closed meanwhile shows it on its return."""
+    _seed_creating_chat(agent_manager, ChatId("test-id"), "Chat 1")
+    q = broadcaster.register()
+
+    assert agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "first", HeldSendOrigin.CLIENT)
+    assert agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-2", "second", HeldSendOrigin.CLIENT)
+    # A retry of a send the chat app already took is not held twice.
+    assert agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "first", HeldSendOrigin.CLIENT)
+
+    proto = agent_manager.get_provisional_chat("test-id")
+    assert proto is not None
+    assert [(held.message_id, held.text) for held in proto.held_sends] == [("m-1", "first"), ("m-2", "second")]
+    pushed = _drain(q)
+    assert [held["message_id"] for held in pushed[-1]["held_sends"]] == ["m-1", "m-2"]
+
+
+def test_only_a_chat_being_created_holds_a_send(agent_manager: AgentManager) -> None:
+    """A failed create takes no sends until it is tried again, and an unknown chat has nothing to hold them on."""
+    seed_failed_chat(agent_manager, ChatId("failed-1"), "Chat 1")
+
+    assert not agent_manager.hold_send_for_chat_being_created(ChatId("failed-1"), "m-1", "hi", HeldSendOrigin.CLIENT)
+    assert not agent_manager.hold_send_for_chat_being_created(ChatId("unknown"), "m-1", "hi", HeldSendOrigin.CLIENT)
+
+
+def test_run_creation_delivers_the_sends_held_while_it_ran_in_order_after_its_first_message(
+    agent_manager: AgentManager, tmp_path: Path
+) -> None:
+    _seed_creating_chat(agent_manager, ChatId("test-id"), "Chat 1")
+    agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "one", HeldSendOrigin.CLIENT)
+    agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-2", "two", HeldSendOrigin.SCRIPT)
+    delivered: list[tuple[str, str]] = []
+
+    def deliver(agent_info: AgentInfo, text: str, message_id: str) -> SendOutcome:
+        delivered.append((text, message_id))
+        return SendOutcome.OK
+
+    agent_manager.set_handoff_capabilities(
+        HandoffCapabilities(
+            ensure_watcher=lambda agent_info: ListTranscriptReader([]),
+            drain_to_composer=lambda agent_info: "",
+            deliver=deliver,
+        )
+    )
+
+    agent_manager._run_creation(
+        ChatId("test-id"),
+        "test-id",
+        "test-agent",
+        ["true"],
+        tmp_path,
+        {},
+        HarnessType.CLAUDE,
+        deferred_message="the first message",
+    )
+
+    assert [text for text, _message_id in delivered] == ["the first message", "one", "two"]
+    assert [message_id for _text, message_id in delivered[1:]] == ["m-1", "m-2"]
+    # Once the agent is up a send finds it, so there is no create left to hold one for.
+    assert not agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-3", "x", HeldSendOrigin.CLIENT)
+
+
+def test_a_failed_create_keeps_its_held_sends(agent_manager: AgentManager, tmp_path: Path) -> None:
+    _seed_creating_chat(agent_manager, ChatId("test-id"), "Chat 1")
+    agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "kept", HeldSendOrigin.CLIENT)
+
+    agent_manager._run_creation(
+        ChatId("test-id"), "test-id", "test-agent", ["sh", "-c", "exit 3"], tmp_path, {}, HarnessType.CLAUDE
+    )
+
+    failed = agent_manager.get_provisional_chat("test-id")
+    assert failed is not None
+    assert failed.phase is ProvisionalChatPhase.FAILED
+    assert [held.text for held in failed.held_sends] == ["kept"]
 
 
 def test_run_creation_tells_the_page_the_chat_landed_even_when_settling_it_fails(

@@ -80,7 +80,10 @@ vi.mock("./ActivityIndicator", () => ({ ActivityIndicator: { view: () => null } 
 vi.mock("./TerminalViewToggle", () => ({ TerminalViewToggle: { view: () => null } }));
 vi.mock("./EmptySlot", () => ({ EmptySlot: { view: () => null } }));
 vi.mock("./QueuedMessageView", () => ({ renderQueuedMessages: () => [] }));
-vi.mock("./OutgoingMessageView", () => ({ renderOutgoingMessages: () => mocks.outgoingBubbles }));
+vi.mock("./OutgoingMessageView", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./OutgoingMessageView")>()),
+  renderOutgoingMessages: () => mocks.outgoingBubbles,
+}));
 vi.mock("./fast-mode-limit", () => ({ maybeApplyFastModeLimit: () => undefined }));
 vi.mock("./FastModeNotice", () => ({ FastModeNotice: { view: () => null } }));
 
@@ -144,6 +147,7 @@ function seeded(phase: "awaiting_first_send" | "creating" | "failed", error: str
     phase,
     error,
     is_seeded: true,
+    held_sends: [],
   };
 }
 
@@ -156,6 +160,7 @@ function failed(accountId: string, error: string): void {
     phase: "failed",
     error,
     is_seeded: false,
+    held_sends: [],
   };
 }
 
@@ -168,6 +173,7 @@ function creating(): void {
     phase: "creating",
     error: null,
     is_seeded: false,
+    held_sends: [],
   };
 }
 
@@ -180,6 +186,7 @@ function awaiting(accountId: string): void {
     phase: "awaiting_first_send",
     error: null,
     is_seeded: false,
+    held_sends: [],
   };
 }
 
@@ -223,6 +230,25 @@ describe("ChatPanel over a provisional chat", () => {
     expect(renderedText(started).trim()).toBe("");
     expect(findByClass(started, "message-list-empty")).toBeTruthy();
     expect(bubbleListOf(started)?.attrs).toEqual(bubbleListOf(starting)?.attrs);
+  });
+
+  it("shows the messages the chat app holds for a chat being created, from its record", () => {
+    creating();
+    mocks.proto = { ...(mocks.proto as object), held_sends: [{ message_id: "m-1", text: "sent from another page" }] };
+
+    const tree = mountPanel()();
+
+    expect(renderedText(tree)).toContain("sent from another page");
+  });
+
+  it("keeps a failed create's held messages in view above its reason", () => {
+    failed("acct-1", "mngr create exited with code 1");
+    mocks.proto = { ...(mocks.proto as object), held_sends: [{ message_id: "m-1", text: "still waiting" }] };
+
+    const tree = mountPanel()();
+
+    expect(findByClass(tree, "message-list-held-through-failure")).toBeTruthy();
+    expect(renderedText(tree)).toContain("still waiting");
   });
 
   it("keeps a message sent while the chat starts where the empty transcript after it puts the message", () => {
@@ -287,6 +313,7 @@ describe("ChatPanel over a provisional chat", () => {
       phase: "creating",
       error: null,
       is_seeded: false,
+      held_sends: [],
     };
     render();
     failed("acct-1", "mngr create exited with code 2");

@@ -72,7 +72,7 @@ import { ActivityIndicator } from "./ActivityIndicator";
 import { requestFrameFocus } from "@imbue/workspace-ui/src/terminalFocus";
 import { renderQueuedMessages } from "./QueuedMessageView";
 import { renderOutgoingMessages } from "./OutgoingMessageView";
-import { renderHeldSends } from "./HeldSendView";
+import { renderHeldSends, renderProvisionalHeldSends } from "./HeldSendView";
 import { HandoffFailedNotice } from "./HandoffFailedNotice";
 import { renderHandoffTailNode } from "./handoff-node";
 import { SwitchDialog } from "./SwitchDialog";
@@ -320,10 +320,21 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     return m("div", { class: `message-list-wrapper ${stateClass}` }, [m("div", { class: MESSAGE_LIST_CLASS }, nodes)]);
   }
 
-  /** The page of a chat whose create is running. A message typed now waits for the agent to
-   *  land (see MessageInput). */
+  /** The page of a chat whose create is running. A message typed now is held by the chat app until the
+   *  agent lands (see MessageInput), and shows from its record on any page. */
   function renderStarting(chatId: string): m.Vnode {
-    return renderEmptyConversation("message-list-creating", renderOutgoingMessages(chatId));
+    return renderEmptyConversation("message-list-creating", [
+      ...renderProvisionalHeldSends(chatId),
+      ...renderOutgoingMessages(chatId),
+    ]);
+  }
+
+  /** The messages a failed create kept, above its reason: Try again sends them once the chat starts. */
+  function renderFailedCreateHeldSends(chatId: string): m.Vnode[] {
+    const held = renderProvisionalHeldSends(chatId);
+    return held.length === 0
+      ? []
+      : [m("div", { class: `${MESSAGE_LIST_CLASS} message-list-held-through-failure` }, held)];
   }
 
   /** The page of a chat that is not an agent yet, by its phase. */
@@ -344,6 +355,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
       "div",
       { class: "message-list-create-failed flex flex-col items-center justify-center h-full gap-4 p-8" },
       [
+        ...renderFailedCreateHeldSends(chatId),
         m("p", { class: "type-heading text-primary" }, "This chat could not be started"),
         m("pre", { class: `${TERMINAL_OUTPUT_CLASS} whitespace-pre-wrap` }, provisional.error ?? "mngr create failed"),
         launchError !== null ? m("p", { class: "text-danger text-sm" }, launchError) : null,

@@ -77,6 +77,7 @@ from imbue.chat.models import CreateChatRequest
 from imbue.chat.models import HandoffPhase
 from imbue.chat.models import HeldSendOrigin
 from imbue.chat.models import ModelPick
+from imbue.chat.models import ProvisionalChat
 from imbue.chat.models import ProvisionalChatPhase
 from imbue.chat.models import SendMessageRequest
 from imbue.chat.oom_prioritizer import ChatOomPrioritizer
@@ -258,6 +259,27 @@ def test_send_message_for_unknown_agent(client: FlaskClient) -> None:
     with patch("imbue.chat.server.discover_agents", return_value=[]):
         response = client.post("/api/chats/nonexistent/message", json={"message": "hello"})
     assert response.status_code == 404
+
+
+def test_a_send_to_a_chat_being_created_is_held_for_it() -> None:
+    """A page that sends while its chat starts gets a 202 at once, and the chat app keeps the message until the agent
+    lands, so a page closed meanwhile loses nothing."""
+    manager = AgentManager.build(WebSocketBroadcaster(), messenger=RecordingMngrMessenger())
+    manager.note_agent_list_known()
+    chat_id = ChatId(f"agent-{uuid4().hex}")
+    with manager._lock:
+        manager._provisional_chats[chat_id] = ProvisionalChat(
+            chat_id=chat_id, name="Chat 1", account_id="acct-1", phase=ProvisionalChatPhase.CREATING
+        )
+    client = create_application(build_test_state(agent_manager=manager)).test_client()
+
+    response = client.post(f"/api/chats/{chat_id}/message", json={"message": "hello", "message_id": "m-1"})
+
+    assert response.status_code == 202
+    assert response.get_json() == {"status": "held", "phase": None}
+    proto = manager.get_provisional_chat(chat_id)
+    assert proto is not None
+    assert [(held.message_id, held.text) for held in proto.held_sends] == [("m-1", "hello")]
 
 
 def test_send_message_is_not_ready_until_the_agent_list_is_known() -> None:

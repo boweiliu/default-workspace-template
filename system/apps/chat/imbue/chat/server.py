@@ -788,6 +788,24 @@ def _send_to_chat(
     return _SendAccepted(held_phase=held_phase, is_compaction_requested=is_compaction_requested)
 
 
+def _hold_send_for_chat_being_created(
+    state: ChatAppState, chat_id: str, send_message_request: SendMessageRequest, message_id: str
+) -> Response | None:
+    """Hold a send to a chat whose create is still running, answering the route's 202; None when the chat is
+    not being created. The chat app keeps it until the agent lands, so a page closed meanwhile loses nothing."""
+    parsed = parse_chat_ref(chat_id)
+    if parsed is None:
+        return None
+    is_held = state.agent_manager.hold_send_for_chat_being_created(
+        parsed, message_id, send_message_request.message, _held_send_origin(send_message_request)
+    )
+    if not is_held:
+        return None
+    _consider_naming_chat(state, parsed, send_message_request.message)
+    record_client_message_activity(state.shell, parsed, send_message_request, state.is_secondary)
+    return json_response(HeldSendResponse(status="held", phase=None).model_dump(mode="json"), status_code=202)
+
+
 def _send_message_endpoint(chat_id: str) -> Response:
     """Send a message to a chat: its active agent receives it, or the chat app holds it while the chat converges."""
     state = get_state()
@@ -798,11 +816,16 @@ def _send_message_endpoint(chat_id: str) -> Response:
     # a chat-app boot would route messages around the app instead of waiting for it.
     if not agent_manager.is_agent_list_known():
         return _agent_list_not_known_response()
-    if _find_active_agent(chat_id) is None:
-        return _chat_not_found_response(chat_id)
-
     send_message_request = SendMessageRequest.model_validate(request.get_json())
     message_id = send_message_request.message_id or uuid4().hex
+    if _find_active_agent(chat_id) is None:
+        held = _hold_send_for_chat_being_created(state, chat_id, send_message_request, message_id)
+        if held is not None:
+            return held
+        # The create may have landed between the lookup and the hold, which then refuses.
+        if _find_active_agent(chat_id) is None:
+            return _chat_not_found_response(chat_id)
+
     # Alongside the delivery rather than after it, which can take seconds: the name should land
     # while the agent is still answering.
     _consider_naming_chat(state, ChatId(chat_id), send_message_request.message)

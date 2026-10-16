@@ -71,6 +71,7 @@ const mocks = vi.hoisted(() => {
     // Resolved at once by default: the agent exists. A test of a chat still being created
     // swaps in a deferred promise.
     whenChatRegistered: vi.fn(async (_chatId: string) => {}),
+    refuseSendToFailedChat: vi.fn((_chatId: string) => {}),
     // Whether the chat list names the chat; false for a seeded chat awaiting its first send.
     isChatRegistered: true,
     provisional: undefined as unknown,
@@ -197,6 +198,7 @@ vi.mock("../models/Chats", async (importOriginal) => ({
   getProvisionalChat: () => mocks.provisional,
   launchChat: (chatId: string, accountId: string, message?: string) => mocks.launchChat(chatId, accountId, message),
   whenChatRegistered: (chatId: string) => mocks.whenChatRegistered(chatId),
+  refuseSendToFailedChat: (chatId: string) => mocks.refuseSendToFailedChat(chatId),
 }));
 vi.mock("../models/Providers", () => ({
   openProviderChooser: mocks.openProviderChooser,
@@ -610,20 +612,10 @@ describe("MessageInput send to a chat still being created", () => {
     mocks.whenChatRegistered.mockImplementation(async (_chatId: string) => {});
   });
 
-  it("holds the send until the agent registers, then sends it", async () => {
-    let release: () => void = () => {};
-    mocks.whenChatRegistered.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve;
-        }),
-    );
-    const sending = typeAndSend(MessageInput(), "agent-1", "hello");
-    await flushAsync();
-    expect(mocks.sendMessage).not.toHaveBeenCalled();
+  it("sends at once without waiting for the agent, which the chat app holds the message for", async () => {
+    mocks.whenChatRegistered.mockImplementation(() => new Promise<void>(() => {}));
 
-    release();
-    await sending;
+    await typeAndSend(MessageInput(), "agent-1", "hello");
 
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
     const [calledChatId, calledText] = mocks.sendMessage.mock.calls[0] as unknown as [string, string];
@@ -631,8 +623,10 @@ describe("MessageInput send to a chat still being created", () => {
     expect(calledText).toContain("hello");
   });
 
-  it("returns the message to the composer with the reason when the create fails", async () => {
-    mocks.whenChatRegistered.mockRejectedValueOnce("mngr create exited with code 3");
+  it("returns the message to the composer with the reason when the create has already failed", async () => {
+    mocks.refuseSendToFailedChat.mockImplementationOnce(() => {
+      throw new Error("mngr create exited with code 3");
+    });
 
     const after = await typeAndSend(MessageInput(), "agent-1", "hello");
 
@@ -662,6 +656,7 @@ describe("MessageInput first send of a seeded chat", () => {
       phase: "awaiting_first_send",
       error: null,
       is_seeded: true,
+      held_sends: [],
     };
     mocks.selectedAccount = { id: "acct-1" };
   });
@@ -1327,6 +1322,7 @@ describe("MessageInput on a chat awaiting its first send with nothing signed in"
       phase: "awaiting_first_send",
       error: null,
       is_seeded: true,
+      held_sends: [],
     };
     mocks.selectedAccount = null;
     localStorage.clear();

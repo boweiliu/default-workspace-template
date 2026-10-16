@@ -492,10 +492,11 @@ class SwitchChatResponse(FrozenModel):
 
 
 class HeldSendResponse(FrozenModel):
-    """Response from the message route while the chat is converging: the send is held for the successor."""
+    """Response from the message route while the chat is converging or still being created: the send is held
+    for the agent the chat is waiting on."""
 
     status: str = Field(description="'held'")
-    phase: HandoffPhase = Field(description="The phase the chat is in")
+    phase: HandoffPhase | None = Field(description="The phase the chat is in; None for a chat still being created")
 
 
 class HandoffCancelResponse(FrozenModel):
@@ -687,6 +688,10 @@ class ProvisionalChat(FrozenModel):
     is_seeded: bool = Field(
         default=False,
         description="Whether the chat has a seed segment to show while it is created (``chat_seed.py``)",
+    )
+    held_sends: tuple[HeldSend, ...] = Field(
+        default=(),
+        description="Messages sent while the create ran, delivered in order once the chat runs",
     )
 
 
