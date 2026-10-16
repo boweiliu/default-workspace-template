@@ -27,6 +27,7 @@ import { describeElement, type ReferenceClick, type ReferenceScope } from "@imbu
 import { anchorForPoint } from "@imbue/workspace-ui/src/menu-position";
 import { kebabGlyph, plusGlyph } from "../glyphs";
 import { isUnread } from "./chatUnread";
+import { acceptPendingRename, dropPendingRename, showPendingRename } from "./pendingRenames";
 import { destroyChat, renameChat, startChat, stopChat } from "./verbs";
 import { isAgentStarted } from "./rows";
 import {
@@ -115,22 +116,30 @@ export function isRenaming(chatId: string): boolean {
   return rename !== null && rename.chatId === chatId;
 }
 
-/** Keep the typed name: the field closes at once, and a refusal brings it back with the reason. */
+/** Keep the typed name: the field closes at once on the new name, and a refusal brings back the old name and
+ *  the field with the reason. */
 function commitRename(row: ChatRow): void {
   if (rename === null || rename.chatId !== row.chatId) return;
   const title = rename.draft.trim();
   rename = null;
+  if (title !== "" && title !== row.title) showPendingRename(row.chatId, title, row.title);
   m.redraw();
   if (title === "" || title === row.title) return;
-  renameChat(row.chatId, title).catch((error: unknown) => {
-    if (rename !== null) {
-      // Another row's rename has the field: the refusal cannot be shown there, so it is logged.
-      console.warn(`Could not rename chat ${row.chatId}`, error);
-      return;
-    }
+  renameChat(row.chatId, title).then(
+    () => acceptPendingRename(row.chatId, title),
+    (error: unknown) => refuseRename(row, title, error),
+  );
+}
+
+function refuseRename(row: ChatRow, title: string, error: unknown): void {
+  dropPendingRename(row.chatId, title);
+  if (rename !== null) {
+    // Another row's rename has the field: the refusal cannot be shown there, so it is logged.
+    console.warn(`Could not rename chat ${row.chatId}`, error);
+  } else {
     rename = { chatId: row.chatId, draft: title, error: error instanceof Error ? error.message : String(error) };
-    m.redraw();
-  });
+  }
+  m.redraw();
 }
 
 function pruneDeleting(rows: readonly ChatRow[]): void {
