@@ -3763,7 +3763,7 @@ class AgentManager:
         capabilities = self._handoff_capabilities
         if agent_info is None or capabilities is None:
             _loguru_logger.warning(
-                "Chat {}: agent {} is untracked, so its model pick and first message are dropped", chat_id, agent_id
+                "Chat {}: agent {} is untracked, so its model pick and messages are dropped", chat_id, agent_id
             )
             return
         if model_pick is not None:
