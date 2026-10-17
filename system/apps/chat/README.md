@@ -132,10 +132,63 @@ attribute a request to a client, and the app asks the shell for windows,
 through one client of the `workspace_layout` library that asks as the chat app
 (`shell_client.py`), which the send routes, the auto-open reactor, and the
 focus-chat route share. A chat's status (`ChatStatus` in
-`primitives.py`: working, idle, attention, stopped, or error) comes from its
-active agent's activity state, a pending permission request, and the lifecycle,
-and rides the `chats_updated` snapshots the chat root's list draws its status
-dots from.
+`primitives.py`: working, background, idle, attention, stopped, or error) comes
+from its active agent's activity state, a pending permission request, the
+lifecycle, and the chat's pending background tasks, and rides the
+`chats_updated` snapshots the chat root's list draws its status dots from. The
+first that holds wins: stopped, attention, working, background, idle; a chat
+switching agents is working, or error once the switch failed.
+
+A chat is busy when its agent will resume on its own: a turn is in flight, or a
+background task is pending whose completion starts one. The pending tasks are
+one marker file each under `data/.apps/chat/background_tasks/<chat-id>/`,
+written by `system/scripts/run_in_background.py` and by Claude's Stop hook, and
+read through the `system/libs/chat_background_tasks` library (`background_tasks.py`
+here wraps it, and creates the directory's root at startup so the shell's avatar
+can watch it). A poller of its own reads each chat's directory, keyed by the
+agent the chat runs on, re-reads it when its entries change, and rechecks the
+pids of every chat with markers on each pass, so a killed runner returns its
+chat to idle within a second. In a chat whose transcript this app is tailing
+(one a page has shown, or that the app has sent to, interrupted or switched),
+the Claude watcher removes a Claude task's marker once the transcript's
+`<task-notification>` reports the task completed, failed or killed: a turn the
+user interrupts, or one that fails, runs no Stop hook, and the finished task
+would otherwise read as pending until the next Stop or Claude's exit, as it
+still does in a chat the app is not tailing. With no turn in flight the removal
+waits for the turn the notice starts and goes out with it, so the chat goes from
+`background` to `working` without reading idle in between; a notice that starts
+no turn (a task stopped from Claude's `/tasks`) ends the wait three poller passes
+later. A busy chat with no turn in flight
+is `background`: the rail draws a dashed ring that turns slowly, and the strip
+above the composer adds a line, "Waiting on N background tasks", that opens
+into one row per task. Each snapshot's `active_agent` carries `is_busy` and
+`background_tasks`; `GET /api/agents` carries each agent's `chat_id`,
+`is_busy` and its chat's `background_tasks` (the active agent's only), which is
+what `background_tasks.py list` and `is-busy` ask first. `is_busy` counts a turn
+in flight, which only this app knows: the script's fallback to the marker files
+sees the tasks alone. The listing is a fresh discovery by default;
+`?tracked=true` answers from the agent list this app already follows, with no
+discovery, and 503 until it has read it once. The poller is not the only reader:
+the recompute that sees a turn end reads its chat's markers before it publishes
+the end (the Stop hook writes them before mngr clears the `active` marker), so a
+turn that ends to wait reads `background` at once, never `idle` first. A turn
+whose final message is in the transcript while `active` is still down reads as
+closing: busy and `working`, with no activity on the strip, until the marker
+goes; the poller rechecks a closing turn on every pass, since that removal is
+the only sign of its end. The tasks
+are the chat's, so a handoff moves nothing: the successor reads the same
+directory. A switch stops the agent, which ends its tasks: the harness's own end
+unreported, while the runner reports how its command ended to the chat. The
+handoff prompt tells the successor which was which, and Claude Code itself tells
+a Claude that resumes after a restart (a rebind, or any other) which of its own
+tasks the restart stopped. A runner stopped before it reported (Imbue Studio
+ending a chat's commands, a restart) leaves a marker whose runner is dead: after
+the next message the app delivers to that chat it sends a background-task report
+naming those commands, which no report will ever cover, and removes their
+markers. The memory prioritizer treats a chat waiting
+on one of the harness's own tasks as mid-turn; one waiting only on runner
+commands ages as an idle chat does, since its runner outlives a shed of the
+agent's process and its report revives the chat.
 
 A chat is a sequence of agent transcripts run by one agent at a time
 (`docs/system/blueprint/chat-agent-split/`); its id is its first agent's id, a

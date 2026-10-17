@@ -30,6 +30,7 @@ members = [
     "browser",
     "caretaker",
     "chat",
+    "chat-background-tasks",
     "default-workspace-template",
     "env-converge",
     "getting-started",
@@ -672,6 +673,7 @@ version = "0.1.0"
 source = { editable = "system/apps/chat" }
 dependencies = [
     { name = "app-manifest" },
+    { name = "chat-background-tasks" },
     { name = "concurrency-group" },
     { name = "flask" },
     { name = "flask-sock" },
@@ -717,6 +719,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "app-manifest", editable = "system/libs/app_manifest" },
+    { name = "chat-background-tasks", editable = "system/libs/chat_background_tasks" },
     { name = "concurrency-group", git = "https://github.com/imbue-ai/mngr?subdirectory=libs%2Fconcurrency_group&rev=00e8184ff44bcb7a8d3f56eb7c8ff8a08be618e6" },
     { name = "flask", specifier = ">=3.0" },
     { name = "flask-sock", specifier = ">=0.7" },
@@ -758,6 +761,21 @@ dev = [
     { name = "system-interface", editable = "system/apps/system_interface" },
     { name = "ty", specifier = "==0.0.85" },
 ]
+
+[[package]]
+name = "chat-background-tasks"
+version = "0.1.0"
+source = { editable = "system/libs/chat_background_tasks" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "ty" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ty", specifier = "==0.0.85" }]
 
 [[package]]
 name = "click"
@@ -945,6 +963,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "bootstrap" },
+    { name = "chat-background-tasks" },
     { name = "env-converge" },
     { name = "github-sync" },
     { name = "host-backup" },
@@ -985,6 +1004,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bootstrap", editable = "system/libs/bootstrap" },
+    { name = "chat-background-tasks", editable = "system/libs/chat_background_tasks" },
     { name = "env-converge", editable = "system/services/env_converge" },
     { name = "github-sync", editable = "system/libs/github_sync" },
     { name = "host-backup", editable = "system/services/host_backup" },
@@ -3542,6 +3562,7 @@ version = "0.1.0"
 source = { editable = "system/apps/system_interface" }
 dependencies = [
     { name = "app-manifest" },
+    { name = "chat-background-tasks" },
     { name = "concurrency-group" },
     { name = "defusedxml" },
     { name = "flask" },
@@ -3578,6 +3599,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "app-manifest", editable = "system/libs/app_manifest" },
+    { name = "chat-background-tasks", editable = "system/libs/chat_background_tasks" },
     { name = "concurrency-group", git = "https://github.com/imbue-ai/mngr?subdirectory=libs%2Fconcurrency_group&rev=00e8184ff44bcb7a8d3f56eb7c8ff8a08be618e6" },
     { name = "defusedxml", specifier = ">=0.7" },
     { name = "flask", specifier = ">=3.1" },

@@ -98,6 +98,7 @@ _APP_BACKEND_PREFIX = "system/apps/system_interface/imbue/"
 _IMPORTED_SOURCE_PREFIXES = (
     _APP_BACKEND_PREFIX,
     "system/libs/app_manifest/",
+    "system/libs/chat_background_tasks/",
     "system/libs/workspace_layout/",
     "system/libs/workspace_themes/",
 )
@@ -117,6 +118,7 @@ _BACKEND_MANIFESTS = frozenset(
     {
         "system/apps/system_interface/pyproject.toml",
         "system/libs/app_manifest/pyproject.toml",
+        "system/libs/chat_background_tasks/pyproject.toml",
         "system/libs/workspace_layout/pyproject.toml",
         "system/libs/workspace_themes/pyproject.toml",
         "pyproject.toml",
