@@ -63,8 +63,9 @@ Built-in manifests:
 | `getting-started` | false | `getting-started` | `{launch = "open", mode = "focus"}`; also `launcher_rank = 5` | none; the shell synthesizes `open` at `/` | `getting-started --no-register --state-dir {scratch}/state` over `GETTING_STARTED_PORT = "{port:main}"` and `GETTING_STARTED_HOST = "{host}"` (unregistered: it neither re-points the live row nor opens the first-visit window), health `/api/health` |
 | `files` | false | `files` | `{launch = "new", mode = "new"}` | `new` ("New File Viewer" at `/home/user/workspace/`, param `path` optional) | the convention |
 | `browser` | false | `browser` | `{launch = "new", mode = "focus"}`; also `window_closed_path = "/api/window-closed"` | `new` ("New Browser" at `/new`, param `url` optional) | the convention |
+| `system-monitor` | false | `system-monitor` | `{launch = "open", mode = "focus"}`; also `launcher_rank = 50` | none; the shell synthesizes `open` at `/` | `SYSTEM_MONITOR_PORT = "{port:main}"` and `SYSTEM_MONITOR_HOST = "{host}"`, no copies (it stores nothing) |
 
-The chat, terminal, browser, and Getting Started declare `system = true`.
+The chat, terminal, browser, Getting Started, and Memory & disk declare `system = true`.
 
 Every built-in except the shell and the terminal's pty points `icon` at an `icon.svg` beside its manifest; those two are `internal` and have none.
 

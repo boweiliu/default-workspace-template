@@ -1,0 +1,55 @@
+"""Tests for the routes: the page with the shell script injected, the stats endpoint, the shell modules, and health."""
+
+from typing import Any
+
+import pytest
+from flask.testing import FlaskClient
+
+from system_monitor import memory, runner, stats
+
+
+@pytest.fixture
+def client() -> FlaskClient:
+    return runner.app.test_client()
+
+
+def test_the_page_is_served_with_the_shell_script_before_the_closing_body(
+    client: FlaskClient,
+) -> None:
+    response = client.get("/")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "<title>Memory &amp; disk</title>" in page
+    assert page.index(
+        'import { connectToShell } from "/_static/app_contract.js"'
+    ) < page.index("</body>")
+
+
+def test_the_stats_endpoint_answers_the_snapshot_uncached(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot: dict[str, Any] = {
+        "memory": {"total": 1, "available": 0, "used": 1},
+        "stops": [],
+    }
+    monkeypatch.setattr(runner, "SNAPSHOT", stats.SharedSnapshot(lambda: snapshot))
+    history = memory.MemoryHistory(
+        read=lambda: {"total": 4, "available": 1, "used": 3}, clock=lambda: 2.0
+    )
+    history.record()
+    monkeypatch.setattr(runner, "HISTORY", history)
+
+    response = client.get("/api/stats")
+
+    assert response.get_json() == {**snapshot, "history": [{"t": 2000, "v": 0.75}]}
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_only_the_two_shell_modules_are_served(client: FlaskClient) -> None:
+    assert client.get("/_static/runner.py").status_code == 404
+    assert client.get("/_static/..%2Frunner.py").status_code == 404
+
+
+def test_health_answers_ok(client: FlaskClient) -> None:
+    assert client.get("/health").get_json() == {"status": "ok"}

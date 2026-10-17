@@ -89,6 +89,14 @@ ENV_APPS_FILE = "MINDS_APPS_FILE"
 # which no longer routes. The random suffix is the one hostname component CT
 # never sees. Minted once per service and persisted (stable across re-share so
 # bookmarks/layouts keep working); see blueprint/random-service-labels/.
+#
+# A label is a strict RFC 1123 hostname label: a name's underscores become
+# hyphens. Browsers tolerate an underscore in a hostname, but ``java.net.URI``
+# (so every JDK-based HTTP client) refuses to parse it as a host, and Python's
+# ``ssl`` will not match a wildcard certificate against it. Labels minted
+# before this rule keep their underscore (a label never changes once
+# persisted), so readers map a label back to its name through the registry,
+# never by transforming the label.
 _LABEL_RANDOM_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 _LABEL_RANDOM_LENGTH = 8
 
@@ -105,15 +113,16 @@ MAX_DISPLAY_NAME_LENGTH = 64
 
 # Service-name rule: lowercase alphanumeric/underscore runs separated by
 # single hyphens (no uppercase, no leading/trailing/consecutive hyphens).
-# The registered name becomes the leading label of the service's origin
-# hostname (http://<name>.host-<hex>.localhost:8421/ locally; share
-# hostnames follow the same prefix rule on a longer base), so it must work
-# as a hostname label. Underscores are tolerated for legacy names --
-# ``system_interface`` predates this scheme and underscore labels resolve
-# fine in browsers -- but new apps should stick to kebab-case (the build-app
-# scaffold enforces the stricter rule; a drift test in forward_port_test.py
-# keeps that rule a subset of this one, and keeps the app_manifest library's
-# copy of this rule identical).
+# The registered name seeds the leading label of the service's origin
+# hostname: ``mint_service_label`` derives ``<name>-<rand>`` from it, served
+# at http://<name>-<rand>.host-<hex>.localhost:8421/ locally (share hostnames
+# follow the same prefix rule on a longer base), so the name must work as a
+# hostname label. Underscores are tolerated for legacy names --
+# ``system_interface`` predates this scheme; ``mint_service_label`` turns
+# them into hyphens in the origin label -- but new apps should stick to
+# kebab-case (the build-app scaffold enforces the stricter rule; a drift test
+# in forward_port_test.py keeps that rule a subset of this one, and keeps the
+# app_manifest library's copy of this rule identical).
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+(?:-[a-z0-9_]+)*$")
 
 # Workspace hostnames carry their coordinate as a ``host-<hex>`` label (and
@@ -323,11 +332,15 @@ def read_icon_file(path: Path) -> tuple[str | None, str | None]:
 
 
 def mint_service_label(name: str) -> str:
-    """Mint an unguessable ``<name>-<rand>`` origin label for a freshly-registered service."""
+    """Mint an unguessable ``<name>-<rand>`` origin label for a freshly-registered service.
+
+    The name's underscores become hyphens so the label is a valid hostname
+    label everywhere (``system_interface`` -> ``system-interface-<rand>``).
+    """
     suffix = "".join(
         secrets.choice(_LABEL_RANDOM_ALPHABET) for _ in range(_LABEL_RANDOM_LENGTH)
     )
-    return f"{name}-{suffix}"
+    return f"{name.replace('_', '-')}-{suffix}"
 
 
 def validate_display_name(value: str) -> str | None:
