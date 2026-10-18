@@ -22,6 +22,7 @@ from flask import Response
 from flask import request
 from flask import send_from_directory
 from loguru import logger
+from workspace_themes.flask_routes import register_workspace_theme_route
 
 from files_app.connections import SYNCED_FOLDERS
 from files_app.connections import list_connections
@@ -71,6 +72,7 @@ def create_app(
     synced_root: Path = SYNCED_FOLDERS,
 ) -> Flask:
     app = Flask(__name__, static_folder=None)
+    register_workspace_theme_route(app)
     # Absolute, as Flask would read a relative one from its own package rather than the working directory.
     static_directory = static_directory.resolve()
     local = LocalFiles(root)

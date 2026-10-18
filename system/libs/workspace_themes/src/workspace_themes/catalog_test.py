@@ -277,7 +277,7 @@ def test_an_app_manifest_that_is_not_utf8_is_left_out_of_the_catalog(
     )
     (apps / "files").mkdir()
     (apps / "files" / "app.toml").write_text(
-        'name = "files"\ndisplay_name = "File Viewer"\ninternal = true\n',
+        'name = "files"\ndisplay_name = "Files"\ninternal = true\n',
         encoding="utf-8",
     )
 

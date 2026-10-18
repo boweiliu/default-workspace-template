@@ -218,10 +218,10 @@ export function DesktopSettingsDialog(): m.Component<DesktopSettingsDialogAttrs>
     ]);
   }
 
-  /** A theme's picture in its tile: its own File Viewer icon, else its generic program icon (an icon a theme
-   *  derives is drawn in the page only for the theme being worn); the File Viewer's own icon for a theme that draws
+  /** A theme's picture in its tile: its own Files icon, else its generic program icon (an icon a theme
+   *  derives is drawn in the page only for the theme being worn); Files' own icon for a theme that draws
    *  none (the standard look); and the desktop's own squiggle for an unavailable theme, whose files are not served,
-   *  or when there is no File Viewer to show. */
+   *  or when there is no Files to show. */
   function themePicture(record: ThemeRecord, previewApp: Pick<AppRecord, "name" | "icon"> | null): m.Children {
     const icons = record.available ? record.icons : null;
     const url = icons === null ? null : (icons.apps[THEME_PREVIEW_APP] ?? icons.fallback_url);

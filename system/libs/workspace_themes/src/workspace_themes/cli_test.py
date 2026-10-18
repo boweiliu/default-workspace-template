@@ -15,7 +15,7 @@ from workspace_themes.testing import (
     write_test_theme,
 )
 
-_APP_TOML = 'name = "files"\ndisplay_name = "File Viewer"\nicon = "icon.svg"\n'
+_APP_TOML = 'name = "files"\ndisplay_name = "Files"\nicon = "icon.svg"\n'
 
 
 def _workspace(tmp_path: Path) -> Path:

@@ -1167,6 +1167,7 @@ dependencies = [
     { name = "loguru" },
     { name = "pydantic" },
     { name = "werkzeug" },
+    { name = "workspace-themes" },
 ]
 
 [package.dev-dependencies]
@@ -1187,6 +1188,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "werkzeug", specifier = ">=3.0" },
+    { name = "workspace-themes", editable = "system/libs/workspace_themes" },
 ]
 
 [package.metadata.requires-dev]
