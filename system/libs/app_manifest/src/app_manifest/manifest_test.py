@@ -32,7 +32,7 @@ def _launch_path_params() -> list[dict[str, object]]:
 def _launch_path_data() -> dict[str, object]:
     return {
         "id": "new",
-        "label": "New File Viewer",
+        "label": "Files",
         "path": "/",
         "params": _launch_path_params(),
         "text_param": "path",
@@ -42,7 +42,7 @@ def _launch_path_data() -> dict[str, object]:
 def _full_manifest_data() -> dict[str, object]:
     return {
         "name": "files",
-        "display_name": "File Viewer",
+        "display_name": "Files",
         "icon": "icon.svg",
         "critical": False,
         "stop_when_no_windows": True,
@@ -61,7 +61,7 @@ def test_full_manifest_round_trips_every_field() -> None:
     manifest = AppManifest.model_validate(_full_manifest_data())
 
     assert manifest.name == "files"
-    assert manifest.display_name == "File Viewer"
+    assert manifest.display_name == "Files"
     assert manifest.icon == "icon.svg"
     assert manifest.priority == "files"
     assert manifest.program == "files"
