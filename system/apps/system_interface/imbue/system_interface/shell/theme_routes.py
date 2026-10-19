@@ -2,9 +2,10 @@
 themes with the default it wears, the default's route, each theme's icons, and the theme files every app serves
 from its own origin, which the shell serves for its own pages too."""
 
+from app_schema.routes import model_response
+from app_schema.routes import parse_request_body
 from flask import Flask
 from flask import abort
-from flask import jsonify
 from flask import send_file
 from flask.typing import ResponseReturnValue
 from loguru import logger
@@ -19,10 +20,9 @@ from workspace_themes.serving import theme_file_security_headers
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.system_interface.app_context import get_state
 from imbue.system_interface.shell.errors import InvalidShellValueError
-from imbue.system_interface.shell.route_helpers import parse_request_body
 from imbue.system_interface.shell.state import ShellState
 from imbue.system_interface.shell.theme_wire import THEME_ICON_ROUTE
-from imbue.system_interface.shell.theme_wire import theme_catalog_wire_json
+from imbue.system_interface.shell.theme_wire import theme_catalog_wire
 
 
 class ThemeChoiceRequest(FrozenModel):
@@ -46,21 +46,30 @@ def require_available_theme(catalog: ThemeCatalog, theme: ThemeId | None) -> The
     return theme
 
 
+class DefaultThemeResponse(FrozenModel):
+    """What setting the workspace's default theme answers."""
+
+    default: str | None = Field(description="The workspace's default theme now; null wears the standard one")
+
+
 def list_themes() -> ResponseReturnValue:
+    """The workspace's themes, each with what the picker shows and where its icons are, and the default it wears."""
     shell = _shell()
-    return jsonify(theme_catalog_wire_json(shell.themes.load(), shell.desktops.read_theme_choices()))
+    return model_response(theme_catalog_wire(shell.themes.load(), shell.desktops.read_theme_choices()))
 
 
 def set_default_theme() -> ResponseReturnValue:
+    """Set the theme every desktop that chose none wears; null wears the standard one."""
     body = parse_request_body(ThemeChoiceRequest)
     shell = _shell()
     catalog = shell.themes.load()
     choices = shell.desktops.set_default_theme(require_available_theme(catalog, body.theme))
     shell.broadcast_themes_changed()
-    return jsonify({"default": None if choices.default is None else str(choices.default)})
+    return model_response(DefaultThemeResponse(default=None if choices.default is None else str(choices.default)))
 
 
 def serve_theme_icon(theme_id: str, file_name: str) -> ResponseReturnValue:
+    """One of a theme's icons, by the URL the theme catalog gives it."""
     try:
         path = resolve_theme_icon(_shell().themes.load(), theme_id, file_name)
     except ThemeFileNotFoundError as error:

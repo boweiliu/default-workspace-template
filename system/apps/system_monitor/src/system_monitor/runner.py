@@ -23,10 +23,19 @@ import os
 from pathlib import Path
 
 from app_manifest.registry import SHELL_MODULE_PATHS
-from flask import Flask, Response, abort, jsonify, send_file
+from app_schema.api_schema import (
+    DEFAULT_API_SCHEMA_PATH,
+    RouteModels,
+    RouteTable,
+    SchemalessRoute,
+    register_api_schema_route,
+)
+from app_schema.routes import model_response
+from flask import Flask, Response, abort, send_file
 from werkzeug.serving import run_simple
 
 from system_monitor import memory, stats
+from system_monitor.data_types import HealthResponse, StatsResponse
 
 # Listen address. Defaults to this app's assigned port (below 8080, the first
 # port the build-app scaffold hands a user app) but is overridable via the env
@@ -34,6 +43,12 @@ from system_monitor import memory, stats
 # the live one (see the update-app skill).
 HOST = os.environ.get("SYSTEM_MONITOR_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SYSTEM_MONITOR_PORT", "8040"))
+
+# What the manifest says the app is, repeated here for the API document (the test checks they agree).
+APP_DISPLAY_NAME = "Memory & disk"
+APP_DESCRIPTION = (
+    "How much memory and disk the workspace is using, what is holding the memory, and what the memory guard stopped."
+)
 
 # The browser-side modules the workspace shell builds and every app serves from
 # its own origin, by file name under /_static/: the app contract (how a page
@@ -69,11 +84,24 @@ SNAPSHOT = stats.SharedSnapshot(stats.snapshot)
 # while a window is hidden or reloaded. Sent fresh with every response, outside the snapshot.
 HISTORY = memory.MemoryHistory()
 
+# What every route exchanges, which the app's API document publishes and every answer is checked against.
+ROUTE_TABLE: RouteTable = {
+    ("GET", "/"): SchemalessRoute(reason="the Memory & disk page"),
+    ("GET", "/api/stats"): RouteModels(response_model=StatsResponse),
+    ("GET", "/_static/{basename}"): SchemalessRoute(reason="a browser-side module the shell builds"),
+    ("GET", "/health"): RouteModels(response_model=HealthResponse),
+}
+
 app = Flask("system_monitor", static_folder=None)
+# The app describes its own API: an OpenAPI document of every route below, at the manifest's api_schema_path.
+register_api_schema_route(
+    app, DEFAULT_API_SCHEMA_PATH, title=APP_DISPLAY_NAME, description=APP_DESCRIPTION, route_table=ROUTE_TABLE
+)
 
 
 @app.route("/")
 def index() -> Response:
+    """The Memory & disk page."""
     page = (STATIC_DIR / "index.html").read_text()
     return Response(
         page.replace("</body>", SHELL_PAGE_SCRIPT + "\n</body>"), mimetype="text/html"
@@ -82,13 +110,16 @@ def index() -> Response:
 
 @app.route("/api/stats")
 def get_stats() -> Response:
-    response = jsonify({**SNAPSHOT.get(), "history": HISTORY.samples()})
+    """The latest reading: memory and disk in use, what is using the memory, the memory graph's last 10 minutes, and
+    what the memory guard stopped in the last 24 hours."""
+    response = model_response(StatsResponse.model_validate({**SNAPSHOT.get(), "history": HISTORY.samples()}))
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
 @app.route("/_static/<basename>")
 def shell_module(basename: str) -> Response:
+    """One of the two browser-side modules the workspace shell builds and every app serves from its own origin."""
     # The two shell-built modules and nothing else: a name that is not one of
     # them is a 404, so this route can never read outside that directory.
     module_path = SHELL_MODULES.get(basename)
@@ -100,7 +131,8 @@ def shell_module(basename: str) -> Response:
 
 @app.route("/health")
 def health() -> Response:
-    return Response('{"status": "ok"}', mimetype="application/json")
+    """Whether the app is up."""
+    return model_response(HealthResponse(status="ok"))
 
 
 def main() -> None:

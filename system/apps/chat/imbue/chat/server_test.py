@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import pytest
+from app_schema.testing import assert_api_schema_describes_app
 from app_manifest.testing import assert_document_policy_admits_page
 from chat_background_tasks.listing import chats_from_agents_payload
 from flask import Flask
@@ -4896,3 +4897,7 @@ def test_a_compaction_that_finished_while_no_watcher_ran_ends_when_the_chat_is_o
         assert agent_info.id not in manager._compaction_pending_by_agent
     finally:
         state.shutdown()
+
+
+def test_the_chat_describes_its_api_the_way_its_manifest_says(client: FlaskClient) -> None:
+    assert_api_schema_describes_app(client, Path(__file__).resolve().parents[2] / "app.toml")

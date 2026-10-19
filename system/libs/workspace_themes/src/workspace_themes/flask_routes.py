@@ -3,7 +3,8 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Final, assert_never
 
-from flask import Flask, Response, abort, request, send_file
+from app_schema.api_schema import RouteTable, SchemalessRoute
+from flask import Blueprint, Flask, Response, abort, request, send_file
 from loguru import logger
 
 from workspace_themes.catalog import CachingThemeCatalogLoader
@@ -23,6 +24,13 @@ from workspace_themes.serving import (
 # Every theme answer is revalidated on each use, so an edited theme shows on the next load (section 5.1).
 _CACHE_CONTROL: Final[str] = "no-cache"
 _ENDPOINT: Final[str] = "workspace_theme_static"
+
+# The route-table entry for ``register_theme_static_route``'s route, which every app serving it merges into its own.
+THEME_STATIC_ROUTE_TABLE: Final[RouteTable] = {
+    ("GET", f"{THEME_STATIC_ROUTE_PREFIX}{{asset_path}}"): SchemalessRoute(
+        reason="a workspace theme's bundle, or a file the bundle loads"
+    ),
+}
 _ETAG_LENGTH: Final[int] = 16
 
 
@@ -64,18 +72,23 @@ def serve_theme_static(
 
 
 def register_theme_static_route(
-    application: Flask, load_catalog: Callable[[], ThemeCatalog]
+    application: Flask | Blueprint, load_catalog: Callable[[], ThemeCatalog]
 ) -> None:
     """Serve ``/_static/themes/<path>`` from this app's own origin: the theme bundles and the files they load."""
+
+    def theme_static(asset_path: str) -> Response:
+        """A workspace theme's bundle, or a file the bundle loads, served from this app's own origin."""
+        return serve_theme_static(load_catalog, asset_path)
+
     application.add_url_rule(
         f"{THEME_STATIC_ROUTE_PREFIX}<path:asset_path>",
         endpoint=_ENDPOINT,
-        view_func=lambda asset_path: serve_theme_static(load_catalog, asset_path),
+        view_func=theme_static,
         methods=["GET"],
     )
 
 
-def register_workspace_theme_route(application: Flask) -> None:
+def register_workspace_theme_route(application: Flask | Blueprint) -> None:
     """Serve the workspace's themes from this app's origin, reading them from the working directory, which is the
     repo root every supervised app runs from."""
     loader = CachingThemeCatalogLoader(repo_root=Path.cwd())
