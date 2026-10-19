@@ -317,7 +317,9 @@ describe("the combo card", () => {
   it("names the account a chat with no agent yet starts on, and lets its model be chosen before it runs", () => {
     agentState.agent = null;
     agentState.provisional = { account_id: "", phase: "creating", model_pick: null };
-    catalogState.catalog = catalogOf({ options: [OPUS, { ...OPUS, id: "sonnet", label: "Sonnet" }] });
+    catalogState.catalog = catalogOf({
+      options: [OPUS, { ...OPUS, id: "sonnet", label: "Sonnet", efforts: LOW_MEDIUM_HIGH, default_effort: "medium" }],
+    });
     launchChoices.length = 0;
     render();
     expect(ROOT().querySelector(".model-selector-provisional")?.textContent).toBe("Anthropic");
@@ -326,7 +328,8 @@ describe("the combo card", () => {
     click('[data-menu-row="model"]');
     clickSubmenuRow("Sonnet");
 
-    expect(launchChoices).toEqual([["a1", "acct-1", { model_id: "sonnet", effort: null, fast: false }]]);
+    // At the model's own starting effort: a harness refuses a model that has efforts picked without one.
+    expect(launchChoices).toEqual([["a1", "acct-1", { model_id: "sonnet", effort: "medium", fast: false }]]);
   });
 
   it("keeps the plain chip for a chat whose create failed", () => {

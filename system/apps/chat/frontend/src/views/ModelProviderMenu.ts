@@ -900,7 +900,7 @@ export function ModelProviderMenu(): m.Component<ModelProviderMenuAttrs> {
             key: `model-${option.id}`,
             label: option.label,
             trailing: option.id === picked?.id ? m.trust(icon("check", { size: 14 })) : undefined,
-            onSelect: () => choose(account.id, { model_id: option.id, effort: null, fast: false }),
+            onSelect: () => choose(account.id, { model_id: option.id, effort: startingEffort(option), fast: false }),
           })),
       },
     ];
