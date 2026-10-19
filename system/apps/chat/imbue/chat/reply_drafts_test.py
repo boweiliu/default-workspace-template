@@ -48,13 +48,20 @@ def test_a_changed_draft_is_sent_once_on_its_chats_stream_and_an_unchanged_one_n
     assert reader.captured == ["pane of agent-9"] * 3
 
 
-def test_a_cleared_draft_is_sent_but_no_draft_from_the_start_sends_nothing() -> None:
-    empty = ReplyDraft(after_event_id="event-1", text="")
-    reader = _ScriptedDraftReader([empty, ReplyDraft(after_event_id="event-1", text="Hi"), empty])
+def test_a_cleared_draft_is_sent_once_and_no_draft_from_the_start_sends_nothing() -> None:
+    reader = _ScriptedDraftReader(
+        [
+            ReplyDraft(after_event_id="event-1", text=""),
+            ReplyDraft(after_event_id="event-1", text="Hi"),
+            ReplyDraft(after_event_id="event-1", text=""),
+            # The turn ended: no draft, and no event to follow either.
+            ReplyDraft(after_event_id="", text=""),
+        ]
+    )
     sent: list[tuple[str, dict[str, Any]]] = []
     publisher = _publisher([("chat-7", "agent-9", reader)], sent)
 
-    for _ in range(3):
+    for _ in range(4):
         publisher.publish_once()
 
     assert [frame["text"] for _, frame in sent] == ["Hi", ""]

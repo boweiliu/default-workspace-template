@@ -25,6 +25,9 @@ import re
 from collections.abc import Sequence
 from typing import Final
 
+from pydantic import PrivateAttr
+
+from imbue.imbue_common.mutable_model import MutableModel
 from imbue.imbue_common.pure import pure
 from imbue.mngr_claude.resources.stream_snapshot import StreamBufferState
 from imbue.mngr_claude.resources.stream_snapshot import convert_block_to_markdown
@@ -112,16 +115,15 @@ def unwrap_soft_wrapped_rows(rows: Sequence[str], pane_width: int) -> list[str]:
     return joined
 
 
-class ClaudeReplyDraft:
+class ClaudeReplyDraft(MutableModel):
     """The stitched in-progress reply of one Claude agent, fed one pane capture at a time.
 
     Not thread-safe: one poller owns it.
     """
 
-    __slots__ = ("_buffer",)
+    model_config = {"arbitrary_types_allowed": True}
 
-    def __init__(self) -> None:
-        self._buffer = StreamBufferState()
+    _buffer: StreamBufferState = PrivateAttr(default_factory=StreamBufferState)
 
     def reset(self) -> None:
         """Forget the reply read so far (the turn ended)."""

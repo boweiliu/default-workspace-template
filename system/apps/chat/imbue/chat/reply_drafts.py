@@ -19,11 +19,14 @@ from typing import Final
 from typing import Protocol
 
 from loguru import logger
+from pydantic import Field
+from pydantic import PrivateAttr
 
 from imbue.chat.harnesses.session_watcher import CapturePaneCallback
 from imbue.chat.harnesses.session_watcher import ReplyDraft
 from imbue.concurrency_group.errors import ProcessError
 from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
+from imbue.imbue_common.mutable_model import MutableModel
 
 REPLY_DRAFT_EVENT_TYPE: Final[str] = "assistant_draft"
 
@@ -73,22 +76,21 @@ def reply_draft_frame(agent_id: str, draft: ReplyDraft) -> dict[str, Any]:
     }
 
 
-class ReplyDraftPublisher:
+class ReplyDraftPublisher(MutableModel):
     """Reads the drafts of the streamed chats on one thread and broadcasts what changed."""
 
-    def __init__(
-        self,
-        list_streamed_watchers: ListStreamedWatchers,
-        capture_agent_pane: CaptureAgentPane,
-        broadcast_to_chat: BroadcastToChat,
-    ) -> None:
-        self._list_streamed_watchers = list_streamed_watchers
-        self._capture_agent_pane = capture_agent_pane
-        self._broadcast_to_chat = broadcast_to_chat
-        # The last draft sent per agent, so an unchanged draft sends nothing.
-        self._published_by_agent: dict[str, ReplyDraft] = {}
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
+    model_config = {"arbitrary_types_allowed": True}
+
+    list_streamed_watchers: ListStreamedWatchers = Field(
+        frozen=True, description="The watchers of the agents whose chats a page streams"
+    )
+    capture_agent_pane: CaptureAgentPane = Field(frozen=True, description="Captures one agent's pane by agent id")
+    broadcast_to_chat: BroadcastToChat = Field(frozen=True, description="Sends one frame on a chat's streams")
+
+    # The last draft sent per agent, so an unchanged draft sends nothing.
+    _published_by_agent: dict[str, ReplyDraft] = PrivateAttr(default_factory=dict)
+    _stop_event: threading.Event = PrivateAttr(default_factory=threading.Event)
+    _thread: threading.Thread | None = PrivateAttr(default=None)
 
     def start(self) -> None:
         """Begin polling on a daemon thread. Idempotent."""
@@ -106,22 +108,23 @@ class ReplyDraftPublisher:
     def publish_once(self) -> None:
         """One pass: read each streamed agent's draft and broadcast the ones that changed."""
         seen_agent_ids: set[str] = set()
-        for chat_id, agent_id, watcher in self._list_streamed_watchers():
+        for chat_id, agent_id, watcher in self.list_streamed_watchers():
             seen_agent_ids.add(agent_id)
             draft = watcher.read_reply_draft(self._bind_capture(agent_id))
             if draft is None:
                 continue
             previous = self._published_by_agent.get(agent_id)
-            if previous == draft or (previous is None and draft.text == ""):
+            is_already_clear = draft.text == "" and (previous is None or previous.text == "")
+            if previous == draft or is_already_clear:
                 continue
             self._published_by_agent[agent_id] = draft
-            self._broadcast_to_chat(chat_id, reply_draft_frame(agent_id, draft))
+            self.broadcast_to_chat(chat_id, reply_draft_frame(agent_id, draft))
         # A chat no page streams any more starts from nothing when one opens it again.
         for agent_id in set(self._published_by_agent) - seen_agent_ids:
             del self._published_by_agent[agent_id]
 
     def _bind_capture(self, agent_id: str) -> CapturePaneCallback:
-        return lambda: self._capture_agent_pane(agent_id)
+        return lambda: self.capture_agent_pane(agent_id)
 
     def _run(self) -> None:
         while not self._stop_event.wait(timeout=REPLY_DRAFT_POLL_INTERVAL_SECONDS):
