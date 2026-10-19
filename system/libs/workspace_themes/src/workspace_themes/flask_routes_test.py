@@ -169,6 +169,12 @@ def test_the_injected_routes_serve_the_layer_order_the_kit_at_the_app_s_level_an
     assert notes_kit.mimetype == "text/javascript"
     assert notes_kit.data == b'self.__WORKSPACE_THEME_LEVEL__ = "medium";\nwearKit();\n'
     assert browser_kit.data == b""
+    assert (
+        client.get(
+            "/__workspace_theme/layers.css", headers={"X-Workspace-App": "browser"}
+        ).data
+        == b""
+    )
     assert b":is(textarea):not([class]):not([style])" in base.data
     assert b"base.css?level=heavy" in bundle.data
     assert layers.headers["X-Content-Type-Options"] == "nosniff"
