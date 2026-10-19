@@ -11,3 +11,5 @@ New library and CLI, `workspace-themes`, for workspace themes (`docs/system/blue
 - `scripts/vendor-css-library.mjs` adapts a CSS library (system.css, win95.css, ...) onto the contract's parts from a pinned, digest-checked source; it refuses two library assets with one file name, and never reads text inside an attribute selector or string as a class.
 
 - `workspace-themes icon missing [<id>...]` lists, for every theme with icons of its own, the apps it has no icon for (naming the folder too when two folders share an id), and exits 1 when there are any. A theme that keeps the standard icons has none to draw.
+
+- When it sends a theme's style file, the server gives each rule for the `button`, `field`, or `select` part a second selector for the bare `<button>`, text `<input>`, `<textarea>`, or `<select>` of a page built on the page kit (`:root[data-page-kit]`), at the element's own weight, so such a page wears the theme without marking its controls and an app's own class rules still win.

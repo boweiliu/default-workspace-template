@@ -8,7 +8,11 @@
 import "./workspace_theme.css";
 import { followShellTheme } from "../app_contract";
 import { STANDARD_THEME_ID } from "../themes/themeBoot";
+import { PAGE_KIT_ROOT_ATTRIBUTE } from "../themes/parts";
 import { rememberedTheme, wearTheme, wearThemeFromMessage } from "../themes/themeClient";
+
+// Marks the page as built on the kit, so a theme dresses its bare controls as their parts (section 5.3).
+document.documentElement.setAttribute(PAGE_KIT_ROOT_ATTRIBUTE, "");
 
 const remembered = rememberedTheme();
 // Put on while <head> is still being read, so holding the first frame until it loads costs no flash.

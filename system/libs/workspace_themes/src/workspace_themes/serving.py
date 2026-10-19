@@ -1,4 +1,6 @@
+import itertools
 import posixpath
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Final
@@ -13,8 +15,11 @@ from tinycss2 import ast
 from tinycss2.serializer import serialize_string_value, serialize_url
 
 from workspace_themes.contract import (
+    BARE_CONTROLS_BY_PART,
     BUNDLE_FILE_NAME,
     FALLBACK_ICON_STEM,
+    GROUPING_AT_RULES,
+    PAGE_KIT_ROOT_ATTRIBUTE,
     SERVED_FILE_SUFFIXES,
     STYLE_FILE_SUFFIX,
     URL_FUNCTION_NAMES,
@@ -141,15 +146,94 @@ def _absolutize_custom_property_urls(
     return is_changed
 
 
+_PART_ATTRIBUTE_SELECTOR: Final[re.Pattern[str]] = re.compile(
+    r"\[\s*data-part\s*=\s*([\"']?)([A-Za-z0-9._-]+)\1\s*\]"
+)
+# What a bare control's selector adds: only on a page-kit page, and only where the element is no part of its own.
+_BARE_CONTROL_GUARD: Final[str] = (
+    f":where(:root[{PAGE_KIT_ROOT_ATTRIBUTE}] *):where(:not([data-part]))"
+)
+
+
+@pure
+def _bare_control_selectors(selector: str) -> list[str]:
+    """The selector again for each bare control that takes the parts it names; none when it names no such part."""
+    pieces: list[tuple[str, ...]] = []
+    end = 0
+    is_naming_a_control = False
+    for match in _PART_ATTRIBUTE_SELECTOR.finditer(selector):
+        pieces.append((selector[end : match.start()],))
+        controls = BARE_CONTROLS_BY_PART.get(match.group(2))
+        if controls is None:
+            pieces.append((match.group(0),))
+        else:
+            pieces.append(
+                tuple(f"{control}{_BARE_CONTROL_GUARD}" for control in controls)
+            )
+            is_naming_a_control = True
+        end = match.end()
+    if not is_naming_a_control:
+        return []
+    pieces.append((selector[end:],))
+    return ["".join(combination) for combination in itertools.product(*pieces)]
+
+
+def _split_selector_list(prelude: Sequence[ast.Node]) -> list[str]:
+    selectors: list[list[ast.Node]] = [[]]
+    for token in prelude:
+        if isinstance(token, ast.LiteralToken) and token.value == ",":
+            selectors.append([])
+        else:
+            selectors[-1].append(token)
+    return [tinycss2.serialize(selector).strip() for selector in selectors]
+
+
+def _add_bare_control_selectors(rules: Sequence[ast.Node]) -> bool:
+    """Give each rule that styles a control part its bare controls' selectors too; whether any rule changed."""
+    is_changed = False
+    for rule in rules:
+        if isinstance(rule, ast.QualifiedRule):
+            selectors = _split_selector_list(rule.prelude)
+            extra = [
+                bare
+                for selector in selectors
+                for bare in _bare_control_selectors(selector)
+            ]
+            if extra:
+                rule.prelude = tinycss2.parse_component_value_list(
+                    ", ".join([*selectors, *extra]) + " "
+                )
+                is_changed = True
+        elif (
+            isinstance(rule, ast.AtRule)
+            and rule.lower_at_keyword in GROUPING_AT_RULES
+            and rule.content is not None
+        ):
+            nested = tinycss2.parse_rule_list(rule.content)
+            if _add_bare_control_selectors(nested):
+                rule.content = tinycss2.parse_component_value_list(
+                    tinycss2.serialize(nested)
+                )
+                is_changed = True
+        else:
+            continue
+    return is_changed
+
+
 def style_text_to_serve(css_text: str, theme_id: str, file_directory: str) -> str:
-    """A theme's style file as it is sent: a relative URL in a custom property's value made absolute.
+    """A theme's style file as it is sent: relative URLs in custom properties made absolute, and bare controls styled.
 
     A URL in a custom property is resolved where var() puts it, which may be a page's own style (the desktop's
     wallpaper is), so a URL written relative to the style file would be read against the page instead. Every other
     URL is left as written, since the browser resolves it against the style file.
+
+    A rule for the button, field, or select part also takes the bare `<button>`, text `<input>`, `<textarea>`, or
+    `<select>` of a page built on the page kit, so such a page wears the theme without marking its controls.
     """
     rules = tinycss2.parse_stylesheet(css_text)
-    if not _absolutize_custom_property_urls(rules, theme_id, file_directory):
+    is_url_changed = _absolutize_custom_property_urls(rules, theme_id, file_directory)
+    is_selector_changed = _add_bare_control_selectors(rules)
+    if not (is_url_changed or is_selector_changed):
         return css_text
     return tinycss2.serialize(rules)
 

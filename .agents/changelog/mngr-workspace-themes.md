@@ -4,7 +4,7 @@ Skills for workspace themes.
 
 - New `make-theme-icon` skill: draws an app's icon for a theme with whatever is available -- the harness's image tool, Retro Diffusion, any litellm image model, or a pixel grid or SVG the agent writes itself -- then fits, checks, and installs it.
 
-- `build-app`: new apps are scaffolded to wear the workspace's theme (the page kit in the page's head, the theme route, and `[theming] mode = "tokens"`), and `references/theming.md` says how to build a page from the shared parts and tokens, check it under every theme, and make its theme icons. The default fonts in `frontend-choices.md` are now the design tokens.
+- `build-app`: new apps are scaffolded to wear the workspace's theme (the page kit in the page's head, the theme route, and `[theming] mode = "tokens"`), and `references/theming.md` says how to build a page from plain controls, the kit's parts, and the tokens, and check it under every theme; plain controls wear the theme with no marking. The default fonts in `frontend-choices.md` are now the design tokens.
 
 - Building an app draws no theme icons: under each theme with icons of its own, an app shows an icon derived from its own until the user asks for one drawn in the theme's style (`make-theme-icon`). An agent drawing icons in a checkout of its own (a background worker) installs and checks them against the live workspace (`--repo-root /home/user/workspace`), since its own `data/` is not the one the shell reads.
 

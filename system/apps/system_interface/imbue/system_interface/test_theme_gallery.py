@@ -7,12 +7,14 @@ the app page laid under a live window shows through; and the desktop wears the w
 
 import shutil
 import threading
+from collections.abc import Callable
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
 import pytest
 from playwright.sync_api import Page
+from playwright.sync_api import Route
 from workspace_themes.contract import BUILTIN_THEMES_DIRECTORY
 
 from imbue.mngr.utils.polling import wait_for
@@ -131,3 +133,69 @@ def test_the_desktop_wears_the_workspace_default_theme(themed_shell: str, page: 
             return desktop !== null && getComputedStyle(desktop).backgroundColor === "rgb(58, 110, 165)";
         }"""
     )
+
+
+_PROBE_CONTROLS: Final[str] = (
+    '<button id="bare">Go</button><button id="marked" data-part="button">Go</button>'
+    '<input id="bare-field"><input id="marked-field" data-part="field">'
+)
+_KIT_PROBE_PAGE: Final[str] = (
+    '<!doctype html><html><head><link rel="stylesheet" href="/_static/workspace_theme.css">'
+    '<script src="/_static/workspace_theme.js"></script></head>'
+    f"<body>{_PROBE_CONTROLS}</body></html>"
+)
+_NO_KIT_PROBE_PAGE: Final[str] = (
+    '<!doctype html><html><head><link rel="stylesheet" href="/_static/themes/windows-2000/theme.css"></head>'
+    f"<body>{_PROBE_CONTROLS}</body></html>"
+)
+_DRESSED_PROPERTIES: Final[tuple[str, ...]] = (
+    "borderTopColor",
+    "borderTopWidth",
+    "backgroundColor",
+    "boxShadow",
+    "fontFamily",
+    "paddingLeft",
+)
+
+
+def _serve_built_kit_file(kit_file: str) -> Callable[[Route], None]:
+    return lambda route: route.fulfill(path=_STATIC_DIRECTORY / "_static" / kit_file)
+
+
+def _dress_of(page: Page, element_id: str) -> dict[str, str]:
+    return page.evaluate(
+        "([id, properties]) => Object.fromEntries("
+        "properties.map((name) => [name, getComputedStyle(document.getElementById(id))[name]]))",
+        [element_id, list(_DRESSED_PROPERTIES)],
+    )
+
+
+def test_a_page_kit_page_dresses_its_bare_controls_as_their_parts_and_no_other_page_does(
+    themed_shell: str, page: Page
+) -> None:
+    """A plain page that loads the page kit wears the theme on its bare <button> and <input> as on marked ones; the
+    same theme stylesheet on a page without the kit (as on a built-in app) leaves bare controls alone."""
+    page.add_init_script(
+        "window.localStorage.setItem('workspace-theme', JSON.stringify({id: 'windows-2000', revision: ''}))"
+    )
+    page.route(
+        f"{themed_shell}/kit-probe",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=_KIT_PROBE_PAGE),
+    )
+    # The kit is the shell's build, which every plain app serves at /_static/ from its own origin; the shell does not.
+    for kit_file in ("workspace_theme.css", "workspace_theme.js"):
+        page.route(f"{themed_shell}/_static/{kit_file}", _serve_built_kit_file(kit_file))
+    page.route(
+        f"{themed_shell}/no-kit-probe",
+        lambda route: route.fulfill(status=200, content_type="text/html", body=_NO_KIT_PROBE_PAGE),
+    )
+    is_dressed = "() => getComputedStyle(document.getElementById('marked')).fontFamily.includes('Tahoma')"
+
+    page.goto(f"{themed_shell}/kit-probe")
+    page.wait_for_function(is_dressed)
+    assert _dress_of(page, "bare") == _dress_of(page, "marked")
+    assert _dress_of(page, "bare-field") == _dress_of(page, "marked-field")
+
+    page.goto(f"{themed_shell}/no-kit-probe")
+    page.wait_for_function(is_dressed)
+    assert _dress_of(page, "bare") != _dress_of(page, "marked")

@@ -35,13 +35,14 @@ the first paint, and follows the shell when the user changes theme. Keep the sty
 `<head>`, and the script after your own styles: the theme's stylesheet goes in where the script
 runs, and it must come after every style of the page's to win over them.
 
-Then build every control from a part, and every color, font, radius, and shadow from a token:
+Then use plain controls, and take every color, font, radius, and shadow from a token:
 
-- Buttons: `<button data-part="button" data-variant="primary" data-shape="text">` (`primary`,
-  `secondary`, `ghost`, `destructive`; no variant is a plain button). A button that is only an
+- Buttons: a plain `<button>` wears the theme's push button as it is. Add
+  `data-variant="primary"` (or `ghost`, `destructive`) for emphasis; a button that is only an
   icon (a close, a trash can) is `data-shape="icon"`, which themes draw as a bare glyph rather
   than a push button.
-- Text fields and text areas: `data-part="field"`.
+- Text fields, text areas, and drop-downs: a plain text `<input>`, `<textarea>`, or `<select>`
+  wears the theme as it is.
 - A card that opens something: `data-part="tile"`. A selectable row: `data-part="list-row"`,
   with `aria-current="true"` on the current one. A small label: `data-part="badge"`.
 - Colors: `var(--c-bg)`, `var(--c-surface)`, `var(--c-text-primary)`,

@@ -2,6 +2,7 @@
 # checks a theme against it. The frontend's copy of the parts list is system/libs/workspace_ui/src/themes/parts.ts;
 # the shell's theme_contract_test.py keeps the two, and the color tokens here and in base.css, equal.
 
+from collections.abc import Mapping
 from typing import Final
 
 from workspace_themes.primitives import ChromeSlot, ThemeId, TitleAlign
@@ -225,6 +226,22 @@ ALLOWED_AT_RULES: Final[frozenset[str]] = frozenset(
 )
 # The at-rules whose block holds further rules rather than declarations or keyframes.
 GROUPING_AT_RULES: Final[frozenset[str]] = frozenset({"media", "supports", "container"})
+
+# The attribute the page kit's script sets on <html>: a page built as plain HTML, whose bare controls take their
+# parts' styles (section 5.3).
+PAGE_KIT_ROOT_ATTRIBUTE: Final[str] = "data-page-kit"
+# The bare elements on a page-kit page that take each part's styles, as selectors of zero specificity beyond the
+# element itself: an app's own class rules still win over the theme's, and a widget's own controls keep their look
+# wherever its stylesheet says otherwise.
+_TEXT_INPUT_TYPES: Final[str] = (
+    '[type="text"], [type="search"], [type="email"], [type="url"], [type="password"], [type="number"], '
+    '[type="tel"], :not([type])'
+)
+BARE_CONTROLS_BY_PART: Final[Mapping[str, tuple[str, ...]]] = {
+    "button": (":is(button)",),
+    "field": (f":is(input):where({_TEXT_INPUT_TYPES})", ":is(textarea)"),
+    "select": (":is(select)",),
+}
 
 # The standard title bar (section 4.3).
 STANDARD_TITLE_ALIGN: Final[TitleAlign] = TitleAlign.START
