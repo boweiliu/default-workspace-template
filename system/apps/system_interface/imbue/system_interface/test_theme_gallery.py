@@ -122,7 +122,7 @@ def test_the_desktop_wears_the_workspace_default_theme(themed_shell: str, page: 
 
     page.goto(themed_shell)
 
-    page.wait_for_function("document.documentElement.getAttribute('data-ui-theme') === 'windows-2000'")
+    page.wait_for_function("() => document.documentElement.getAttribute('data-ui-theme') === 'windows-2000'")
     # The bundle's own sheet parses before the files it imports load, so wait for the token itself to apply: the
     # Windows 2000 desktop blue.
     page.wait_for_function(
