@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 import pytest
+from app_manifest.testing import assert_document_policy_admits_page
 from flask.testing import FlaskClient
 from workspace_themes.contract import STANDARD_THEME_ID, TERMINAL_TOKENS
 
@@ -52,6 +53,15 @@ def test_the_wrapper_page_frames_the_session_with_the_ptys_origin_label(
             "pty_label": TEST_PTY_LABEL,
         },
     }
+
+
+def test_the_wrapper_page_is_served_under_a_policy_admitting_its_inline_script_and_the_pty_frame(
+    pages_client: FlaskClient,
+) -> None:
+    page = pages_client.get("/")
+    assert page.status_code == 200
+    assert_document_policy_admits_page(page)
+    assert "frame-src http: https:" in page.headers["Content-Security-Policy"]
 
 
 def test_the_bare_root_carries_no_session(pages_client: FlaskClient) -> None:
