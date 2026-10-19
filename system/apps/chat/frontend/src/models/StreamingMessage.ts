@@ -20,7 +20,7 @@ import {
   type TranscriptEvent,
 } from "./Response";
 import { parseJsonMessage } from "@imbue/workspace-ui/src/models/ws-json";
-import { addChatActivityListener } from "./Chats";
+import { addChatActivityListener, addChatsUpdatedListener } from "./Chats";
 import { applyReplyDraftFrame, clearReplyDraft, isReplyDraftFrame } from "./ReplyDrafts";
 
 const activeStreams = new Map<string, EventSource>();
@@ -252,11 +252,29 @@ export async function catchUpLiveTail(chatId: string): Promise<void> {
   }
 }
 
-/** Catch up every streamed chat whose turn just ended, and every streamed chat when the page is shown again. */
+// The last chat status each streamed chat was seen with, to see a turn end by its status.
+const lastStatusByChat = new Map<string, string>();
+
+/**
+ * Catch up every streamed chat whose turn just ended, and every streamed chat when the page is shown again.
+ *
+ * A turn's end is seen two ways, since either can be all the page gets: the activity reaching
+ * IDLE (as soon as the reply lands), and the chat's status leaving `working` (once the turn's
+ * hooks finish, or when the chat reads as stopped without its activity ever having moved).
+ */
 function installCatchUpTriggers(): void {
   addChatActivityListener((chatId, previous, current) => {
     if (current === "IDLE" && previous !== null && previous !== "IDLE" && activeStreams.has(chatId)) {
       void catchUpLiveTail(chatId);
+    }
+  });
+  addChatsUpdatedListener((chats) => {
+    for (const chat of chats) {
+      const previous = lastStatusByChat.get(chat.chat_id);
+      lastStatusByChat.set(chat.chat_id, chat.status);
+      if (previous === "working" && chat.status !== "working" && activeStreams.has(chat.chat_id)) {
+        void catchUpLiveTail(chat.chat_id);
+      }
     }
   });
   if (typeof document !== "undefined") {
