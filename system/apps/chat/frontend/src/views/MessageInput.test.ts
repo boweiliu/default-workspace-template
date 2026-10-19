@@ -30,10 +30,16 @@ const mocks = vi.hoisted(() => {
   // working/idle branch (stop button, placeholder) on the agent's activity state --
   // both driven through this mutable holder (reset in beforeEach; an undefined
   // activity_state means "not working").
-  const agent: { harness: string | undefined; activity_state: string | undefined; account_id: string | null } = {
+  const agent: {
+    harness: string | undefined;
+    activity_state: string | undefined;
+    account_id: string | null;
+    is_connecting: boolean;
+  } = {
     harness: "claude",
     activity_state: undefined,
     account_id: null,
+    is_connecting: false,
   };
   // The chat's in-progress switch, the account its next send switches it to, and the model
   // picked for it, all null at rest.
@@ -729,6 +735,85 @@ describe("MessageInput first send of a seeded chat", () => {
     expect(localStorage.getItem("message-text:agent-1") ?? "").not.toContain("Let's build something");
     expect(error).toHaveBeenCalledTimes(1);
     error.mockRestore();
+  });
+});
+
+describe("MessageInput first send of a chat with no seed", () => {
+  beforeEach(() => {
+    mocks.sendMessage.mockClear();
+    mocks.launchChat.mockClear();
+    mocks.getComposerAttachments.mockReturnValue([]);
+    localStorage.clear();
+    mocks.isChatRegistered = false;
+    mocks.provisional = {
+      chat_id: "agent-1",
+      name: "Chat 1",
+      account_id: "",
+      phase: "awaiting_first_send",
+      error: null,
+      is_seeded: false,
+      held_sends: [],
+    };
+    mocks.selectedAccount = { id: "acct-1" };
+  });
+
+  afterEach(() => {
+    mocks.isChatRegistered = true;
+    mocks.provisional = undefined;
+    mocks.selectedAccount = null;
+  });
+
+  it("launches the chat with nothing, then sends the message, which the chat holds where Stop can reach it", async () => {
+    await typeAndSend(MessageInput(), "agent-1", "Plan my week");
+
+    expect(mocks.launchChat).toHaveBeenCalledWith("agent-1", "acct-1", undefined);
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMessage.mock.calls[0]).toEqual(expect.arrayContaining(["agent-1", "Plan my week"]));
+  });
+});
+
+describe("MessageInput stop while connecting", () => {
+  beforeEach(() => {
+    mocks.drainToComposer.mockReset();
+    mocks.agent.harness = "claude";
+    mocks.agent.activity_state = undefined;
+    mocks.agent.is_connecting = true;
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    mocks.agent.is_connecting = false;
+  });
+
+  it("offers Stop while a sent message waits for the agent, and puts the message back in the composer", async () => {
+    mocks.drainToComposer.mockResolvedValueOnce({ block: "hello there" });
+    const component = MessageInput();
+    const render = () => component.view!({ attrs: { chatId: "agent-1" } } as never);
+
+    const stopButton = findByAttr(render(), "aria-label", "Stop sending and bring your message back to draft area");
+    expect(stopButton, "Stop should be there while the chat connects").toBeDefined();
+    await (stopButton?.attrs?.onclick as () => Promise<void>)();
+
+    expect(mocks.drainToComposer).toHaveBeenCalledWith("agent-1");
+    expect(findByTag(render(), "textarea")?.attrs?.value).toBe("hello there");
+  });
+
+  it("offers no Stop when nothing is in progress", () => {
+    mocks.agent.is_connecting = false;
+    const rendered = MessageInput().view!({ attrs: { chatId: "agent-1" } } as never);
+    expect(
+      findByAttr(rendered, "aria-label", "Stop sending and bring your message back to draft area"),
+    ).toBeUndefined();
+    expect(findByAttr(rendered, "aria-label", "Interrupt agent")).toBeUndefined();
+  });
+
+  it("drops the bubble of a send Stop took back, which no transcript turn will retire", async () => {
+    mocks.agent.is_connecting = false;
+    mocks.sendMessage.mockResolvedValueOnce("withdrawn");
+
+    await typeAndSend(MessageInput(), "agent-1", "never mind");
+
+    expect(getOutgoingMessages("agent-1")).toEqual([]);
   });
 });
 

@@ -1054,9 +1054,9 @@ export function announceMessageSent(chatId: string): void {
 }
 
 /** How the message route took a send: delivered ("ok"), held while the chat switches agents ("held"),
- *  or run as a compaction instead of being sent ("compaction_requested", a `/compact` no transcript
- *  turn will echo). */
-export type SendStatus = "ok" | "held" | "compaction_requested";
+ *  run as a compaction instead of being sent ("compaction_requested", a `/compact` no transcript
+ *  turn will echo), or taken back by Stop while the agent came up ("withdrawn", nothing delivered). */
+export type SendStatus = "ok" | "held" | "compaction_requested" | "withdrawn";
 
 /** Send a message to a chat; resolves with how the route took it, or null when there was nothing to send. */
 export async function sendMessage(chatId: string, message: string, messageId?: string): Promise<SendStatus | null> {

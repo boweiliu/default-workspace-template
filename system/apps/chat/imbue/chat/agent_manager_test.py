@@ -1256,20 +1256,50 @@ def test_discard_provisional_chat_drops_a_failed_chat(
     }
 
 
-def test_discard_provisional_chat_leaves_a_create_in_flight_and_an_unknown_id_alone(
+def test_discard_provisional_chat_drops_a_create_in_flight_at_once_and_leaves_an_unknown_id_alone(
     agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
 ) -> None:
-    with agent_manager._lock:
-        agent_manager._provisional_chats[ChatId("proto-1")] = ProvisionalChat(
-            chat_id=ChatId("proto-1"), name="Chat 9", phase=ProvisionalChatPhase.CREATING
-        )
+    _seed_creating_chat(agent_manager, ChatId("proto-1"), "Chat 9")
     q = broadcaster.register()
 
-    assert agent_manager.discard_provisional_chat("proto-1") is False
     assert agent_manager.discard_provisional_chat("never-minted") is False
-
-    assert [proto.chat_id for proto in agent_manager.get_provisional_chats()] == ["proto-1"]
     assert q.empty()
+    assert agent_manager.discard_provisional_chat("proto-1") is True
+
+    assert agent_manager.get_provisional_chats() == []
+    completed = json.loads(q.get_nowait() or "")
+    assert completed == {"type": "provisional_chat_completed", "chat_id": "proto-1", "success": False, "error": None}
+
+
+def test_a_chat_deleted_while_it_is_created_has_its_agent_destroyed_as_the_create_lands(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    mngr_binary, go_path, argv_log = _write_gated_mngr_binary(tmp_path)
+    go_path.touch()
+    manager, _store = _seed_manager(broadcaster, tmp_path, mngr_binary=mngr_binary)
+    try:
+        _seed_creating_chat(manager, ChatId("test-id"), "Chat 1")
+        manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "never sent", HeldSendOrigin.CLIENT)
+        assert manager.discard_provisional_chat("test-id") is True
+        q = broadcaster.register()
+
+        manager._run_creation(
+            ChatId("test-id"), "test-id", "test-agent", [mngr_binary, "create"], tmp_path, {}, HarnessType.CLAUDE
+        )
+
+        assert "destroy test-id --force" in argv_log.read_text().splitlines()
+        assert manager.get_agent_by_id("test-id") is None
+        assert manager.get_chat_snapshots() == []
+        assert manager.get_provisional_chat("test-id") is None
+        pushed = []
+        while not q.empty():
+            raw = q.get_nowait()
+            assert raw is not None
+            pushed.append(json.loads(raw))
+        assert {"type": "provisional_chat_completed", "chat_id": "test-id", "success": False, "error": None} in pushed
+    finally:
+        manager.stop()
 
 
 def test_stop_without_start(agent_manager: AgentManager) -> None:
@@ -2040,24 +2070,65 @@ def _tracked_chat(manager: AgentManager, agent_id: str, name: str, display_name:
         )
 
 
-def test_rename_chat_refuses_a_chat_that_is_still_being_created(
+def test_rename_chat_names_a_chat_still_being_created_at_once(
+    broadcaster: WebSocketBroadcaster, false_binary: str
+) -> None:
+    """The stand-in binary always fails, so the rename returning quietly proves no mngr ran: the name goes on
+    the provisional record, which every page hears, and the agent takes it as its create lands."""
+    manager = AgentManager.build(broadcaster, mngr_binary=false_binary)
+    try:
+        _seed_creating_chat(manager, ChatId("proto-1"), "Chat 2")
+        q = broadcaster.register()
+
+        manager.rename_chat("proto-1", "Trip plans")
+
+        renamed = manager.get_provisional_chat("proto-1")
+        assert renamed is not None and renamed.name == "Trip plans"
+        pushed = json.loads(q.get_nowait() or "")
+        assert pushed["type"] == "provisional_chat_created" and pushed["name"] == "Trip plans"
+    finally:
+        manager.stop()
+
+
+def test_rename_chat_refuses_a_chat_still_being_created_a_name_another_chat_has(
     broadcaster: WebSocketBroadcaster,
 ) -> None:
-    """A create in flight already carries a name; renaming to another would race it.
-
-    Filing the name the chat is *already* being created under is the ordinary
-    case and is a no-op here; anything else is refused rather than silently
-    diverging from whatever the create ends up writing.
-    """
     manager = AgentManager.build(broadcaster)
     try:
-        with manager._lock:
-            manager._provisional_chats[ChatId("proto-1")] = ProvisionalChat(
-                chat_id=ChatId("proto-1"), name="Chat 2", phase=ProvisionalChatPhase.CREATING
-            )
-        manager.rename_chat("proto-1", "Chat 2")
-        with pytest.raises(AgentRenameError):
-            manager.rename_chat("proto-1", "Something else")
+        _seed_creating_chat(manager, ChatId("proto-1"), "Chat 2")
+        _seed_creating_chat(manager, ChatId("proto-2"), "Trip plans")
+
+        with pytest.raises(AgentNameConflictError):
+            manager.rename_chat("proto-1", "trip plans")
+    finally:
+        manager.stop()
+
+
+def test_a_chat_renamed_while_it_is_created_gives_its_agent_the_new_name_as_it_lands(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    mngr_binary, go_path, argv_log = _write_gated_mngr_binary(tmp_path)
+    go_path.touch()
+    manager, _store = _seed_manager(broadcaster, tmp_path, mngr_binary=mngr_binary)
+    try:
+        _seed_creating_chat(manager, ChatId("test-id"), "Chat 1")
+        manager.rename_chat("test-id", "Trip plans")
+
+        manager._run_creation(
+            ChatId("test-id"),
+            "test-id",
+            "chat-1",
+            [mngr_binary, "create"],
+            tmp_path,
+            {"display_name": "Chat 1"},
+            HarnessType.CLAUDE,
+        )
+
+        assert any(line.startswith("rename test-id") for line in argv_log.read_text().splitlines())
+        agent = manager.get_agent_by_id("test-id")
+        assert agent is not None
+        assert agent.labels["display_name"] == "Trip plans"
     finally:
         manager.stop()
 
@@ -5638,9 +5709,9 @@ def test_a_chat_reads_as_connecting_while_any_of_its_sends_waits_on_the_agent(
     seed_agent_state(agent_manager, agent_id, name="connecting-agent")
     pushes = broadcaster.register()
 
-    with agent_manager.track_connecting_send(agent_id, "m-1") as mark_first:
+    with agent_manager.track_connecting_send(agent_id, "m-1", "hello") as mark_first:
         mark_first()
-        with agent_manager.track_connecting_send(agent_id, "m-2") as mark_second:
+        with agent_manager.track_connecting_send(agent_id, "m-2", "hello") as mark_second:
             mark_second()
             assert is_chat_connecting(agent_manager, agent_id)
         # The second send resolved; the first still waits on the agent.
@@ -5658,7 +5729,7 @@ def test_a_send_that_never_waits_on_the_agent_leaves_the_chat_alone(
     seed_agent_state(agent_manager, agent_id, name="ready-agent")
     pushes = broadcaster.register()
 
-    with agent_manager.track_connecting_send(agent_id, "m-1"):
+    with agent_manager.track_connecting_send(agent_id, "m-1", "hello"):
         assert not is_chat_connecting(agent_manager, agent_id)
 
     assert drain_is_connecting_pushes(pushes, agent_id) == []
@@ -5669,7 +5740,7 @@ def test_a_send_that_fails_while_connecting_still_clears_the_mark(agent_manager:
     seed_agent_state(agent_manager, agent_id, name="failing-agent")
 
     with pytest.raises(SendFailedError):
-        with agent_manager.track_connecting_send(agent_id, "m-1") as mark_connecting:
+        with agent_manager.track_connecting_send(agent_id, "m-1", "hello") as mark_connecting:
             mark_connecting()
             raise SendFailedError("the agent is in shell mode")
 

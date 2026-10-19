@@ -109,7 +109,12 @@ class SendMessageRequest(FrozenModel):
 class SendMessageResponse(FrozenModel):
     """Response from the message endpoint."""
 
-    status: str = Field(description="Status of the send operation: 'ok', or 'compaction_requested'")
+    status: str = Field(
+        description=(
+            "Status of the send operation: 'ok', 'compaction_requested', or 'withdrawn' (Stop took it back while "
+            "the agent was coming up, and nothing was delivered)"
+        )
+    )
 
 
 class SetModelChoiceRequest(FrozenModel):

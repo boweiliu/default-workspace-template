@@ -198,12 +198,17 @@ export function rowMenuRows(attrs: RowMenuContext, row: ChatRow, referenceRows: 
   const isStopped = row.status === "stopped";
   return [
     { kind: "action", key: "rename", label: "Rename", onSelect: () => beginRename(row) },
-    {
-      kind: "action",
-      key: isStopped ? "start" : "stop",
-      label: isStopped ? "Restart chat" : "Stop chat",
-      onSelect: () => setRunningFromMenu(row, isStopped),
-    },
+    // A chat with no agent yet has nothing to stop or restart; its rename and delete apply as it lands.
+    ...(row.isProvisional
+      ? []
+      : [
+          {
+            kind: "action",
+            key: isStopped ? "start" : "stop",
+            label: isStopped ? "Restart chat" : "Stop chat",
+            onSelect: () => setRunningFromMenu(row, isStopped),
+          } as MenuRow,
+        ]),
     { kind: "divider" },
     {
       kind: "action",
@@ -450,10 +455,10 @@ function railRow(attrs: ChatRailAttrs, row: ChatRow): m.Vnode {
       onclick: () => {
         if (!isSelected || attrs.isInDrawer) attrs.onPick(row.chatId);
       },
-      ondblclick: row.isProvisional ? undefined : () => beginRename(row),
+      ondblclick: () => beginRename(row),
       oncontextmenu: (event: MouseEvent) => {
         event.preventDefault();
-        if (isDeleting || row.isProvisional) return;
+        if (isDeleting) return;
         menuChatId = row.chatId;
         menuReferenceRows = referenceRowsForEvent(attrs, event);
         railMenu.open(anchorForPoint(event.clientX, event.clientY));
@@ -462,7 +467,7 @@ function railRow(attrs: ChatRailAttrs, row: ChatRow): m.Vnode {
     [
       statusDot(row, "flex-none"),
       m("span", { class: "chat-rail-title min-w-0 flex-1 truncate text-(length:--font-size-row)" }, row.title),
-      row.isProvisional || (attrs.isTouch && isDeleting) ? null : attrs.isTouch ? rowKebab(row) : renamePencil(row),
+      attrs.isTouch && isDeleting ? null : attrs.isTouch ? rowKebab(row) : renamePencil(row),
     ],
   );
 }
