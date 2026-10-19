@@ -89,15 +89,6 @@ the standard look (a literal the lint missed, an element with no part).
 
 ## Icons under a theme
 
-Every theme with icons of its own (Classic Mac, Windows 2000, and any the user made) needs one for
-the app, drawn in that theme's style. Until it has one, the shell shows an icon derived from the
-app's standard icon, which is a stopgap, not the finished look.
-
-```bash
-uv run workspace-themes icon missing
-```
-
-lists each theme and the apps it still has no icon for (and exits 1); make each with the
-`make-theme-icon` skill. Drawn by hand, as a pixel grid for a png theme or a written SVG for an svg
-theme, that needs no image model and no key, so a background worker can always do it. The app is finished when the command prints
-`every theme has an icon for every app`.
+Draw only the app's own icon. Under a theme with icons of its own (Classic Mac, Windows 2000, or
+one the user made), the shell shows an icon derived from it in that theme's style. A drawn icon
+for a theme is made only when the user asks for one, with the `make-theme-icon` skill.
