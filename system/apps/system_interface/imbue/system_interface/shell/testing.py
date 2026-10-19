@@ -38,6 +38,7 @@ from workspace_layout.primitives import WindowTitle
 from workspace_layout.records import Desktop
 from workspace_layout.records import Window
 from workspace_layout.records import WindowPlacement
+from workspace_themes.primitives import ThemeLevel
 
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.server import create_application
@@ -101,6 +102,7 @@ def registry_row_toml(
     message_handlers: Sequence[tuple[str, str]] = (),
     # Each ``show`` message handler as ``(type, show, showing)``.
     shown_message_handlers: Sequence[tuple[str, str, Sequence[str]]] = (),
+    theming_mode: str | None = None,
 ) -> str:
     """One ``[[apps]]`` row as ``forward_port.py`` writes it, with the manifest-derived keys the shell reads.
     ``default_shortcut`` is ``(launch, mode)``."""
@@ -128,6 +130,8 @@ def registry_row_toml(
         )
     if window_closed_path is not None:
         lines.append(f'window_closed_path = "{window_closed_path}"')
+    if theming_mode is not None:
+        lines.append(f'theming_mode = "{theming_mode}"')
     if message_handlers or shown_message_handlers:
         handlers = [f'{{ type = "{kind}", path = "{path}" }}' for kind, path in message_handlers]
         for kind, show, showing in shown_message_handlers:
@@ -334,6 +338,7 @@ def build_inventory(
     broadcaster: WebSocketBroadcaster,
     prober: Callable[[Sequence[tuple[str, str, str]]], dict[str, bool]] | None = None,
     share_domain_path: Path | None = None,
+    theme_levels: Callable[[], Mapping[AppName, ThemeLevel]] | None = None,
 ) -> AppInventory:
     """An inventory that has read the registry and probed liveness once, with no watcher or sweep running."""
     inventory = AppInventory(
@@ -341,6 +346,7 @@ def build_inventory(
         broadcaster=broadcaster,
         liveness_prober=prober if prober is not None else FakeLivenessProber(),
         share_domain_path=share_domain_path,
+        theme_levels=theme_levels if theme_levels is not None else dict,
     )
     inventory.reload_registry()
     inventory.refresh_liveness()

@@ -128,6 +128,11 @@ class InventoryApp(FrozenModel):
     share_url: str | None = Field(
         description="The app's address on the domain the workspace was last shared under; None when it never was"
     )
+    theme_level: str | None = Field(
+        default=None,
+        description="How far the workspace's theme is put into the app's pages from outside (none, light, medium, or "
+        "heavy); None for an app that wears the theme itself, or declares that it is not themed",
+    )
 
 
 class InventoryDocument(FrozenModel):

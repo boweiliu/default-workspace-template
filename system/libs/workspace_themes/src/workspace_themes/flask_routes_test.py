@@ -146,8 +146,8 @@ def test_the_injected_routes_serve_the_layer_order_the_kit_at_the_app_s_level_an
     register_injected_theme_routes(
         application,
         lambda: catalog,
-        kit_script,
-        kit_stylesheet,
+        lambda: kit_script.read_text(encoding="utf-8"),
+        lambda: kit_stylesheet.read_text(encoding="utf-8"),
         lambda app: levels.get(app or "", ThemeLevel.LIGHT),
     )
     client = application.test_client()

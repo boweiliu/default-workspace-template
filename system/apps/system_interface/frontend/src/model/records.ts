@@ -181,6 +181,18 @@ export interface AppRecord {
   readonly is_running: boolean;
   /** The app's address on the domain the workspace was last shared under, or null when it never was. */
   readonly share_url: string | null;
+  /** How far the workspace's theme is put into the app's pages from outside (workspace-themes plan section 7.2);
+   *  null for an app that wears the theme itself, or declares that it is not themed. */
+  readonly theme_level: ThemeLevel | null;
+}
+
+/** How far a theme reaches into an app that does not wear it itself. */
+export type ThemeLevel = "none" | "light" | "medium" | "heavy";
+
+export const THEME_LEVELS: readonly ThemeLevel[] = ["none", "light", "medium", "heavy"];
+
+function parseThemeLevel(raw: unknown): ThemeLevel | null {
+  return THEME_LEVELS.find((level) => level === raw) ?? null;
 }
 
 /** Where a client keeps a floating entry: the top-left corner of its box, in fractions of the backdrop. */
@@ -518,6 +530,7 @@ export function parseAppRecord(raw: unknown): AppRecord {
     message_handlers: asArray(record.message_handlers ?? [], "app.message_handlers").map(parseMessageHandler),
     is_running: record.is_running === true,
     share_url: typeof record.share_url === "string" && record.share_url !== "" ? record.share_url : null,
+    theme_level: parseThemeLevel(record.theme_level),
   };
 }
 

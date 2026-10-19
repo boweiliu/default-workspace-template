@@ -20,6 +20,7 @@ from workspace_themes.testing import write_test_theme
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import state_of
 from imbue.system_interface.shell.app_lifecycle import WAKE_BUDGET_COUNT
+from imbue.system_interface.shell.app_theme_levels import AppThemeLevelStore
 from imbue.system_interface.shell.errors import LaunchUnavailableError
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.inventory import AppInventory
@@ -39,6 +40,7 @@ from imbue.system_interface.shell.testing import message_report
 from imbue.system_interface.shell.testing import read_stub_update_self_calls
 from imbue.system_interface.shell.testing import registry_row_toml
 from imbue.system_interface.shell.testing import shell_application
+from imbue.system_interface.shell.testing import write_registry
 from imbue.system_interface.shell.testing import write_rollback_point
 from imbue.system_interface.shell.testing import write_stub_update_self_script
 from imbue.system_interface.shell.testing import write_two_app_registry
@@ -2819,3 +2821,37 @@ def test_a_theme_bundle_imports_its_chain_and_its_files_are_served_from_this_ori
     assert client.get("/_static/themes/paper/theme.toml").status_code == 404
     assert client.get("/_static/themes/paper/../standard/theme.toml").status_code == 404
     assert client.get("/_static/themes/nowhere/theme.css").status_code == 404
+
+
+def test_an_app_themed_from_outside_takes_the_level_set_for_it_and_its_kit_carries_that_level(
+    tmp_path: Path, broadcaster: WebSocketBroadcaster
+) -> None:
+    registry_path = write_registry(
+        tmp_path / "apps.toml",
+        registry_row_toml("notes", "http://localhost:7001"),
+        registry_row_toml("chat", "http://localhost:8010", theming_mode="parts"),
+    )
+    inventory = build_inventory(
+        registry_path, broadcaster, theme_levels=AppThemeLevelStore(state_directory=tmp_path / "state").read
+    )
+    client = shell_application(tmp_path, inventory, broadcaster).test_client()
+    kit_directory = tmp_path / "static" / "_static"
+    kit_directory.mkdir(parents=True)
+    (kit_directory / "workspace_theme.js").write_text("wearKit();\n", encoding="utf-8")
+    (kit_directory / "workspace_theme.css").write_text("", encoding="utf-8")
+
+    def levels() -> dict[str, str | None]:
+        return {app["name"]: app["theme_level"] for app in client.get("/api/inventory").get_json()["apps"]}
+
+    assert levels() == {"notes": "light", "chat": None}
+    assert client.post("/api/apps/notes/theme-level", json={"level": "heavy"}).get_json() == {
+        "app": "notes",
+        "level": "heavy",
+    }
+    assert levels() == {"notes": "heavy", "chat": None}
+    assert client.post("/api/apps/chat/theme-level", json={"level": "heavy"}).status_code == 400
+    assert client.post("/api/apps/nowhere/theme-level", json={"level": "heavy"}).status_code == 400
+    assert client.post("/api/apps/notes/theme-level", json={"level": "ultra"}).status_code == 400
+    notes_kit = client.get("/__workspace_theme/kit.js", headers={"X-Workspace-App": "notes"})
+    assert notes_kit.get_data(as_text=True) == 'self.__WORKSPACE_THEME_LEVEL__ = "heavy";\nwearKit();\n'
+    assert client.get("/__workspace_theme/kit.js", headers={"X-Workspace-App": "chat"}).data == b""

@@ -59,6 +59,7 @@ import type {
   Placement,
   PresentUser,
   ShortcutMode,
+  ThemeLevel,
   Wallpaper,
   WindowRecord,
   WindowState,
@@ -170,6 +171,8 @@ export interface DesktopApi {
   /** The workspace's themes and its default (workspace-themes plan section 5.2). */
   fetchThemes(): Promise<ThemeCatalog>;
   setDefaultTheme(theme: string | null): Promise<void>;
+  /** How far the theme reaches an app themed from outside (workspace-themes plan section 7.2). */
+  setAppThemeLevel(app: string, level: ThemeLevel): Promise<void>;
   deleteDesktop(desktopId: string): Promise<string>;
   setDesktopShortcut(desktopId: string, shortcut: DesktopShortcut): Promise<Desktop>;
   moveDesktopShortcut(desktopId: string, app: string, launch: string, cell: GridCell): Promise<Desktop>;
@@ -1003,8 +1006,19 @@ export class DesktopStore {
   }
 
   private takeApps(apps: readonly AppRecord[]): void {
+    const levelBefore = new Map(this.state.apps.map((app) => [app.name, app.theme_level]));
     this.dispatch({ type: "apps_updated", apps });
     this.markAppsLoaded();
+    // The page kit takes its level when the page loads, so every page of an app whose level changed loads again.
+    for (const app of apps) {
+      const before = levelBefore.get(app.name);
+      if (before !== undefined && before !== app.theme_level) this.pageDriver?.reloadApp(app.name);
+    }
+  }
+
+  /** Set how far the theme reaches an app's pages; every client reloads them when the app list says so. */
+  async setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
+    await this.deps.api.setAppThemeLevel(app, level);
   }
 
   private takePresence(users: PresentUser[]): void {

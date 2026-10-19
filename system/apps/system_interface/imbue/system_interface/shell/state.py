@@ -38,6 +38,7 @@ from workspace_layout.records import Window
 from workspace_layout.records import WindowView
 from workspace_themes.catalog import CachingThemeCatalogLoader
 from workspace_themes.interfaces import ThemeCatalogLoaderInterface
+from workspace_themes.primitives import ThemeLevel
 
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
@@ -54,6 +55,8 @@ from imbue.system_interface.shell.app_lifecycle import AppLifecycleManager
 from imbue.system_interface.shell.app_lifecycle import IDLE_SWEEP_INTERVAL_SECONDS
 from imbue.system_interface.shell.app_lifecycle import NO_WINDOWS_GRACE_SECONDS
 from imbue.system_interface.shell.app_lifecycle import build_app_lifecycle_manager
+from imbue.system_interface.shell.app_theme_levels import AppThemeLevelStore
+from imbue.system_interface.shell.app_theme_levels import theme_level_of
 from imbue.system_interface.shell.client_activity import ClientActivityLog
 from imbue.system_interface.shell.clients import CLIENT_RETENTION
 from imbue.system_interface.shell.clients import ClientStore
@@ -146,6 +149,9 @@ class ShellState(MutableModel):
         frozen=True, description="Parks, wakes, starts, and stops the stoppable apps (the stop-when-no-windows spec)"
     )
     desktops: DesktopStore = Field(frozen=True, description="desktops.json and default_shortcuts_offered.json")
+    theme_levels: AppThemeLevelStore = Field(
+        frozen=True, description="app_theme_levels.json: how far the theme reaches each app themed from outside"
+    )
     placements: PlacementStore = Field(frozen=True, description="The per-client layouts of each desktop")
     window_paths: WindowPathStore = Field(
         frozen=True, description="The per-client paths and titles of independent windows"
@@ -395,6 +401,11 @@ class ShellState(MutableModel):
 
     def broadcast_desktops_updated(self) -> None:
         self.broadcaster.broadcast_desktops_updated(self.desktop_views(self.list_desktops()))
+
+    def theme_level_of_app(self, app_name: str | None) -> ThemeLevel:
+        """The level the theme is put into an app's pages at, by the name the proxy in front of it gives."""
+        entry = self.inventory.entry(app_name) if app_name is not None else None
+        return theme_level_of(entry.row if entry is not None else None, self.theme_levels.read())
 
     def broadcast_themes_changed(self) -> None:
         """Send every window the theme catalog and the workspace's default, after either changed."""
@@ -854,12 +865,14 @@ def build_shell_state(
     manager owns the live workspace's apps, sweeping them and waking one for a POST launch (the production shell's
     yes; a preview's and a test's no, so neither starts a live app or parks a port by accident), and the two
     timings are the manager's grace period and idle sweep interval, which a test shortens."""
+    theme_levels = AppThemeLevelStore(state_directory=state_directory)
     resolved_inventory = (
         inventory
         if inventory is not None
         else AppInventory(
             registry_path=registry_path,
             broadcaster=broadcaster,
+            theme_levels=theme_levels.read,
             on_registry_read=on_registry_read,
             share_domain_path=_under_repo_root(DEFAULT_SHARE_DOMAIN_PATH, repo_root),
         )
@@ -881,6 +894,7 @@ def build_shell_state(
             idle_sweep_interval_seconds=idle_sweep_interval_seconds,
         ),
         desktops=desktops,
+        theme_levels=theme_levels,
         placements=PlacementStore(state_directory=state_directory),
         window_paths=WindowPathStore(state_directory=state_directory),
         wallpaper_files_directory=_under_repo_root(wallpaper_files_directory, repo_root),

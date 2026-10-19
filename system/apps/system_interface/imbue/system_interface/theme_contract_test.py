@@ -11,7 +11,6 @@ from typing import Final
 import pytest
 from workspace_themes.contract import COLOR_TOKENS
 from workspace_themes.contract import CORE_PARTS
-from workspace_themes.contract import PAGE_KIT_ROOT_ATTRIBUTE
 
 from imbue.system_interface.update_staleness import WORKSPACE_ROOT_DIRECTORY
 
@@ -38,9 +37,3 @@ def test_the_design_system_and_the_validator_name_the_same_color_tokens() -> Non
 
     assert declared == sorted(COLOR_TOKENS)
 
-
-@pytest.mark.frontend
-def test_the_page_kit_and_the_theme_server_name_the_same_root_attribute() -> None:
-    parts_ts = (_WORKSPACE_UI_SOURCE / "themes" / "parts.ts").read_text(encoding="utf-8")
-
-    assert f'export const PAGE_KIT_ROOT_ATTRIBUTE = "{PAGE_KIT_ROOT_ATTRIBUTE}";' in parts_ts

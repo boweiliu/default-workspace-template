@@ -15,11 +15,13 @@ import json
 import re
 import threading
 from collections.abc import Callable
+from collections.abc import Mapping
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
 from app_manifest.errors import RegistryReadError
+from app_manifest.primitives import AppName
 from app_manifest.registry import RegistryRow
 from app_manifest.registry import read_registry
 from loguru import logger
@@ -27,6 +29,7 @@ from pydantic import Field
 from pydantic import PrivateAttr
 from watchdog.observers.api import BaseObserver
 from workspace_layout.answers import InventoryApp
+from workspace_themes.primitives import ThemeLevel
 
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
@@ -64,8 +67,14 @@ def read_share_domain(path: Path | None) -> str | None:
 
 
 @pure
-def app_views(entries: Sequence[AppInventoryEntry], share_domain: str | None) -> list[InventoryApp]:
-    return [app_view(entry, share_domain) for entry in entries]
+def app_views(
+    entries: Sequence[AppInventoryEntry], share_domain: str | None, level_by_app: Mapping[AppName, ThemeLevel]
+) -> list[InventoryApp]:
+    return [app_view(entry, share_domain, level_by_app) for entry in entries]
+
+
+def _no_theme_levels() -> Mapping[AppName, ThemeLevel]:
+    return {}
 
 
 class AppInventory(MutableModel):
@@ -85,6 +94,11 @@ class AppInventory(MutableModel):
         default=None,
         frozen=True,
         description="The file naming the domain the workspace was last shared under; None for a shell with no share",
+    )
+    theme_levels: Callable[[], Mapping[AppName, ThemeLevel]] = Field(
+        default=_no_theme_levels,
+        frozen=True,
+        description="Each app's chosen theme level, read for every listing (app_theme_levels.json)",
     )
     on_registry_read: Callable[[Sequence[RegistryRow]], None] | None = Field(
         default=None,
@@ -143,7 +157,7 @@ class AppInventory(MutableModel):
             return self._entry_by_name.get(app_name)
 
     def views(self) -> list[InventoryApp]:
-        return app_views(self.entries(), read_share_domain(self.share_domain_path))
+        return app_views(self.entries(), read_share_domain(self.share_domain_path), self.theme_levels())
 
     @property
     def is_registry_read(self) -> bool:
@@ -273,6 +287,10 @@ class AppInventory(MutableModel):
             logger.opt(exception=e).error("The app inventory sweep failed; the next pass will retry")
 
     # The broadcast
+
+    def broadcast_if_changed(self) -> None:
+        """Send every window the apps, when they differ from what was last sent (a theme level changed)."""
+        self._broadcast_if_changed()
 
     def _broadcast_if_changed(self) -> None:
         with self._broadcast_lock:

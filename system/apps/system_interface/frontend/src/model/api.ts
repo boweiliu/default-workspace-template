@@ -33,6 +33,7 @@ import type {
   Layout,
   MessageRelay,
   Placement,
+  ThemeLevel,
   Wallpaper,
   WallpaperListing,
   WindowRecord,
@@ -79,6 +80,11 @@ export async function setDesktopTheme(desktopId: string, theme: string | null): 
 /** The workspace's themes and its default (docs/system/blueprint/workspace-themes/, section 5.2). */
 export async function fetchThemes(): Promise<ThemeCatalog> {
   return parseThemeCatalog(await getJson(apiUrl("/api/themes")));
+}
+
+/** How far the workspace's theme is put into an app's pages, for an app that does not wear it itself. */
+export async function setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
+  await postJson<unknown>(apiUrl(`/api/apps/${encodeURIComponent(app)}/theme-level`), { level });
 }
 
 /** The workspace's default theme; null wears the standard one. */

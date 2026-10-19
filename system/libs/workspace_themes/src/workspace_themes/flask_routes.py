@@ -103,8 +103,8 @@ def _request_level() -> ThemeLevel:
 def register_injected_theme_routes(
     application: Flask,
     load_catalog: Callable[[], ThemeCatalog],
-    kit_script_path: Path,
-    kit_stylesheet_path: Path,
+    read_kit_script: Callable[[], str],
+    read_kit_stylesheet: Callable[[], str],
     level_of_app: Callable[[str | None], ThemeLevel],
 ) -> None:
     """Serve ``/__workspace_theme/``: what an app's page needs when the theme is put into it from outside.
@@ -122,7 +122,7 @@ def register_injected_theme_routes(
     def kit() -> Response:
         level = level_of_app(request.headers.get(INJECTED_APP_HEADER))
         return _text_response(
-            injected_kit_script(kit_script_path.read_text(encoding="utf-8"), level),
+            injected_kit_script(read_kit_script(), level),
             "text/javascript",
             INJECTED_KIT_FILE_NAME,
         )
@@ -130,7 +130,7 @@ def register_injected_theme_routes(
     def base() -> Response:
         level = _request_level()
         return _text_response(
-            style_text_at_level(kit_stylesheet_path.read_text(encoding="utf-8"), level),
+            style_text_at_level(read_kit_stylesheet(), level),
             CSS_MIMETYPE,
             INJECTED_BASE_FILE_NAME,
         )

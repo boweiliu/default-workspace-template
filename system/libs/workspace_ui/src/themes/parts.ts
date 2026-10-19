@@ -41,9 +41,6 @@ export type Part = (typeof PARTS)[number];
 
 export const PART_ATTRIBUTE = "data-part";
 
-/** Set on <html> by the page kit: a page built as plain HTML, whose bare controls a theme dresses as their parts. */
-export const PAGE_KIT_ROOT_ATTRIBUTE = "data-page-kit";
-
 /** The attribute that marks an element as a contract part, to spread into its attrs. */
 export function partAttrs(part: Part): { readonly "data-part": Part } {
   return { "data-part": part };

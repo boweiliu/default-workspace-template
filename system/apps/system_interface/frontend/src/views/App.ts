@@ -22,7 +22,14 @@ import type { ReferenceScope } from "@imbue/workspace-ui/src/element_reference";
 import { fetchWallpapers, wallpaperBackgroundImage } from "../model/api";
 import { appShortcutOf, launchPathOf } from "../model/launch";
 import { SHELL_APP_NAME } from "../model/UpdateNotice";
-import type { AvatarDesign, Desktop, DesktopShortcut, WallpaperListing } from "../model/records";
+import type {
+  AppRecord,
+  AvatarDesign,
+  Desktop,
+  DesktopShortcut,
+  ThemeLevel,
+  WallpaperListing,
+} from "../model/records";
 import { shortcutKey } from "../model/records";
 import type { PixelPoint } from "../geometry/frames";
 import { mostRecentlyFocusedWindowOfApp, placementOf } from "../geometry/stack";
@@ -71,7 +78,15 @@ import { Taskbar } from "./Taskbar";
 import type { WindowControl } from "./TitleBar";
 import { UpdateNoticeBanner } from "./UpdateNoticeBanner";
 import { UpdateStalenessBanner } from "./UpdateStalenessBanner";
-import { MENU_MIN_WIDTH, openShareSettings, taskbarEntryMenuRows, windowMenuRows } from "./WindowMenu";
+import {
+  MENU_MIN_WIDTH,
+  openShareSettings,
+  reimagineAppPrompt,
+  restyleAppPrompt,
+  taskbarEntryMenuRows,
+  windowMenuRows,
+  type WindowThemeActions,
+} from "./WindowMenu";
 import { windowSizeRow } from "./WindowSizeRow";
 import type { WindowSizeActions } from "./WindowSizeRow";
 import { SQUIGGLE_GLYPHS } from "./squiggles";
@@ -583,7 +598,20 @@ export function App(): m.Component<AppAttrs> {
       quit: app !== undefined && current.canStopApp(app) ? () => void current.quitApp(app.name) : null,
       popOut: current.getCanPopOut() ? () => void current.detachWindow(windowId) : null,
       close: () => void current.closeOrMinimizeWindow(windowId),
+      theme: app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
     });
+  }
+
+  function windowThemeActionsOf(current: DesktopStore, app: AppRecord, level: ThemeLevel): WindowThemeActions {
+    const canDraft = draftTargetOf(current.getState()) !== null;
+    return {
+      level,
+      setLevel: (chosen) => void current.setAppThemeLevel(app.name, chosen),
+      restyle: canDraft ? () => void current.draftIntoPinnedWindow(restyleAppPrompt(app.display_name)) : null,
+      reimagine: canDraft
+        ? () => void current.draftIntoPinnedWindow(reimagineAppPrompt(app.display_name, current.shownTheme().name))
+        : null,
+    };
   }
 
   function rowsOfEntryMenu(current: DesktopStore, windowId: string): MenuRow[] | null {

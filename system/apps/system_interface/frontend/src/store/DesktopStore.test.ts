@@ -784,6 +784,22 @@ describe("windows", () => {
     expect(reloads).toBe(1);
   });
 
+  it("loads an app's pages again when its theme level changes, and leaves the other apps' pages alone", async () => {
+    const store = await startedStore();
+    const reloaded: string[] = [];
+    store.setPageDriver({
+      reload: (id) => void reloaded.push(`window:${id}`),
+      reloadApp: (app) => void reloaded.push(`app:${app}`),
+      requestClose: () => undefined,
+      ownsCloseChord: () => false,
+    });
+    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "light" }), appRecord("notes")]);
+    reloaded.length = 0;
+    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
+    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
+    expect(reloaded).toEqual(["app:docs"]);
+  });
+
   it("follows a pushed desktop switch without re-reporting a previous desktop", async () => {
     const store = await startedStore();
     deliverDesktopNews("work", 1);

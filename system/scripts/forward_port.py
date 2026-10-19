@@ -25,7 +25,8 @@ and copies its static fields onto the row: ``display_name``, ``critical``,
 ``default_shortcut`` (launch and mode), ``launch_paths`` (id, label, path,
 the names of the params, and ``method``, ``presets``, ``text_param``, and
 ``draft_param`` when given), ``pin`` (path, and style, scope, and
-default_mode when given), ``window_closed_path``, and ``message_handlers`` (type, and path or show and showing);
+default_mode when given), ``window_closed_path``, ``message_handlers`` (type, and path or show and showing), and
+``theming_mode`` (the ``[theming]`` table's mode, when the manifest has one);
 the icon is read from the file the manifest names, relative to the manifest. Every manifest
 field is authoritative on every call, so a re-registration with a changed manifest updates the row.
 Only what is copied from files is checked here (the name rule, the icon markup,
@@ -199,6 +200,7 @@ _MANIFEST_OWNED_KEYS = (
     "pin",
     "window_closed_path",
     "message_handlers",
+    "theming_mode",
 )
 
 # The optional keys of a manifest's ``[pin]`` table, each a string when present; ``path`` is
@@ -599,6 +601,13 @@ def _read_manifest(
         if copied_pin is None:
             return {}, None, pin_error
         fields["pin"] = copied_pin
+
+    theming = raw.get("theming")
+    if theming is not None:
+        mode = theming.get("mode", "tokens") if isinstance(theming, dict) else None
+        if not isinstance(mode, str):
+            return {}, None, f"manifest {str(path)!r}: theming must be a table whose mode is a string"
+        fields["theming_mode"] = mode
 
     for key, copy_entry in _MANIFEST_TABLE_ARRAY_COPIERS:
         entries = raw.get(key)

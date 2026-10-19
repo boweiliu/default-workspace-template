@@ -9,16 +9,85 @@
  * section 4.4). Defined once so both menus render the identical list off the identical rule.
  */
 
-import type { MenuRow } from "@imbue/workspace-ui/src/components/menu";
+import m from "mithril";
+import { icon } from "@imbue/workspace-ui/src/components/icons";
+import type { MenuRow, SubmenuChildRow } from "@imbue/workspace-ui/src/components/menu";
 import { OPEN_SHARE_SETTINGS, sendToEmbedder } from "@imbue/workspace-ui/src/embed";
 import { windowSizeSubmenuRow } from "./WindowSizeRow";
 import type { WindowSizeActions } from "./WindowSizeRow";
-import type { AppRecord, EntryMode, PinStyle } from "../model/records";
+import { THEME_LEVELS } from "../model/records";
+import type { AppRecord, EntryMode, PinStyle, ThemeLevel } from "../model/records";
 import type { EntryLook } from "../reducers/desktopState";
 
 /** The width the shell's menus, the desktop's and the phone's, never go under, so a menu of two-word verbs is still
  *  a card. */
 export const MENU_MIN_WIDTH = 176;
+
+/** What the window menu's Theme submenu offers, for an app the theme is put into from outside (workspace-themes
+ *  plan section 7.2). */
+export interface WindowThemeActions {
+  readonly level: ThemeLevel;
+  readonly setLevel: (level: ThemeLevel) => void;
+  /** Draft a request to rewrite the app onto the design tokens into the chat; null with no chat to draft into. */
+  readonly restyle: (() => void) | null;
+  /** Draft a request to re-imagine the app for the theme into the chat; null with no chat to draft into. */
+  readonly reimagine: (() => void) | null;
+}
+
+const THEME_LEVEL_LABELS: Readonly<Record<ThemeLevel, string>> = {
+  none: "None",
+  light: "Light",
+  medium: "Medium",
+  heavy: "Heavy",
+};
+
+const THEME_LEVEL_TOOLTIPS: Readonly<Record<ThemeLevel, string>> = {
+  none: "Leave the app as it was built",
+  light: "Theme only the controls the app left plain",
+  medium: "Add the theme wherever the app sets nothing itself",
+  heavy: "Put the theme over the app's own look",
+};
+
+/** The chat request "Restyle with AI..." drafts: the app rewritten onto the design tokens and controls. */
+export function restyleAppPrompt(appName: string): string {
+  return (
+    `Restyle the ${appName} app so it follows the workspace's theme: take its colors, fonts, and controls from ` +
+    "the design tokens and the shared parts, and keep how it works. Show me before keeping the change."
+  );
+}
+
+/** The chat request "Re-imagine with AI..." drafts: the app redesigned for the theme the desktop wears. */
+export function reimagineAppPrompt(appName: string, themeName: string): string {
+  return (
+    `Re-imagine the ${appName} app for the ${themeName} theme, its pictures and icons included, and keep what it ` +
+    "does. Show me before keeping the change."
+  );
+}
+
+function themeSubmenuRow(actions: WindowThemeActions): MenuRow {
+  const levelRows: SubmenuChildRow[] = THEME_LEVELS.map((level) => ({
+    kind: "action",
+    key: `theme-${level}`,
+    label: THEME_LEVEL_LABELS[level],
+    tooltip: THEME_LEVEL_TOOLTIPS[level],
+    trailing: level === actions.level ? m.trust(icon("check", { size: 13, strokeWidth: 2.5 })) : undefined,
+    onSelect: () => actions.setLevel(level),
+  }));
+  const chatRows: SubmenuChildRow[] = [];
+  if (actions.restyle !== null) {
+    chatRows.push({ kind: "action", key: "theme-restyle", label: "Restyle with AI...", onSelect: actions.restyle });
+  }
+  if (actions.reimagine !== null) {
+    chatRows.push({ kind: "action", key: "theme-reimagine", label: "Re-imagine with AI...", onSelect: actions.reimagine });
+  }
+  return {
+    kind: "submenu",
+    key: "theme",
+    label: "Theme",
+    value: THEME_LEVEL_LABELS[actions.level],
+    rows: () => (chatRows.length === 0 ? levelRows : [...levelRows, { kind: "divider" }, ...chatRows]),
+  };
+}
 
 export interface WindowMenuActions {
   /** The zone grid's actions, or null where there is nothing to place (a window since closed). */
@@ -34,6 +103,8 @@ export interface WindowMenuActions {
   readonly popOut: (() => void) | null;
   /** Close the window for everyone; for a pinned window, which is never closed, this minimizes it instead. */
   readonly close: () => void;
+  /** Null for an app that wears the theme itself, or declares that it is not themed. */
+  readonly theme: WindowThemeActions | null;
 }
 
 /** Ask the Imbue Studio chrome to open its share settings for ``app``; the embed contract names the app by the
@@ -69,6 +140,7 @@ function shareAndQuitRows(
 export function windowMenuRows(app: AppRecord | undefined, actions: WindowMenuActions): MenuRow[] {
   const rows: MenuRow[] = [];
   if (actions.size !== null) rows.push(windowSizeSubmenuRow(actions.size, actions.onSized), { kind: "divider" });
+  if (actions.theme !== null) rows.push(themeSubmenuRow(actions.theme), { kind: "divider" });
   if (actions.popOut !== null) {
     rows.push({
       kind: "action",

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { EntryLook } from "../reducers/desktopState";
 import { appRecord } from "../testing/records";
 import type { ActionRow, MenuRow } from "@imbue/workspace-ui/src/components/menu";
-import { taskbarEntryMenuRows, windowMenuRows } from "./WindowMenu";
+import { reimagineAppPrompt, restyleAppPrompt, taskbarEntryMenuRows, windowMenuRows } from "./WindowMenu";
 
 function keysOf(rows: MenuRow[]): string[] {
   return rows.map((row) => (row.kind === "divider" ? "|" : (row.key ?? "")));
@@ -28,6 +28,7 @@ describe("windowMenuRows", () => {
       quit,
       popOut: null,
       close: vi.fn(),
+      theme: null,
     });
     expect(keysOf(rows)).toEqual(["size", "|", "share", "quit", "|", "close"]);
     const quitRow = rowOf(rows, "quit");
@@ -47,6 +48,7 @@ describe("windowMenuRows", () => {
           quit: vi.fn(),
           popOut: null,
           close: vi.fn(),
+          theme: null,
         }),
       ),
     ).toEqual(["size", "|", "quit", "|", "close"]);
@@ -62,6 +64,7 @@ describe("windowMenuRows", () => {
           quit: null,
           popOut: null,
           close: vi.fn(),
+          theme: null,
         }),
       ),
     ).toEqual(["size", "|", "close"]);
@@ -77,6 +80,7 @@ describe("windowMenuRows", () => {
           quit: null,
           popOut: null,
           close: vi.fn(),
+          theme: null,
         }),
       ),
     ).toEqual(["close"]);
@@ -91,6 +95,7 @@ describe("windowMenuRows", () => {
       quit: null,
       popOut: null,
       close,
+      theme: null,
     });
     expect(keysOf(rows)).toEqual(["size", "|", "close"]);
     rowOf(rows, "close").onSelect();
@@ -107,6 +112,7 @@ describe("windowMenuRows", () => {
           quit: vi.fn(),
           popOut: null,
           close: vi.fn(),
+          theme: null,
         }),
       ),
     ).toEqual(["size", "|", "close"]);
@@ -245,6 +251,7 @@ describe("the pull-out row", () => {
       quit: vi.fn(),
       popOut,
       close: vi.fn(),
+      theme: null,
     });
     expect(keysOf(rows)).toEqual(["size", "|", "pop-out", "share", "quit", "|", "close"]);
     expect(rowOf(rows, "pop-out").label).toBe("Open in its own window");
@@ -257,7 +264,49 @@ describe("the pull-out row", () => {
       quit: null,
       popOut: null,
       close: vi.fn(),
+      theme: null,
     });
     expect(keysOf(without)).toEqual(["size", "|", "close"]);
+  });
+});
+
+describe("the window menu's Theme submenu", () => {
+  it("offers the levels with the app's own checked, and the chat's two requests where a chat can take them", () => {
+    const setLevel = vi.fn();
+    const restyle = vi.fn();
+    const rows = windowMenuRows(appRecord("notes"), {
+      size,
+      onSized: vi.fn(),
+      share: null,
+      quit: null,
+      popOut: null,
+      close: vi.fn(),
+      theme: { level: "light", setLevel, restyle, reimagine: null },
+    });
+    expect(keysOf(rows)).toEqual(["size", "|", "theme", "|", "close"]);
+    const theme = rows.find((row) => row.kind === "submenu" && row.key === "theme");
+    if (theme?.kind !== "submenu" || theme.rows === undefined) throw new Error("no Theme submenu");
+    expect(theme.value).toBe("Light");
+    const children = theme.rows();
+    expect(children.map((row) => (row.kind === "divider" ? "|" : "key" in row ? row.key : ""))).toEqual([
+      "theme-none",
+      "theme-light",
+      "theme-medium",
+      "theme-heavy",
+      "|",
+      "theme-restyle",
+    ]);
+    const heavy = children.find((row) => row.kind === "action" && row.key === "theme-heavy");
+    if (heavy?.kind !== "action") throw new Error("no Heavy row");
+    heavy.onSelect();
+    expect(setLevel).toHaveBeenCalledWith("heavy");
+    const light = children.find((row) => row.kind === "action" && row.key === "theme-light");
+    expect(light?.kind === "action" && light.trailing !== undefined).toBe(true);
+    expect(heavy.trailing).toBeUndefined();
+  });
+
+  it("drafts requests that name the app, and the theme for re-imagining it", () => {
+    expect(restyleAppPrompt("Notes")).toContain("Restyle the Notes app");
+    expect(reimagineAppPrompt("Notes", "Classic Mac")).toContain("Re-imagine the Notes app for the Classic Mac theme");
   });
 });
