@@ -57,9 +57,8 @@ def build_pages_blueprint(static_directory: Path, catalog: TemplateCatalogStore,
         document = static_directory / PAGE_DOCUMENT_FILENAME
         if not document.is_file():
             return Response(_NOT_BUILT_PAGE, mimetype="text/html", headers={"Cache-Control": "no-store"})
-        response = send_file(document.absolute(), mimetype="text/html")
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        # Read rather than streamed, so the document policy can admit the page's inline theme boot by its hash.
+        return Response(document.read_text(), mimetype="text/html", headers={"Cache-Control": "no-store"})
 
     @blueprint.get("/assets/<path:filename>")
     def asset(filename: str) -> ResponseReturnValue:
