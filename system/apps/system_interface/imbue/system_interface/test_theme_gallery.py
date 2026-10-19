@@ -162,7 +162,7 @@ def test_an_app_page_wears_the_theme_at_its_level_light_medium_and_heavy(themed_
     page.add_init_script(
         "window.localStorage.setItem('workspace-theme', JSON.stringify({id: 'windows-2000', revision: ''}))"
     )
-    page.set_extra_http_headers({"X-Workspace-App": "files"})
+    page.set_extra_http_headers({"X-Mngr-Forward-Service": "files"})
     page.route(
         f"{themed_shell}/app-page",
         lambda route: route.fulfill(status=200, content_type="text/html", body=_APP_PAGE),

@@ -110,7 +110,7 @@ def register_injected_theme_routes(
     """Serve ``/__workspace_theme/``: what an app's page needs when the theme is put into it from outside.
 
     The proxy in front of the app puts ``layers.css`` and ``kit.js`` at the top of each page and sends this prefix
-    here, naming the app in ``X-Workspace-App``; ``level_of_app`` gives that app's theme level, which ``kit.js``
+    here, naming the app in ``X-Mngr-Forward-Service``; ``level_of_app`` gives that app's theme level, which ``kit.js``
     carries and every theme file the kit asks for names in its ``level`` query. At none both are empty, so a page
     that themes itself keeps its own layer order.
     """

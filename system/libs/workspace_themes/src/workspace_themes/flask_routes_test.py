@@ -154,10 +154,10 @@ def test_the_injected_routes_serve_the_layer_order_the_kit_at_the_app_s_level_an
 
     layers = client.get("/__workspace_theme/layers.css")
     notes_kit = client.get(
-        "/__workspace_theme/kit.js", headers={"X-Workspace-App": "notes"}
+        "/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"}
     )
     browser_kit = client.get(
-        "/__workspace_theme/kit.js", headers={"X-Workspace-App": "browser"}
+        "/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "browser"}
     )
     base = client.get("/__workspace_theme/base.css?level=light")
     bundle = client.get("/__workspace_theme/themes/paper/theme.css?level=heavy")
@@ -171,7 +171,7 @@ def test_the_injected_routes_serve_the_layer_order_the_kit_at_the_app_s_level_an
     assert browser_kit.data == b""
     assert (
         client.get(
-            "/__workspace_theme/layers.css", headers={"X-Workspace-App": "browser"}
+            "/__workspace_theme/layers.css", headers={"X-Mngr-Forward-Service": "browser"}
         ).data
         == b""
     )

@@ -230,7 +230,7 @@ GROUPING_AT_RULES: Final[frozenset[str]] = frozenset({"media", "supports", "cont
 # Where an app's page reaches the page kit and the workspace's themes when they are put into it from outside: the
 # proxy in front of the app sends this prefix to the shell, naming the app in INJECTED_APP_HEADER.
 INJECTED_ROUTE_PREFIX: Final[str] = "/__workspace_theme/"
-INJECTED_APP_HEADER: Final[str] = "X-Workspace-App"
+INJECTED_APP_HEADER: Final[str] = "X-Mngr-Forward-Service"
 # The cascade layer an injected theme sits in at the medium and heavy levels, declared before any of the page's own
 # stylesheets: above Tailwind's reset (base), below its components and utilities, so the app's own styles win.
 INJECTED_THEME_LAYER: Final[str] = "workspace-theme"
