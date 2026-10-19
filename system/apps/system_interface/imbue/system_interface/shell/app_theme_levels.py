@@ -39,10 +39,8 @@ def is_themed_from_outside(row: RegistryRow) -> bool:
 @pure
 def theme_level_of(row: RegistryRow | None, level_by_app: Mapping[AppName, ThemeLevel]) -> ThemeLevel:
     """The level the theme is put into an app's pages at: none for an app that themes itself (or declares it is not
-    themed), else the user's choice for it, light by default. An app the registry does not know gets the default."""
-    if row is None:
-        return DEFAULT_THEME_LEVEL
-    if not is_themed_from_outside(row):
+    themed) and for a service the registry does not know, else the user's choice for it, light by default."""
+    if row is None or not is_themed_from_outside(row):
         return ThemeLevel.NONE
     return level_by_app.get(row.name, DEFAULT_THEME_LEVEL)
 

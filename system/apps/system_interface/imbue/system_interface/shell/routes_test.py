@@ -2855,3 +2855,4 @@ def test_an_app_themed_from_outside_takes_the_level_set_for_it_and_its_kit_carri
     notes_kit = client.get("/__workspace_theme/kit.js", headers={"X-Workspace-App": "notes"})
     assert notes_kit.get_data(as_text=True) == 'self.__WORKSPACE_THEME_LEVEL__ = "heavy";\nwearKit();\n'
     assert client.get("/__workspace_theme/kit.js", headers={"X-Workspace-App": "chat"}).data == b""
+    assert client.get("/__workspace_theme/kit.js", headers={"X-Workspace-App": "ttyd"}).data == b""
