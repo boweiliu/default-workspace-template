@@ -6,13 +6,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "app-manifest",
+    "app-schema",
     "flask>=3.0",
+    "imbue-common",
     "oom-priority",
+    "pydantic>=2.0",
     "werkzeug>=3.0",
 ]
 
 [dependency-groups]
 dev = [
+    # What the API-document test validates the served document with.
+    "app-schema[testing]",
     # Used by test_no_type_errors in the ratchets, pinned to the version the shell and chat use.
     "ty==0.0.85",
 ]

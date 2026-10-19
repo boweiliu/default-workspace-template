@@ -1,8 +1,11 @@
-"""Tests for the routes: the page with the shell script injected, the stats endpoint, the shell modules, and health."""
+"""Tests for the routes: the page with the shell script injected, the stats endpoint, the shell modules, health, and
+the API document."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from app_schema.testing import assert_api_schema_describes_app
 from flask.testing import FlaskClient
 
 from system_monitor import memory, runner, stats
@@ -31,7 +34,13 @@ def test_the_stats_endpoint_answers_the_snapshot_uncached(
 ) -> None:
     snapshot: dict[str, Any] = {
         "memory": {"total": 1, "available": 0, "used": 1},
-        "stops": [],
+        "disk": {"total": 8, "used": 3, "free": 5},
+        "usage": [
+            {"id": "chats", "label": "Chats", "hint": "", "bytes": 1, "items": [{"name": "Inbox", "bytes": 1}]},
+            {"id": "scratch", "label": "Temporary files", "hint": "", "bytes": 0, "items": [], "limit": 2},
+        ],
+        "usage_mode": "exact",
+        "stops": [{"at": "2026-10-17T00:00:00+00:00", "what": "a chat's agent", "command": None}],
     }
     monkeypatch.setattr(runner, "SNAPSHOT", stats.SharedSnapshot(lambda: snapshot))
     history = memory.MemoryHistory(
@@ -42,7 +51,13 @@ def test_the_stats_endpoint_answers_the_snapshot_uncached(
 
     response = client.get("/api/stats")
 
-    assert response.get_json() == {**snapshot, "history": [{"t": 2000, "v": 0.75}]}
+    # Every row carries limit on the wire; only the scratch row has one.
+    chats_row, scratch_row = snapshot["usage"]
+    assert response.get_json() == {
+        **snapshot,
+        "usage": [{**chats_row, "limit": None}, scratch_row],
+        "history": [{"t": 2000, "v": 0.75}],
+    }
     assert response.headers["Cache-Control"] == "no-store"
 
 
@@ -53,3 +68,7 @@ def test_only_the_two_shell_modules_are_served(client: FlaskClient) -> None:
 
 def test_health_answers_ok(client: FlaskClient) -> None:
     assert client.get("/health").get_json() == {"status": "ok"}
+
+
+def test_the_app_describes_its_api_the_way_its_manifest_says(client: FlaskClient) -> None:
+    assert_api_schema_describes_app(client, Path(__file__).resolve().parents[2] / "app.toml")
