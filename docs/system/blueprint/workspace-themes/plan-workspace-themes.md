@@ -247,7 +247,7 @@ The shell tells each page it frames which theme to wear with `shell:theme` `{"th
 - Before the page's first paint, a small inline script (injected by the `themeBoot()` Vite plugin into every app's `index.html`) wears the remembered theme, so a page opens in its theme rather than flashing the standard look.
 - A page framed by a page of its own app (the chat's inner pages) mirrors its parent and never remembers the theme itself: the parent, on the same origin, does.
 - A new stylesheet replaces the old one only once it has loaded, so a switch never shows an unstyled frame.
-- A page built as plain HTML rather than on the shared library loads the **page kit** the shell builds and every app serves beside its app contract: `/_static/workspace_theme.css` (the standard tokens, and the standard look of the `button`, `field`, `tile`, `list-row`, and `badge` parts on plain elements) and then `/_static/workspace_theme.js` (the boot and `shell:theme` handling above, as one classic script). No app the `build-app` skill makes loads the kit yet, so such an app's page keeps its own look under every theme. The script marks the page's root `data-page-kit`, and on such a page a plain control takes its part's styles without being marked: a `<button>` is a `button`, a text `<input>` or a `<textarea>` a `field`, a `<select>` a `select`. The kit's stylesheet gives them the standard look, and the server, when it sends a theme's style file, gives each rule for those parts a second selector for the bare control, of the element's own weight and only under `:root[data-page-kit]`: an app's own class rules still beat the theme's, and a built-in app's unmarked controls are left alone.
+- A page built as plain HTML rather than on the shared library wears the theme through the **page kit**: `/_static/workspace_theme.css` (the standard tokens, and the standard look of the `button`, `field`, `tile`, `list-row`, and `badge` parts on plain elements) and `/_static/workspace_theme.js` (the boot and `shell:theme` handling above, as one classic script). A built-in page loads them itself; an app that does not is given them from outside, at a level (section 7.1).
 
 When a theme's files change, a theme folder is added or removed, or `POST /api/themes/default` sets the workspace's default, the shell sends `themes_changed` `{"catalog"}` (the `GET /api/themes` document) on its WebSocket; the desktop takes the new catalog, and a changed theme or revision reaches every page as a new `shell:theme`.
 
@@ -316,9 +316,27 @@ parts = [
 | `parts` | The app has a look of its own somewhere (chat bubbles, a canvas). It marks those elements `data-part="<app>.<name>"` and declares them; a theme may style them in `apps/<app>.css`. A theme that does not still styles the rest through tokens. |
 | `none` | The app shows content whose look is not the workspace's (another site, a terminal's output). The shell themes the window around it; the page itself is left alone. |
 
-Built-in apps use `tokens` unless they need more. An app the `build-app` skill makes declares no `[theming]` and loads nothing of a theme, so its page keeps its own look; only its window and its icon are themed. An app reaches for `parts` only for a look the shared components cannot give, and keeps its declared parts stable: renaming one breaks every theme that styles it, so it is a contract change, made with a note in the app's changelog.
+Built-in apps use `tokens` unless they need more. An app the `build-app` skill makes declares no `[theming]` and loads nothing of a theme; it takes the theme from outside (section 7.1). An app reaches for `parts` only for a look the shared components cannot give, and keeps its declared parts stable: renaming one breaks every theme that styles it, so it is a contract change, made with a note in the app's changelog.
 A theme lists the apps it styles in `styles.apps`, and the validator checks that every app part it names is declared by that app.
 An overlay for an app the workspace does not have is left out of the bundle and not checked, so a theme made for one workspace still works in another.
+
+### 7.1 Apps themed from outside
+
+An app whose manifest declares no `[theming]` (`forward_port.py` copies the mode into its registry row as `theming_mode`) is given the theme by the proxy in front of it, with no change to the app and no theming guidance for the agent that built it.
+`mngr forward` (Imbue Studio passes `--shell-path-prefix /__workspace_theme/` and `--page-head-html`) puts `<link rel="stylesheet" href="/__workspace_theme/layers.css"><script src="/__workspace_theme/kit.js"></script>` at the top of the `<head>` of every page a service other than the shell serves, and sends that prefix, on every app's origin, to the shell, naming the app in `X-Mngr-Forward-Service`.
+The shell answers at the level the user set for that app (`app_theme_levels.json` in its state folder, set by `POST /api/apps/<app>/theme-level`):
+
+| Level | What the app's page wears |
+|---|---|
+| `none` | Nothing: `layers.css` and `kit.js` are empty. Every app that themes itself, or declares `none`, and every service the registry does not know, is at this level. |
+| `light` (default) | The theme only on unstyled elements: each rule for a control part is rewritten to the bare control (`button`, a text `input`, `textarea`, `select`) with `:not([class]):not([style])`, and only the `:root` tokens are kept. |
+| `medium` | The theme's rules, plus the bare controls, in the `workspace-theme` cascade layer: below everything the app styles itself, so it only fills in what the app left unset. |
+| `heavy` | As `medium`, with every declaration `!important`: the theme's values win, and properties the theme does not set stay the app's. |
+
+`layers.css` declares `@layer theme, base, workspace-theme, components, utilities;` before any of the page's own stylesheets, so with Tailwind 4 the theme sits above its reset and below its components and utilities; Tailwind 3's reset is unlayered, so there `medium` fills in less.
+`kit.js` is `self.__WORKSPACE_THEME_LEVEL__ = "<level>";` and the page kit's script, which wears the theme from `/__workspace_theme/base.css?level=` and `/__workspace_theme/themes/<id>/theme.css?v=&level=`; under the standard theme it adds nothing.
+The window menu's Theme submenu sets the level, and every open page of the app reloads when it changes. Two more choices there go further than a stylesheet can, and draft a request to the agent in the pinned chat instead: "Restyle with AI..." rewrites the app on the design tokens, and "Re-imagine with AI..." redesigns it, assets included, to fit the theme.
+A workspace whose shell predates this answers the prefix with its own page, which the browser refuses as either file (the proxy marks it `nosniff`), so its apps' pages stay as they were. A share's gateway does not put the theme into apps yet.
 
 ## 8. Making themes
 
@@ -351,5 +369,6 @@ It is how a person or an agent judges a theme, and what the browser tests load t
 | Theme storage and routes | the shell's `desktops.py` (storage) and `theme_routes.py` |
 | Chrome slots, icons and their derivation, settings | the shell frontend's `TitleBar.ts`, `glyphs.ts`, `themeIcons.ts`, `DesktopSettingsDialog.ts` |
 | The gallery | the shell frontend's `gallery/` entry |
-| App theming levels | `app_manifest`'s `AppTheming`, each app's `app.toml` |
+| App theming modes | `app_manifest`'s `AppTheming`, each app's `app.toml` |
+| Apps themed from outside | `workspace_themes`' `injection.py` and `register_injected_theme_routes`, the shell's `app_theme_levels.py`, the window menu's Theme submenu, `mngr forward`'s `--shell-path-prefix` and `--page-head-html` |
 | Skills | `.agents/skills/create-theme/` and `.agents/skills/make-theme-icon/` |
