@@ -122,7 +122,7 @@ function commitRename(row: ChatRow): void {
   if (rename === null || rename.chatId !== row.chatId) return;
   const title = rename.draft.trim();
   rename = null;
-  if (title !== "" && title !== row.title) showPendingRename(row.chatId, title, row.title);
+  if (title !== "" && title !== row.title) showPendingRename(row.chatId, title);
   m.redraw();
   if (title === "" || title === row.title) return;
   renameChat(row.chatId, title).then(

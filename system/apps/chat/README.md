@@ -365,7 +365,9 @@ A new chat is minted as "Chat N". Its first message is sent, in the background
 and outside the chat, to the cheapest model the chat's account offers
 (`chat_naming.py`, through the harness's `OneShotCompletion`, from an empty
 directory with no session kept), and the answer, in the form "Short name: brief
-description", renames the chat the way the rail's rename does. Models are named
+description", renames the chat the way the rail's rename does. The message goes
+to the model between `<message>` tags, as material to name, so a message that
+asks for a reply ("reply with OK") is named rather than answered. Models are named
 by family rather than by id, so a change to a provider's model list moves the
 call to the new model instead of breaking it:
 
@@ -387,9 +389,26 @@ three messages. Only a chat still wearing a name nobody chose is renamed: exactl
 "Chat N", or a seeded chat's seed title (the Mind app's "Welcome"), named from
 the first message the user sends in it. A name the user or an agent chose is left
 alone. What has been tried is kept in `naming.json` in the chat's folder, so a
-restart neither renames a named chat nor retries past the limit. A harness with
-no `OneShotCompletion` (Pi, Antigravity, OpenCode) keeps the minted name, and a
-secondary chat names nothing.
+restart neither renames a named chat nor retries past the limit.
+
+When no model can name the chat, it is named from the opening words of the
+message itself (its first line, cut at a word boundary to 48 characters): on a
+harness with no `OneShotCompletion` (Pi, Antigravity, OpenCode), on an account
+that is gone, when the call fails, and when the answer is not a name. Fewer than
+three words count as no clear subject, like the model's `NONE`. So every chat
+whose opening says what it is about gets a name, whatever provider it runs on.
+A secondary chat names nothing.
+
+A name a person or an agent gives wins over the automatic one. While their
+rename runs, the chat no longer counts as wearing a placeholder name, so no
+automatic name is shown or made for it; and renames of one chat run one at a
+time (`_rename_lock_for`), so an automatic rename that started first finishes
+before theirs, which lands last. The observe stream can deliver a snapshot it
+read before a rename after the rename returned; the manager keeps the new name
+over such a snapshot (`_RecentRename`) until the stream reports the rename, so
+the list never flips back to the old name. The rail shows a typed name at once
+(`root/pendingRenames.ts`) and keeps it until the chat app answers: an automatic
+name shown meanwhile does not replace it, and a refusal brings the old name back.
 
 ## Compaction
 

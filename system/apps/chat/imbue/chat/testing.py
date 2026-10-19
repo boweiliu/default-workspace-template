@@ -520,6 +520,21 @@ def write_recording_mngr_binary(tmp_path: Path) -> tuple[str, Path]:
     return str(script), log_path
 
 
+def write_gated_mngr_binary(tmp_path: Path) -> tuple[str, Path, Path]:
+    """A stand-in ``mngr`` that logs each argv on one line, then waits for a gate file before it succeeds.
+
+    Returns its path, the log's, and the gate's: a test holds a call open until it creates the gate.
+    """
+    log_path = tmp_path / "mngr-argv.log"
+    gate_path = tmp_path / "mngr-gate"
+    script = tmp_path / "gated-mngr"
+    script.write_text(
+        f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{log_path}"\nwhile [ ! -e "{gate_path}" ]; do sleep 0.05; done\n'
+    )
+    script.chmod(0o755)
+    return str(script), log_path, gate_path
+
+
 def put_stand_in_cli_on_path(tmp_path: Path, name: str, body: str, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Put a shell script named ``name`` first on PATH that logs its argv, then runs ``body``; returns the log.
 

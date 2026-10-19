@@ -27,14 +27,14 @@ describe("pending renames", () => {
   });
 
   it("shows the typed name at once, and only on the renamed chat", () => {
-    showPendingRename("chat-a", "Plans", "Chat 1");
+    showPendingRename("chat-a", "Plans");
 
     expect(titles(withPendingTitles([row("chat-a", "Chat 1"), row("chat-b", "Chat 2")]))).toEqual(["Plans", "Chat 2"]);
     expect(titleWithPendingRename("chat-a", "Chat 1")).toBe("Plans");
   });
 
   it("keeps the typed name through chat lists that still carry the old one, until the rename is accepted", () => {
-    showPendingRename("chat-a", "Plans", "Chat 1");
+    showPendingRename("chat-a", "Plans");
     settleAcceptedRenames();
 
     expect(titles(withPendingTitles([row("chat-a", "Chat 1")]))).toEqual(["Plans"]);
@@ -45,25 +45,24 @@ describe("pending renames", () => {
     expect(titles(withPendingTitles([row("chat-a", "Chat 1")]))).toEqual(["Chat 1"]);
   });
 
-  it("gives way to the chat app's name as soon as it shows another", () => {
-    showPendingRename("chat-a", "Plans", "Chat 1");
+  it("keeps the typed name over an automatic name the chat app shows before it answers", () => {
+    showPendingRename("chat-a", "Plans");
 
-    // The chat app may store the name as it normalizes it.
-    expect(titles(withPendingTitles([row("chat-a", "plans")]))).toEqual(["plans"]);
-    expect(titles(withPendingTitles([row("chat-a", "Chat 1")]))).toEqual(["Chat 1"]);
+    expect(titles(withPendingTitles([row("chat-a", "Trip planning: a week in Lisbon")]))).toEqual(["Plans"]);
+    expect(titleWithPendingRename("chat-a", "Trip planning: a week in Lisbon")).toBe("Plans");
   });
 
   it("brings the old name back when the rename is refused", () => {
-    showPendingRename("chat-a", "Plans", "Chat 1");
+    showPendingRename("chat-a", "Plans");
 
     dropPendingRename("chat-a", "Plans");
 
     expect(titles(withPendingTitles([row("chat-a", "Chat 1")]))).toEqual(["Chat 1"]);
   });
 
-  it("measures a second rename typed before the first landed against the chat app's name", () => {
-    showPendingRename("chat-a", "Plans", "Chat 1");
-    showPendingRename("chat-a", "Trip", "Plans");
+  it("keeps a second rename typed before the first was answered", () => {
+    showPendingRename("chat-a", "Plans");
+    showPendingRename("chat-a", "Trip");
 
     // The first refusal arrives late: the second rename's name stays.
     dropPendingRename("chat-a", "Plans");
