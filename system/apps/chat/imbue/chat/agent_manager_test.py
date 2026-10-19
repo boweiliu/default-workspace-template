@@ -130,6 +130,7 @@ from imbue.chat.testing import seed_failed_chat
 from imbue.chat.testing import utc_iso_seconds_ago
 from imbue.chat.testing import wait_until_true
 from imbue.chat.testing import write_compacting_marker
+from imbue.chat.testing import write_gated_mngr_binary
 from imbue.chat.testing import write_last_compaction_record
 from imbue.chat.testing import write_recording_mngr_binary
 from imbue.chat.testing import write_summary_for_request
@@ -2244,6 +2245,107 @@ def test_renaming_a_chat_drops_the_automatic_title_shown_over_it(
 
         manager.rename_chat("agent-7", "Planning notes")
 
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Planning notes"]
+    finally:
+        manager.stop()
+
+
+def test_a_snapshot_read_before_a_rename_does_not_put_the_old_name_back(
+    broadcaster: WebSocketBroadcaster,
+    true_binary: str,
+) -> None:
+    """Seen in a real workspace: the observe stream delivered a snapshot it read before a rename after the rename
+    returned, and the chat list showed the old name for seconds."""
+    manager = AgentManager.build(broadcaster, mngr_binary=true_binary)
+    try:
+        agent_id, host_id = MngrAgentId(), HostId()
+
+        def observed(name: str, display_name: str) -> AgentDetails:
+            return _agent_details(name, agent_id=agent_id, labels={"display_name": display_name}, host_id=host_id)
+
+        manager._handle_observe_event(make_full_agent_state_event([observed("Chat-2", "Chat 2")]))
+        manager.rename_chat(str(agent_id), "Planning notes")
+
+        manager._handle_observe_event(make_full_agent_state_event([observed("Chat-2", "Chat 2")]))
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Planning notes"]
+
+        manager._handle_observe_event(make_full_agent_state_event([observed("Planning-notes", "Planning notes")]))
+        # Once the stream has reported the rename, a name it reports later stands: someone renamed the chat since.
+        manager._handle_observe_event(make_full_agent_state_event([observed("Chat-2", "Chat 2")]))
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Chat 2"]
+    finally:
+        manager.stop()
+
+
+def test_a_snapshot_read_between_two_quick_renames_does_not_put_either_old_name_back(
+    broadcaster: WebSocketBroadcaster,
+    true_binary: str,
+) -> None:
+    manager = AgentManager.build(broadcaster, mngr_binary=true_binary)
+    try:
+        agent_id, host_id = MngrAgentId(), HostId()
+        first = _agent_details("Chat-2", agent_id=agent_id, labels={"display_name": "Chat 2"}, host_id=host_id)
+        manager._handle_observe_event(make_full_agent_state_event([first]))
+        manager.rename_chat(str(agent_id), "Plans")
+        manager.rename_chat(str(agent_id), "Trip plans")
+
+        manager._handle_observe_event(make_full_agent_state_event([first]))
+
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Trip plans"]
+    finally:
+        manager.stop()
+
+
+def test_a_chosen_rename_typed_while_an_automatic_one_runs_lands_last(
+    broadcaster: WebSocketBroadcaster,
+    tmp_path: Path,
+) -> None:
+    """The automatic rename started first; the person's waits for it, so the chat ends up with the person's name."""
+    mngr_binary, argv_log, gate = write_gated_mngr_binary(tmp_path)
+    manager = AgentManager.build(broadcaster, mngr_binary=mngr_binary)
+    try:
+        _tracked_chat(manager, "agent-7", "Chat-2", display_name="Chat 2")
+        automatic = threading.Thread(
+            target=manager.rename_placeholder_named_chat, args=(ChatId("agent-7"), "Rome trip: plan five days")
+        )
+        automatic.start()
+        wait_until_true(lambda: argv_log.is_file(), 10, "the automatic rename's mngr call")
+        chosen = threading.Thread(target=manager.rename_chat, args=("agent-7", "Planning notes"))
+        chosen.start()
+
+        gate.touch()
+        automatic.join(timeout=10)
+        chosen.join(timeout=10)
+
+        automatic_call, chosen_call = argv_log.read_text().splitlines()
+        assert "display_name=Rome trip: plan five days" in automatic_call
+        assert "display_name=Planning notes" in chosen_call
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Planning notes"]
+    finally:
+        manager.stop()
+
+
+def test_while_a_chosen_rename_runs_no_automatic_name_is_shown_or_made(
+    broadcaster: WebSocketBroadcaster,
+    tmp_path: Path,
+) -> None:
+    mngr_binary, argv_log, gate = write_gated_mngr_binary(tmp_path)
+    manager = AgentManager.build(broadcaster, mngr_binary=mngr_binary)
+    try:
+        _tracked_chat(manager, "agent-7", "Chat-2", display_name="Chat 2")
+        chosen = threading.Thread(target=manager.rename_chat, args=("agent-7", "Planning notes"))
+        chosen.start()
+        wait_until_true(lambda: argv_log.is_file(), 10, "the chosen rename's mngr call")
+
+        assert not manager.has_placeholder_name(ChatId("agent-7"))
+        manager.show_automatic_title(ChatId("agent-7"), "Rome trip: plan five days")
+        assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Chat 2"]
+
+        gate.touch()
+        chosen.join(timeout=10)
+
+        assert not manager.rename_placeholder_named_chat(ChatId("agent-7"), "Rome trip: plan five days")
+        assert len(argv_log.read_text().splitlines()) == 1
         assert [snapshot.title for snapshot in manager.get_chat_snapshots()] == ["Planning notes"]
     finally:
         manager.stop()

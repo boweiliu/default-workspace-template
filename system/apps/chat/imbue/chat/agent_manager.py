@@ -851,6 +851,37 @@ class _CreatedAgentAwaitingObserve(FrozenModel):
         return self.model_copy_update(to_update(self.field_ref().snapshots_without_it, self.snapshots_without_it + 1))
 
 
+class _RecentRename(FrozenModel):
+    """Renames this server made of one agent that the observe stream has not reported yet.
+
+    The stream can deliver a snapshot it read before a rename after the rename has returned, which would put the
+    old name back for seconds.
+    """
+
+    stale_names: tuple[tuple[str, str | None], ...] = Field(
+        frozen=True, description="The (true name, display_name label) pairs the agent had before, oldest first"
+    )
+    new_name: str = Field(frozen=True, description="The true name the latest rename gave it")
+    new_display_name: str = Field(frozen=True, description="The display_name label the latest rename gave it")
+
+
+@pure
+def _observed_with_recent_rename(observed: AgentStateItem, rename: _RecentRename) -> tuple[AgentStateItem, bool]:
+    """The agent as the chat app shows it after ``observed`` arrives, and whether the rename is still unreported.
+
+    A snapshot carrying a name the agent had before the rename predates it and gets the new name; one carrying the
+    new name reports the rename; one carrying any other name was renamed since, by someone else, and stands.
+    """
+    observed_names = (observed.name, observed.labels.get("display_name"))
+    if observed_names == (rename.new_name, rename.new_display_name) or observed_names not in rename.stale_names:
+        return observed, False
+    renamed = observed.model_copy_update(
+        to_update(observed.field_ref().name, rename.new_name),
+        to_update(observed.field_ref().labels, {**observed.labels, "display_name": rename.new_display_name}),
+    )
+    return renamed, True
+
+
 class HandoffCapabilities(FrozenModel):
     """What a handoff needs from the app state and the routes, bound by the composition root."""
 
@@ -931,6 +962,13 @@ class AgentManager:
     # A name shown for a chat before its rename lands: the automatic name, from the moment the
     # model answers until ``mngr rename`` (seconds of CLI startup) has carried it.
     _title_override_by_chat: dict[ChatId, str]
+    # Renames made here that the observe stream has not reported yet, by agent id.
+    _recent_rename_by_agent_id: dict[str, _RecentRename]
+    # The chats whose rename by a person or an agent is running, counted, so no automatic name is shown or made
+    # for them meanwhile.
+    _chosen_renames_running_by_chat: dict[ChatId, int]
+    # One lock per chat, held while a rename of it runs: two renames of one chat run one after the other.
+    _rename_lock_by_chat: dict[ChatId, threading.Lock]
     # The records of the chats that have run on more than one agent, read from the store at
     # build (and on ``refresh_chat_records``); a chat with no record is its one agent.
     _chat_record_store: ChatRecordStore
@@ -1133,6 +1171,9 @@ class AgentManager:
         manager._chat_record_by_id = manager._chat_record_store.read_all()
         manager._provisional_chats = seeded_provisional_chats(manager._chat_record_by_id)
         manager._title_override_by_chat = {}
+        manager._recent_rename_by_agent_id = {}
+        manager._chosen_renames_running_by_chat = {}
+        manager._rename_lock_by_chat = {}
         manager._chat_settings = chat_settings if chat_settings is not None else ChatSettingsStore(path=None)
         manager._chat_files_root = chat_files_root
         manager._prompt_template_path = prompt_template_path
@@ -1348,8 +1389,11 @@ class AgentManager:
         return snapshot.model_copy_update(to_update(snapshot.field_ref().title, title))
 
     def show_automatic_title(self, chat_id: ChatId, title: str) -> None:
-        """Show ``title`` for the chat at once, ahead of the rename that will make it its name."""
+        """Show ``title`` for the chat at once, ahead of the rename that will make it its name; nothing while a rename
+        a person or an agent chose is running for it."""
         with self._lock:
+            if chat_id in self._chosen_renames_running_by_chat:
+                return
             self._title_override_by_chat[chat_id] = title
             provisional = self._provisional_chats.get(chat_id)
         if provisional is not None:
@@ -2800,7 +2844,48 @@ class AgentManager:
         self._broadcast_chats_updated()
 
     def rename_chat(self, chat_ref: str, display_name: str) -> None:
-        """Give a chat the name the user just typed, keeping its active agent's name pair matched.
+        """Give a chat the name a person (or an agent) chose, as ``_rename_chat_now`` does, ahead of any automatic name.
+
+        While it runs the chat no longer counts as wearing a placeholder name, so the namer
+        (``chat_naming.py``) neither shows nor makes its own name for it, and a rename the namer
+        already started finishes first, so this one lands last.
+        """
+        chat_key = parse_chat_ref(chat_ref)
+        if chat_key is None:
+            self._rename_chat_now(chat_ref, display_name)
+            return
+        with self._lock:
+            self._chosen_renames_running_by_chat[chat_key] = self._chosen_renames_running_by_chat.get(chat_key, 0) + 1
+        try:
+            with self._rename_lock_for(chat_key):
+                self._rename_chat_now(chat_ref, display_name)
+        finally:
+            with self._lock:
+                remaining = self._chosen_renames_running_by_chat.pop(chat_key) - 1
+                if remaining > 0:
+                    self._chosen_renames_running_by_chat[chat_key] = remaining
+
+    def _rename_lock_for(self, chat_id: ChatId) -> threading.Lock:
+        with self._lock:
+            return self._rename_lock_by_chat.setdefault(chat_id, threading.Lock())
+
+    def _with_recent_renames_locked(self, observed_agents: dict[str, AgentStateItem]) -> dict[str, AgentStateItem]:
+        """``observed_agents`` with the renames made here that they predate; a rename they report is let go."""
+        shown_agents = dict(observed_agents)
+        still_unreported: dict[str, _RecentRename] = {}
+        for agent_id, rename in self._recent_rename_by_agent_id.items():
+            observed = observed_agents.get(agent_id)
+            if observed is None:
+                continue
+            shown, is_unreported = _observed_with_recent_rename(observed, rename)
+            shown_agents[agent_id] = shown
+            if is_unreported:
+                still_unreported[agent_id] = rename
+        self._recent_rename_by_agent_id = still_unreported
+        return shown_agents
+
+    def _rename_chat_now(self, chat_ref: str, display_name: str) -> None:
+        """Give a chat a new name, keeping its active agent's name pair matched.
 
         ``chat_ref`` is a chat id (what the chat app's rename route carries) or an agent name,
         so both are resolved here. The display name's canonical form becomes the
@@ -2891,14 +2976,26 @@ class AgentManager:
                     to_update(renamed.field_ref().name, new_canonical_name),
                     to_update(renamed.field_ref().labels, {**renamed.labels, "display_name": display_name}),
                 )
+                earlier = self._recent_rename_by_agent_id.get(agent_state.id)
+                self._recent_rename_by_agent_id[agent_state.id] = _RecentRename(
+                    stale_names=(
+                        *(() if earlier is None else earlier.stale_names),
+                        (agent_state.name, agent_state.labels.get("display_name")),
+                    ),
+                    new_name=new_canonical_name,
+                    new_display_name=display_name,
+                )
             if chat is not None:
                 self._title_override_by_chat.pop(chat.chat_id, None)
         self._broadcast_chats_updated()
 
     def has_placeholder_name(self, chat_id: ChatId) -> bool:
         """Whether a chat still wears a name nobody chose for it: a minted "Chat N", or the title it was seeded with
-        (the Mind app's "Welcome"). A chat still being created counts by the name it was minted with."""
+        (the Mind app's "Welcome"). A chat still being created counts by the name it was minted with; one whose
+        rename by a person or an agent is running does not count."""
         with self._lock:
+            if chat_id in self._chosen_renames_running_by_chat:
+                return False
             provisional = self._provisional_chats.get(chat_id)
             record = self._chat_record_by_id.get(chat_id)
         if provisional is not None:
@@ -2946,9 +3043,10 @@ class AgentManager:
         """Rename a chat that still wears a placeholder name, as ``rename_chat`` would; False, running nothing,
         when it has any other name, so an automatic name never replaces one a person or agent chose.
         Raises what ``rename_chat`` raises."""
-        if not self.has_placeholder_name(chat_id):
-            return False
-        self.rename_chat(chat_id, display_name)
+        with self._rename_lock_for(chat_id):
+            if not self.has_placeholder_name(chat_id):
+                return False
+            self._rename_chat_now(chat_id, display_name)
         return True
 
     def _start_session_sweep(self) -> None:
@@ -3853,7 +3951,7 @@ class AgentManager:
             with self._lock:
                 old_ids = set(self._agents.keys())
                 new_ids = set(new_agents.keys())
-                self._agents = new_agents
+                self._agents = self._with_recent_renames_locked(new_agents)
 
             for agent_id in new_ids:
                 self._ensure_activity_tracking(agent_id)
@@ -4019,6 +4117,7 @@ class AgentManager:
             self._created_unobserved_by_id = still_awaited
             for agent_id, created in self._created_unobserved_by_id.items():
                 new_agents[agent_id] = self._agents.get(agent_id, created.agent)
+            new_agents = self._with_recent_renames_locked(new_agents)
             self._agents = new_agents
             self._match_by_agent_id = new_matches
 
