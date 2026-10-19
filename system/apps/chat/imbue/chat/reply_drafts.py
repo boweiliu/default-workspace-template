@@ -1,0 +1,131 @@
+"""Stream the reply an agent is writing to the pages showing its chat, before its transcript has it.
+
+Claude records a reply only once it has finished writing it, so the chat would otherwise show a
+reply seconds after the agent's terminal does. One thread asks each watcher whose chat a page
+streams for its draft (``AgentSessionWatcher.read_reply_draft``) a few times a second and sends
+any change on the chat's stream as an ``assistant_draft`` frame: ``{"type": "assistant_draft",
+"agent_id", "after_event_id", "text"}``, with ``text`` empty once there is no draft. The frame is
+not a transcript event (it has no ``event_id`` and nothing stores it); the page shows it at the
+end of the transcript until the reply itself lands.
+
+The work is bounded by what the user is looking at: a chat no page streams is never read, and a
+Claude agent with no turn in flight costs one stat of its ``active`` marker per pass.
+"""
+
+import threading
+from collections.abc import Callable
+from typing import Any
+from typing import Final
+from typing import Protocol
+
+from loguru import logger
+
+from imbue.chat.harnesses.session_watcher import CapturePaneCallback
+from imbue.chat.harnesses.session_watcher import ReplyDraft
+from imbue.concurrency_group.errors import ProcessError
+from imbue.concurrency_group.subprocess_utils import run_local_command_modern_version
+
+REPLY_DRAFT_EVENT_TYPE: Final[str] = "assistant_draft"
+
+# How often a streamed chat's draft is re-read. Each read of a turn in flight is one tmux capture.
+REPLY_DRAFT_POLL_INTERVAL_SECONDS: Final[float] = 0.3
+
+_CAPTURE_TIMEOUT_SECONDS: Final[float] = 5.0
+
+
+class ReplyDraftReader(Protocol):
+    """The slice of a session watcher the publisher reads; every ``AgentSessionWatcher`` has it."""
+
+    def read_reply_draft(self, capture_pane: CapturePaneCallback) -> ReplyDraft | None: ...
+
+
+# ``(chat id, agent id, watcher)`` for each agent with a watcher whose chat a page streams.
+ListStreamedWatchers = Callable[[], list[tuple[str, str, ReplyDraftReader]]]
+# Captures one agent's pane by agent id.
+CaptureAgentPane = Callable[[str], str | None]
+# Sends one frame on a chat's streams.
+BroadcastToChat = Callable[[str, dict[str, Any]], None]
+
+
+def capture_tmux_session_pane(session_name: str) -> str | None:
+    """The visible pane of a tmux session with its colour codes and wrapped lines joined, or None."""
+    try:
+        result = run_local_command_modern_version(
+            command=["tmux", "capture-pane", "-e", "-J", "-p", "-t", f"={session_name}:"],
+            cwd=None,
+            is_checked=False,
+            timeout=_CAPTURE_TIMEOUT_SECONDS,
+        )
+    except ProcessError as e:
+        logger.debug("Could not capture tmux session {}: {}", session_name, e)
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def reply_draft_frame(agent_id: str, draft: ReplyDraft) -> dict[str, Any]:
+    return {
+        "type": REPLY_DRAFT_EVENT_TYPE,
+        "agent_id": agent_id,
+        "after_event_id": draft.after_event_id,
+        "text": draft.text,
+    }
+
+
+class ReplyDraftPublisher:
+    """Reads the drafts of the streamed chats on one thread and broadcasts what changed."""
+
+    def __init__(
+        self,
+        list_streamed_watchers: ListStreamedWatchers,
+        capture_agent_pane: CaptureAgentPane,
+        broadcast_to_chat: BroadcastToChat,
+    ) -> None:
+        self._list_streamed_watchers = list_streamed_watchers
+        self._capture_agent_pane = capture_agent_pane
+        self._broadcast_to_chat = broadcast_to_chat
+        # The last draft sent per agent, so an unchanged draft sends nothing.
+        self._published_by_agent: dict[str, ReplyDraft] = {}
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Begin polling on a daemon thread. Idempotent."""
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True, name="reply-drafts")
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop polling. Idempotent."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=_CAPTURE_TIMEOUT_SECONDS + 1.0)
+
+    def publish_once(self) -> None:
+        """One pass: read each streamed agent's draft and broadcast the ones that changed."""
+        seen_agent_ids: set[str] = set()
+        for chat_id, agent_id, watcher in self._list_streamed_watchers():
+            seen_agent_ids.add(agent_id)
+            draft = watcher.read_reply_draft(self._bind_capture(agent_id))
+            if draft is None:
+                continue
+            previous = self._published_by_agent.get(agent_id)
+            if previous == draft or (previous is None and draft.text == ""):
+                continue
+            self._published_by_agent[agent_id] = draft
+            self._broadcast_to_chat(chat_id, reply_draft_frame(agent_id, draft))
+        # A chat no page streams any more starts from nothing when one opens it again.
+        for agent_id in set(self._published_by_agent) - seen_agent_ids:
+            del self._published_by_agent[agent_id]
+
+    def _bind_capture(self, agent_id: str) -> CapturePaneCallback:
+        return lambda: self._capture_agent_pane(agent_id)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(timeout=REPLY_DRAFT_POLL_INTERVAL_SECONDS):
+            try:
+                self.publish_once()
+            except OSError as e:
+                logger.opt(exception=e).warning("Reading the streamed chats' reply drafts failed")

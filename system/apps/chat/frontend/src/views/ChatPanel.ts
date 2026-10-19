@@ -30,8 +30,10 @@ import {
   getEventsForChat,
   getEventCount,
   getFirstOffset,
+  getLastEventId,
   getRenderVersion,
   getTotalEventCount,
+  hasMoreAfter,
   isConversationNotFound,
   noteLoadedArrivals,
   removeMessageSentListener,
@@ -40,6 +42,7 @@ import type { FillAction } from "../models/transcriptScroll/fillPlanner";
 import { createTranscriptScrollEngine } from "./transcript-scroll-engine";
 import { TranscriptScrollbar } from "./TranscriptScrollbar";
 import { connectToStream, disconnectFromStream, loadSnapshotWithStream } from "../models/StreamingMessage";
+import { getReplyDraftVersion, shownReplyDraft } from "../models/ReplyDrafts";
 import {
   addChatsUpdatedListener,
   getChatById,
@@ -615,15 +618,20 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     // held events, the settled flag and the running compaction -- captured by the
     // render version (bumped on any data mutation) plus those two -- so a
     // scroll-only redraw reuses the cached rows.
+    // The reply the agent is still writing, which its transcript does not hold yet, renders after
+    // the transcript as a reply would, while the window reaches the live end.
+    const replyDraft = hasMoreAfter(chatId) ? null : shownReplyDraft(chatId, getLastEventId(chatId));
     const renderKey =
       `${chatId}|${getRenderVersion(chatId)}|${tailTurnSettled ? 1 : 0}|` +
-      `${liveCompaction === null ? "-" : (liveCompaction.cause ?? "unknown")}`;
+      `${liveCompaction === null ? "-" : (liveCompaction.cause ?? "unknown")}|` +
+      `${replyDraft === null ? "-" : getReplyDraftVersion()}`;
     if (renderKey !== rowsCacheKey) {
       // Both structure and decoration come from the transcript walk; there is no
       // side-channel enrichment. The same pipeline feeds the subagent view, so a
       // subagent's "View conversation" renders an identical progress timeline.
       if (liveCompaction === null) closeRunningCompactionChips();
-      cachedRows = buildConversationRows(chatId, events, tailTurnSettled, liveCompaction);
+      const renderedEvents = replyDraft === null ? events : [...events, replyDraft];
+      cachedRows = buildConversationRows(chatId, renderedEvents, tailTurnSettled, liveCompaction);
       rowsCacheKey = renderKey;
     }
     const rows = cachedRows;

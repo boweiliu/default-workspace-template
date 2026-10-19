@@ -1,0 +1,86 @@
+from typing import Any
+
+from imbue.chat.harnesses.session_watcher import CapturePaneCallback
+from imbue.chat.harnesses.session_watcher import ReplyDraft
+from imbue.chat.reply_drafts import REPLY_DRAFT_EVENT_TYPE
+from imbue.chat.reply_drafts import ReplyDraftPublisher
+from imbue.chat.reply_drafts import ReplyDraftReader
+
+
+class _ScriptedDraftReader:
+    """Answers each read with the next draft of its script, capturing the pane first."""
+
+    def __init__(self, drafts: list[ReplyDraft | None]) -> None:
+        self._drafts = drafts
+        self.captured: list[str | None] = []
+
+    def read_reply_draft(self, capture_pane: CapturePaneCallback) -> ReplyDraft | None:
+        self.captured.append(capture_pane())
+        return self._drafts.pop(0)
+
+
+def _publisher(
+    streamed: list[tuple[str, str, ReplyDraftReader]], sent: list[tuple[str, dict[str, Any]]]
+) -> ReplyDraftPublisher:
+    return ReplyDraftPublisher(
+        list_streamed_watchers=lambda: list(streamed),
+        capture_agent_pane=lambda agent_id: f"pane of {agent_id}",
+        broadcast_to_chat=lambda chat_id, frame: sent.append((chat_id, frame)),
+    )
+
+
+def test_a_changed_draft_is_sent_once_on_its_chats_stream_and_an_unchanged_one_not_again() -> None:
+    first = ReplyDraft(after_event_id="event-1", text="Tides are")
+    reader = _ScriptedDraftReader([first, first, ReplyDraft(after_event_id="event-1", text="Tides are the rise")])
+    sent: list[tuple[str, dict[str, Any]]] = []
+    publisher = _publisher([("chat-7", "agent-9", reader)], sent)
+
+    for _ in range(3):
+        publisher.publish_once()
+
+    assert sent == [
+        ("chat-7", {"type": REPLY_DRAFT_EVENT_TYPE, "agent_id": "agent-9", "after_event_id": "event-1", "text": "Tides are"}),
+        (
+            "chat-7",
+            {"type": REPLY_DRAFT_EVENT_TYPE, "agent_id": "agent-9", "after_event_id": "event-1", "text": "Tides are the rise"},
+        ),
+    ]
+    assert reader.captured == ["pane of agent-9"] * 3
+
+
+def test_a_cleared_draft_is_sent_but_no_draft_from_the_start_sends_nothing() -> None:
+    empty = ReplyDraft(after_event_id="event-1", text="")
+    reader = _ScriptedDraftReader([empty, ReplyDraft(after_event_id="event-1", text="Hi"), empty])
+    sent: list[tuple[str, dict[str, Any]]] = []
+    publisher = _publisher([("chat-7", "agent-9", reader)], sent)
+
+    for _ in range(3):
+        publisher.publish_once()
+
+    assert [frame["text"] for _, frame in sent] == ["Hi", ""]
+
+
+def test_a_harness_without_drafts_sends_nothing() -> None:
+    sent: list[tuple[str, dict[str, Any]]] = []
+    publisher = _publisher([("chat-7", "agent-9", _ScriptedDraftReader([None]))], sent)
+
+    publisher.publish_once()
+
+    assert sent == []
+
+
+def test_a_chat_that_stops_being_streamed_starts_from_nothing_when_streamed_again() -> None:
+    draft = ReplyDraft(after_event_id="event-1", text="Same draft")
+    reader = _ScriptedDraftReader([draft, draft])
+    streamed: list[tuple[str, str, ReplyDraftReader]] = [("chat-7", "agent-9", reader)]
+    sent: list[tuple[str, dict[str, Any]]] = []
+    publisher = _publisher(streamed, sent)
+
+    publisher.publish_once()
+    streamed.clear()
+    publisher.publish_once()
+    streamed.append(("chat-7", "agent-9", reader))
+    publisher.publish_once()
+
+    # The page that opened the chat again gets the draft, though it did not change.
+    assert [frame["text"] for _, frame in sent] == ["Same draft", "Same draft"]
