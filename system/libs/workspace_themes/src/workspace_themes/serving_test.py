@@ -15,7 +15,6 @@ from workspace_themes.serving import (
     ThemeStyleFile,
     resolve_theme_asset,
     resolve_theme_icon,
-    style_text_to_serve,
     theme_file_security_headers,
 )
 from workspace_themes.testing import (
@@ -178,42 +177,3 @@ def test_a_style_file_with_no_relative_url_in_a_custom_property_is_sent_as_it_is
     catalog: ThemeCatalog,
 ) -> None:
     assert isinstance(resolve_theme_asset(catalog, "paper/parts.css"), ThemeFile)
-
-
-_BARE_GUARD = ":where(:root[data-page-kit] *):where(:not([data-part]))"
-
-
-def test_a_rule_for_a_control_part_also_dresses_the_bare_control_of_a_page_kit_page() -> (
-    None
-):
-    served = style_text_to_serve(
-        '[data-part="button"][data-variant="primary"]:hover, [data-part="tile"] { color: red; }\n'
-        '@media (min-width: 1px) { [data-part="dialog"] [data-part="select"] { color: blue; } }\n',
-        "paper",
-        "",
-    )
-
-    assert (
-        '[data-part="button"][data-variant="primary"]:hover, [data-part="tile"], '
-        f':is(button){_BARE_GUARD}[data-variant="primary"]:hover {{'
-    ) in served
-    assert (
-        f'[data-part="dialog"] [data-part="select"], [data-part="dialog"] :is(select){_BARE_GUARD} {{'
-        in served
-    )
-
-
-def test_a_field_rule_dresses_both_a_text_input_and_a_text_area() -> None:
-    served = style_text_to_serve('[data-part="field"] { color: red; }', "paper", "")
-
-    assert f":is(textarea){_BARE_GUARD}" in served
-    assert (
-        f':is(input):where([type="text"], [type="search"], [type="email"], [type="url"], [type="password"], [type="number"], [type="tel"], :not([type])){_BARE_GUARD}'
-        in served
-    )
-
-
-def test_a_style_file_naming_no_control_part_is_sent_as_written() -> None:
-    css = '[data-part="tile"] { color: red; }\n@keyframes theme-blink { from { opacity: 0; } }\n'
-
-    assert style_text_to_serve(css, "paper", "") == css

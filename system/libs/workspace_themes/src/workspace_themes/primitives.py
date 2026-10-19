@@ -202,3 +202,15 @@ class IconDerivation(LowerCaseStrEnum):
     QUANTIZE = auto()
     # Rasterize, then turn every opaque pixel to one of two colors.
     MONOCHROME = auto()
+
+
+class ThemeLevel(LowerCaseStrEnum):
+    """How far a theme reaches into an app that does not wear it itself: one the page kit is put into from outside."""
+
+    NONE = auto()
+    # Only controls the app left unstyled (no class, no style attribute), over the browser's look or a reset's.
+    LIGHT = auto()
+    # Every control and the page, but only where the app sets nothing itself.
+    MEDIUM = auto()
+    # Every control and the page, over the app's own values; what the theme does not set stays the app's.
+    HEAVY = auto()
