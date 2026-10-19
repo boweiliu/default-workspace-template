@@ -612,15 +612,16 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     // transcript and the idle flag meet.
     maybeApplyFastModeLimit(chat, events, agentIsIdle);
 
-    // Memoize the turn-grouping -> rows pipeline. buildSections walks the entire
-    // held transcript, so recomputing it on every scroll-driven redraw is the
-    // dominant scroll cost on a long conversation. Its output depends only on the
-    // held events, the settled flag and the running compaction -- captured by the
-    // render version (bumped on any data mutation) plus those two -- so a
-    // scroll-only redraw reuses the cached rows.
     // The reply the agent is still writing, which its transcript does not hold yet, renders after
     // the transcript as a reply would, while the window reaches the live end.
     const replyDraft = hasMoreAfter(chatId) ? null : shownReplyDraft(chatId, getLastEventId(chatId));
+
+    // Memoize the turn-grouping -> rows pipeline. buildSections walks the entire
+    // held transcript, so recomputing it on every scroll-driven redraw is the
+    // dominant scroll cost on a long conversation. Its output depends only on the
+    // held events, the settled flag, the running compaction and the draft -- captured
+    // by the render version (bumped on any data mutation) plus those three -- so a
+    // scroll-only redraw reuses the cached rows.
     const renderKey =
       `${chatId}|${getRenderVersion(chatId)}|${tailTurnSettled ? 1 : 0}|` +
       `${liveCompaction === null ? "-" : (liveCompaction.cause ?? "unknown")}|` +
