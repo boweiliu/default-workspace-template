@@ -50,14 +50,6 @@ Use the first of these you have. Draw two to four candidates and keep the best.
 (outline, light, palette, view), "flat plain background", and "no text". Ask for a size of
 `draw_at_scale` times the canvas when the tool takes one.
 
-**Retro Diffusion**, for a pixelated theme, when the user has a Retro Diffusion key saved as
-`data/.secrets/retrodiffusion.env` (`RETRODIFFUSION_API_KEY=...`). It draws pixel art at the
-theme's own size, and keeps to the theme's palette:
-
-```bash
-python3 system/scripts/with_secrets.py data/.secrets/retrodiffusion.env -- uv run python .agents/skills/make-theme-icon/providers/retro_diffusion.py --prompt "<object and treatment>" --size <size> --palette "<the theme's palette, comma-separated, if it has one>" --variants 2 --out-dir /tmp/<app>-<theme>
-```
-
 **Any image model litellm reaches** (OpenAI, Vertex, Bedrock, ...), when the user has a key for
 one saved under `data/.secrets/`:
 
@@ -65,7 +57,7 @@ one saved under `data/.secrets/`:
 python3 system/scripts/with_secrets.py data/.secrets/<provider>.env -- uv run python .agents/skills/make-theme-icon/providers/litellm_image.py --model <model> --prompt "<object and treatment>" --variants 2 --out-dir /tmp/<app>-<theme>
 ```
 
-Each image costs the user money with these two: draw only the icons that are missing. Do not
+Each image costs the user money: draw only the icons that are missing. Do not
 ask the user for a key just to draw an icon; if they want one, the `connect-external-service`
 skill's secret card is how it is saved. A background agent never asks; it draws by hand.
 
