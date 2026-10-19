@@ -1035,6 +1035,8 @@ def make_agent_fixture(
     # the fixture transcript never loads.
     (agent_state_dir / "claude_session_id_history").write_text(f"{FIXTURE_SESSION_ID}\n")
     (agent_state_dir / "env").write_text(f"CLAUDE_CONFIG_DIR={claude_config_dir}\n")
+    # A running claude has finished starting: its SessionStart hook wrote this, so a send does not wait for it.
+    (agent_state_dir / "session_started").touch()
     session_file = make_session_file(
         projects_dir, FIXTURE_SESSION_ID, session_events if session_events is not None else _FIXTURE_SESSION_EVENTS
     )
@@ -1199,6 +1201,7 @@ def running_workspace(
     for extra_id, extra_name in additional_agents:
         extra_state_dir = tmp_path / "agents" / extra_id
         extra_state_dir.mkdir(parents=True, exist_ok=True)
+        (extra_state_dir / "session_started").touch()
         extra_infos.append(
             AgentInfo(
                 id=extra_id,

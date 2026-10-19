@@ -2130,7 +2130,7 @@ def _set_launch_choice(chat_id: str) -> Response:
         agent_manager.set_launch_choice(provisional.chat_id, choice.account_id, choice.model)
     except AgentCreationError as e:
         return error_response(str(e), 400)
-    return json_response({"status": "ok"})
+    return model_response(OkResponse())
 
 
 def _rename_chat(chat_id: str) -> Response:
@@ -2492,6 +2492,9 @@ _ROUTE_TABLE: Final[RouteTable] = {
     ("POST", "/api/chats/{chat_id}/destroy"): RouteModels(response_model=DestroyAgentResponse),
     ("POST", "/api/chats/{chat_id}/rename"): RouteModels(
         request_model=RenameChatRequest, response_model=RenameChatResponse
+    ),
+    ("POST", "/api/chats/{chat_id}/launch-choice"): RouteModels(
+        request_model=SetLaunchChoiceRequest, response_model=OkResponse
     ),
     ("POST", "/api/chats/{chat_id}/start"): RouteModels(
         response_model=StartAgentResponse, alternate_responses=(_CONVERGING,)
