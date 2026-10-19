@@ -148,6 +148,7 @@ from imbue.chat.models import PoweredByResponse
 from imbue.chat.models import ProvisionalChat
 from imbue.chat.models import ProvisionalChatPhase
 from imbue.chat.models import RenameChatRequest
+from imbue.chat.models import SetLaunchChoiceRequest
 from imbue.chat.models import RenameChatResponse
 from imbue.chat.models import SeedChatRequest
 from imbue.chat.models import SendMessageRequest
@@ -2077,6 +2078,22 @@ def _destroy_chat(chat_id: str) -> Response:
     return json_response(DestroyAgentResponse(status="ok").model_dump())
 
 
+def _set_launch_choice(chat_id: str) -> Response:
+    """Choose the account and model a chat with no agent yet runs on: it launches on them, or, while it is being
+    created, takes them as it lands. 404 for a chat that has an agent or is unknown, 400 for an account that
+    cannot be bound."""
+    agent_manager: AgentManager = get_state().agent_manager
+    provisional = agent_manager.get_provisional_chat(chat_id)
+    if provisional is None:
+        return _chat_not_found_response(chat_id)
+    choice = parse_request_body(SetLaunchChoiceRequest)
+    try:
+        agent_manager.set_launch_choice(provisional.chat_id, choice.account_id, choice.model)
+    except AgentCreationError as e:
+        return json_response(ErrorResponse(detail=str(e)).model_dump(), status_code=400)
+    return json_response({"status": "ok"})
+
+
 def _rename_chat(chat_id: str) -> Response:
     """Rename a chat: the ``display_name`` label and the matching canonical name.
 
@@ -2361,6 +2378,7 @@ def _run_ws_broadcast_loop(websocket: Any, agent_manager: AgentManager) -> None:
 _PER_CHAT_ROUTES: Final[tuple[tuple[str, Callable[..., Response], tuple[str, ...]], ...]] = (
     ("destroy", _destroy_chat, ("POST",)),
     ("rename", _rename_chat, ("POST",)),
+    ("launch-choice", _set_launch_choice, ("POST",)),
     ("start", _start_chat, ("POST",)),
     ("stop", _stop_chat, ("POST",)),
     ("events", _get_events, ("GET",)),

@@ -1676,6 +1676,77 @@ def test_run_creation_delivers_the_sends_held_while_it_ran_in_order_after_its_fi
     assert not agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-3", "x", HeldSendOrigin.CLIENT)
 
 
+def test_set_launch_choice_puts_the_account_and_model_on_a_chat_still_being_created(
+    agent_manager: AgentManager, broadcaster: WebSocketBroadcaster
+) -> None:
+    other_account, _ = mint_account_dir()
+    commit_account(other_account, "anthropic", "Anthropic")
+    _seed_creating_chat(agent_manager, ChatId("test-id"), "Chat 1")
+    q = broadcaster.register()
+    pick = ModelPick(model_id="sonnet", effort=None, fast=False)
+
+    agent_manager.set_launch_choice(ChatId("test-id"), other_account, pick)
+
+    chosen = agent_manager.get_provisional_chat("test-id")
+    assert chosen is not None
+    assert (chosen.account_id, chosen.model_pick) == (other_account, pick)
+    assert json.loads(q.get_nowait() or "")["type"] == "provisional_chat_created"
+    with pytest.raises(AgentCreationError):
+        agent_manager.set_launch_choice(ChatId("test-id"), "no-such-account", None)
+
+
+class _RecordingSwitchAgentManager(AgentManager):
+    """Records the switches it is asked to begin instead of running them."""
+
+    switches: list[tuple[str, str, str, ModelPick | None]]
+
+    def begin_switch(
+        self,
+        chat_id: ChatId,
+        account_id: str,
+        message: str,
+        message_id: str,
+        origin: HeldSendOrigin,
+        model_pick: ModelPick | None = None,
+    ) -> tuple[TransitionKind, HandoffPhase, str]:
+        self.switches.append((str(chat_id), account_id, message, model_pick))
+        return TransitionKind.HANDOFF, HandoffPhase.SUMMARIZING, ""
+
+
+def test_a_chat_moved_to_another_account_while_it_was_created_switches_to_it_as_it_lands(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first message rides the switch, so the agent the chat lands on answers it; the create's own agent
+    receives nothing."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    other_account, _ = mint_account_dir()
+    commit_account(other_account, "anthropic", "Anthropic")
+    manager = _RecordingSwitchAgentManager.build(broadcaster, chat_files_root=tmp_path / "chats")
+    manager.switches = []
+    delivered: list[str] = []
+    manager.set_handoff_capabilities(
+        HandoffCapabilities(
+            ensure_watcher=lambda agent_info: ListTranscriptReader([]),
+            drain_to_composer=lambda agent_info: "",
+            deliver=lambda agent_info, text, message_id: delivered.append(text) or SendOutcome.OK,
+        )
+    )
+    try:
+        _seed_creating_chat(manager, ChatId("test-id"), "Chat 1")
+        manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "hello", HeldSendOrigin.CLIENT)
+        pick = ModelPick(model_id="sonnet", effort=None, fast=False)
+        manager.set_launch_choice(ChatId("test-id"), other_account, pick)
+
+        manager._run_creation(
+            ChatId("test-id"), "test-id", "chat-1", ["true"], tmp_path, {"account": "acct-1"}, HarnessType.CLAUDE
+        )
+
+        assert manager.switches == [("test-id", other_account, "hello", pick)]
+        assert delivered == []
+    finally:
+        manager.stop()
+
+
 def test_a_failed_create_keeps_its_held_sends(agent_manager: AgentManager, tmp_path: Path) -> None:
     _seed_creating_chat(agent_manager, ChatId("test-id"), "Chat 1")
     agent_manager.hold_send_for_chat_being_created(ChatId("test-id"), "m-1", "kept", HeldSendOrigin.CLIENT)

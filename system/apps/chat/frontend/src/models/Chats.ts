@@ -5,6 +5,7 @@
  */
 
 import m from "mithril";
+import { postJson } from "@imbue/workspace-ui/src/models/http";
 import { apiUrl, wsUrl } from "@imbue/workspace-ui/src/base-path";
 import { getTerminalOriginLabel } from "../document-meta";
 import { deriveAppOrigin } from "@imbue/workspace-ui/src/origin";
@@ -152,6 +153,8 @@ export interface ProvisionalChat {
   // The messages sent while it is created, in order, which the chat app delivers once the agent lands
   // (and a failed create's retry delivers then).
   held_sends: HeldSend[];
+  // The model chosen for it; null for its harness's default.
+  model_pick: ModelIdentity | null;
 }
 
 type WsEvent =
@@ -496,6 +499,15 @@ export async function awaitingChatForEmptyList(): Promise<string> {
  * Launch a chat minted earlier (a seeded one awaiting its first send, or one whose create
  * failed) on ``accountId``: it keeps its id and name, so the window showing it becomes the chat.
  */
+/** Choose the account and model a chat with no agent yet runs on: it launches on them, or takes them as its
+ *  create lands. The provisional record the chat app pushes back carries the choice. */
+export async function setLaunchChoice(chatId: string, accountId: string, pick: ModelIdentity | null): Promise<void> {
+  await postJson<unknown>(apiUrl(`/api/chats/${encodeURIComponent(chatId)}/launch-choice`), {
+    account_id: accountId,
+    model: pick,
+  });
+}
+
 export function launchChat(chatId: string, accountId: string, message = ""): Promise<CreatedChat> {
   // A seeded chat's launch brings the user's first message; a failed create's retry has none
   // to bring, so the field is left out then.

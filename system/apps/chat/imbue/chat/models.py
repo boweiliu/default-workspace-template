@@ -698,6 +698,16 @@ class ProvisionalChat(FrozenModel):
         default=(),
         description="Messages sent while the create ran, delivered in order once the chat runs",
     )
+    model_pick: ModelPick | None = Field(
+        default=None, description="The model chosen for it; None for its harness's default"
+    )
+
+
+class SetLaunchChoiceRequest(FrozenModel):
+    """Request body for POST /api/chats/{id}/launch-choice: the account and model a chat with no agent yet runs on."""
+
+    account_id: str = Field(description="The account it runs on")
+    model: ModelPick | None = Field(default=None, description="The model it runs on; None for the harness's default")
 
 
 class SeedChatRequest(FrozenModel):

@@ -40,6 +40,7 @@ function provisionalChat(chatId: string, phase: ProvisionalChatPhase): Provision
     error: null,
     is_seeded: false,
     held_sends: [],
+    model_pick: null,
   };
 }
 

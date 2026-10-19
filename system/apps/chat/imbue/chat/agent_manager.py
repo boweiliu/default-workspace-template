@@ -2004,7 +2004,9 @@ class AgentManager:
             previous_lane=_lane_of_account_label(previous_account_id),
             trigger_message_id=message_id,
             trigger_text=message,
-            held_sends=(HeldSend(message_id=message_id, text=message, origin=origin, received_at=now),),
+            held_sends=(HeldSend(message_id=message_id, text=message, origin=origin, received_at=now),)
+            if message
+            else (),
             model_pick=model_pick,
         )
         self._write_record_locked(record.with_converging(rebind))
@@ -3505,6 +3507,8 @@ class AgentManager:
                     message = provisional.message
                 launched_chat_id = provisional.chat_id
                 carried_held_sends = provisional.held_sends
+                if model_pick is None:
+                    model_pick = provisional.model_pick
                 display_name = provisional.name
                 project_id = provisional.project_id
                 extra_labels = dict(provisional.labels)
@@ -3531,6 +3535,7 @@ class AgentManager:
                 phase=ProvisionalChatPhase.CREATING,
                 is_seeded=seed_record is not None,
                 held_sends=carried_held_sends,
+                model_pick=model_pick,
             )
             self._provisional_chats[launched_chat_id] = provisional
             fast_mode = self._fast_mode_for_launch_locked(launched_chat_id)
@@ -3717,6 +3722,8 @@ class AgentManager:
         is_abandoned = False
         # The name the chat was given while its create ran, which its agent takes once it exists.
         renamed_while_created: str | None = None
+        # Another account chosen for the chat while its create ran, which the chat moves to once it exists.
+        account_chosen_while_created: str | None = None
 
         try:
             success, error = self._run_create_command(agent_id, cmd, work_dir, output_tail)
@@ -3731,23 +3738,28 @@ class AgentManager:
 
             with self._lock:
                 is_abandoned = chat_id in self._abandoned_creates
-                if success and not is_abandoned:
-                    settled_provisional = self._provisional_chats.pop(chat_id, None)
-                    if settled_provisional is not None:
-                        held_sends = settled_provisional.held_sends
-                        if settled_provisional.name != labels.get("display_name"):
-                            renamed_while_created = settled_provisional.name
-                    self._track_created_agent_locked(
-                        AgentStateItem(
-                            id=agent_id,
-                            name=agent_name,
-                            state="RUNNING",
-                            labels=labels,
-                            work_dir=str(work_dir),
-                            harness=harness,
+                if success:
+                    if not is_abandoned:
+                        settled_provisional = self._provisional_chats.pop(chat_id, None)
+                        if settled_provisional is not None:
+                            held_sends = settled_provisional.held_sends
+                            if settled_provisional.name != labels.get("display_name"):
+                                renamed_while_created = settled_provisional.name
+                            # The account and model chosen while it was created, which the chat runs on.
+                            model_pick = settled_provisional.model_pick
+                            if settled_provisional.account_id not in ("", labels.get("account")):
+                                account_chosen_while_created = settled_provisional.account_id
+                        self._track_created_agent_locked(
+                            AgentStateItem(
+                                id=agent_id,
+                                name=agent_name,
+                                state="RUNNING",
+                                labels=labels,
+                                work_dir=str(work_dir),
+                                harness=harness,
+                            )
                         )
-                    )
-                elif not success:
+                else:
                     self._mark_creation_failed_locked(chat_id, failure_notice(error, output_tail.text()))
                     if record_entry is not None:
                         half_made_agent_id = self._withdraw_seeded_member_locked(chat_id, record_entry)
@@ -3785,7 +3797,12 @@ class AgentManager:
                 self._broadcast_chats_updated()
                 if renamed_while_created is not None:
                     self._rename_created_chat(chat_id, renamed_while_created)
-                self._settle_new_chat(chat_id, agent_id, model_pick, deferred_message, held_sends)
+                if account_chosen_while_created is None:
+                    self._settle_new_chat(chat_id, agent_id, model_pick, deferred_message, held_sends)
+                else:
+                    self._move_created_chat(
+                        chat_id, agent_id, account_chosen_while_created, model_pick, deferred_message, held_sends
+                    )
             else:
                 # The pages show what the record holds: the reason and the output behind it.
                 failed = self.get_provisional_chat(chat_id)
@@ -3797,6 +3814,72 @@ class AgentManager:
             if settled is not None:
                 settled.set()
             self._broadcaster.broadcast_provisional_chat_completed(chat_id=chat_id, success=success, error=error)
+
+    def _move_created_chat(
+        self,
+        chat_id: ChatId,
+        agent_id: str,
+        account_id: str,
+        model_pick: ModelPick | None,
+        message: str,
+        held_sends: tuple[HeldSend, ...],
+    ) -> None:
+        """Move a just-created chat to the account chosen for it while it was created, carrying its messages: the
+        first is the switch's own, and the rest are held for the agent it lands on. A switch that cannot start
+        leaves the chat where it is, and its messages go to the agent it has, as if nothing had been chosen."""
+        sends = (
+            *(
+                (
+                    HeldSend(
+                        message_id=uuid4().hex,
+                        text=message,
+                        origin=HeldSendOrigin.CLIENT,
+                        received_at=datetime.now(timezone.utc),
+                    ),
+                )
+                if message
+                else ()
+            ),
+            *held_sends,
+        )
+        trigger = sends[0] if sends else None
+        try:
+            self.begin_switch(
+                chat_id,
+                account_id,
+                trigger.text if trigger is not None else "",
+                trigger.message_id if trigger is not None else uuid4().hex,
+                trigger.origin if trigger is not None else HeldSendOrigin.CLIENT,
+                model_pick,
+            )
+        except (HandoffError, ChatConvergingError) as e:
+            _loguru_logger.warning("Chat {}: could not move it to account {} as it landed: {}", chat_id, account_id, e)
+            self._settle_new_chat(chat_id, agent_id, None, "", sends)
+            return
+        for held in sends[1:]:
+            self.hold_send(chat_id, held.message_id, held.text, held.origin)
+
+    def set_launch_choice(self, chat_id: ChatId, account_id: str, model_pick: ModelPick | None) -> None:
+        """Choose the account and model a chat with no agent yet runs on.
+
+        Shown on the provisional record at once. A chat awaiting its launch is launched on them; one being
+        created takes the model as it lands, and moves to another account then, as a switch would. Raises
+        ``AgentCreationError`` for an account that cannot be bound, or a chat that has an agent already.
+        """
+        try:
+            resolve_binding(account_id)
+        except (AccountError, BindingError) as e:
+            raise AgentCreationError(str(e)) from e
+        with self._lock:
+            provisional = self._provisional_chats.get(chat_id)
+            if provisional is None:
+                raise AgentCreationError(f"Chat {chat_id} has an agent already, or none is being made for it")
+            provisional = provisional.model_copy_update(
+                to_update(provisional.field_ref().account_id, account_id),
+                to_update(provisional.field_ref().model_pick, model_pick),
+            )
+            self._provisional_chats[chat_id] = provisional
+        self._broadcast_provisional(provisional)
 
     def _rename_created_chat(self, chat_id: ChatId, display_name: str) -> None:
         """Give a just-created agent the name its chat was renamed to while the create ran. Logged rather than

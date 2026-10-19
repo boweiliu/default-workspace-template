@@ -321,6 +321,25 @@ def test_a_chat_being_created_can_be_renamed_and_deleted_through_the_routes() ->
     assert manager.get_provisional_chat(chat_id) is None
 
 
+def test_the_launch_choice_route_sets_the_account_and_model_of_a_chat_being_created(signed_in_account: str) -> None:
+    chat_id = ChatId(f"agent-{uuid4().hex}")
+    manager, client = _creating_chat_and_client(chat_id)
+
+    chosen = client.post(
+        f"/api/chats/{chat_id}/launch-choice",
+        json={"account_id": signed_in_account, "model": {"model_id": "sonnet", "effort": None, "fast": False}},
+    )
+    refused = client.post(f"/api/chats/{chat_id}/launch-choice", json={"account_id": "no-such-account"})
+    unknown = client.post(f"/api/chats/agent-{uuid4().hex}/launch-choice", json={"account_id": signed_in_account})
+
+    assert chosen.status_code == 200
+    proto = manager.get_provisional_chat(chat_id)
+    assert proto is not None and proto.account_id == signed_in_account
+    assert proto.model_pick is not None and proto.model_pick.model_id == "sonnet"
+    assert refused.status_code == 400
+    assert unknown.status_code == 404
+
+
 def test_stop_while_a_send_waits_for_a_starting_agent_takes_the_message_back_undelivered() -> None:
     """Claude is still starting (no ``session_started`` marker), so the send waits for it; Stop answers with
     the message at once, and the send then ends withdrawn, having handed mngr nothing."""
