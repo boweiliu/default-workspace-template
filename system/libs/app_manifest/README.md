@@ -76,10 +76,7 @@ The models behind a workspace app's two descriptions:
   the app contract module, which every app serves at `APP_CONTRACT_ROUTE` from
   its own origin (a cross-origin module import carries no cookie, and the
   forwarder refuses it); `SHELL_CONTEXT_MENU_PATH` and `CONTEXT_MENU_ROUTE` are
-  the same for the element context menu module built beside it, and
-  `SHELL_THEME_SCRIPT_PATH` and `SHELL_THEME_STYLESHEET_PATH` for the page kit
-  (`/_static/workspace_theme.js` and `/_static/workspace_theme.css`), which a
-  page built as plain HTML loads to wear the workspace's theme.
+  the same for the element context menu module built beside it.
 - `app_manifest.content_security_policy`: `attach_document_policy(app_or_blueprint,
   overrides=None)` stamps a `Content-Security-Policy` on every HTML response that
   does not set one itself: scripts from the page's own origin plus the page's own
