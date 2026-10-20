@@ -712,7 +712,7 @@ def test_only_the_newest_model_pick_is_typed(tmp_path: Path) -> None:
 
 
 def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> None:
-    """A failed send is retried on later passes, but not forever."""
+    """A failed send is retried on later passes, but not forever, and held messages wait behind it."""
     conv = "conv-switch-retry"
     sent: list[str] = []
     watcher = _flushing_watcher(tmp_path, conv, sent, is_slash_command_delivered=False)
@@ -722,9 +722,10 @@ def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> 
     )
     watcher._collect_new_events()
     watcher._publish_turn_state()
+    watcher._queue.enqueue("next thing", "t0")
     _pick(tmp_path, "gemini-3.8-flash", "high")
 
     for _ in range(MAX_DELIVERY_ATTEMPTS + 2):
         watcher._attempt_flush()
 
-    assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS
+    assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS + ["next thing"]

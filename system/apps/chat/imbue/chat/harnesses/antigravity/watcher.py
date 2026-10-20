@@ -569,7 +569,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
            every rung, so a cancelled or abandoned turn cannot wedge the queue forever.
         4. **Type a held model switch**, alone and ahead of the block. agy runs ``/model``
            without opening a turn, so it cannot ride in the block, whose delivery is witnessed
-           by the turn it opens.
+           by the turn it opens. While a switch stays held, the block waits for a later pass.
         5. **Claim.** The tracker refuses a second claim while one is open, which is the mutual
            exclusion between every typist.
         6. **Send, then look.** mngr's ack is the busy marker's mtime, which advances even for
@@ -603,6 +603,9 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         model_command = self._queue.model_command()
         if model_command is not None:
             self._queue.settle_model_command(model_command, is_delivered=send(model_command))
+            if self._queue.model_command() is not None:
+                # Still held (a failed send, or a newer pick): the block waits so it runs on the pick.
+                return
         block, claimed, generation = self._queue.begin_flush()
         if not claimed:
             return
