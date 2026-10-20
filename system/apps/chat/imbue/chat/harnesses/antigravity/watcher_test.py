@@ -738,6 +738,27 @@ def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path
     assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [False]
 
 
+def test_a_message_behind_a_failed_switch_a_newer_pick_replaced_still_reads_sending(tmp_path: Path) -> None:
+    """The newer pick is typed on the very next pass, so the message is still on its way."""
+    sent: list[str] = []
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-failed-superseded", sent, is_slash_command_delivered=False)
+    fail_slash_commands = watcher._flush_send
+
+    def _send_while_the_user_picks_again(text: str) -> bool:
+        if text == "/model claude-sonnet-4-6":
+            _pick(tmp_path, "gemini-3.8-flash", "low")
+        return fail_slash_commands(text)
+
+    watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
+    watcher._queue.enqueue("next thing", "t0", is_turn_open=False)
+    _pick(tmp_path, "claude-sonnet-4-6", None)
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model claude-sonnet-4-6"]
+    assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [True]
+
+
 def test_a_pick_made_while_a_switch_is_typed_goes_next_and_the_block_runs_on_it(tmp_path: Path) -> None:
     sent: list[str] = []
     watcher = _idle_flushing_watcher(tmp_path, "conv-switch-superseded", sent)
