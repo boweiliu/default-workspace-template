@@ -125,8 +125,7 @@ class ModelChoice(FrozenModel):
 class SwitchMode(StrEnum):
     """How a harness's model bar behaves. ONE value per harness; it governs the
     model, effort, and fast axes uniformly. It has nothing to do with which axes
-    are *shown* -- that is decided purely by the matched model's data. claude, pi and
-    antigravity use EAGER_THEN_RECONCILE; codex uses ON_CHANGE."""
+    are *shown* -- that is decided purely by the matched model's data."""
 
     # Optimistic: the chip moves on click, then reconciles from disk.
     EAGER_THEN_RECONCILE = "eager_then_reconcile"
