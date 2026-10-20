@@ -538,8 +538,9 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         """Deliver the held queue when no turn is open. Own thread, so a slow send stalls nothing.
 
         This is the only code in the system that types into agy. ``session.send`` enqueues and
-        wakes this loop; the tap cancels and wakes this loop; nothing else delivers. One typist
-        is what removes the check-then-act window that let a message land in a live turn.
+        wakes this loop; a model pick holds its ``/model`` command and wakes this loop; the tap
+        cancels and wakes this loop; nothing else delivers. One typist is what removes the
+        check-then-act window that let a message land in a live turn.
         """
         while not self._stopping.is_set():
             self._flush_wake.wait(timeout=_FLUSH_RETRY_SECONDS)
@@ -566,12 +567,15 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
            wearing a different hat.
         3. **Is a turn open?** The whole bug was that this question was never asked. Bounded on
            every rung, so a cancelled or abandoned turn cannot wedge the queue forever.
-        4. **Claim.** The tracker refuses a second claim while one is open, which is the mutual
+        4. **Type a held model switch**, alone and ahead of the block. agy runs ``/model``
+           without opening a turn, so it cannot ride in the block, whose delivery is witnessed
+           by the turn it opens.
+        5. **Claim.** The tracker refuses a second claim while one is open, which is the mutual
            exclusion between every typist.
-        5. **Send, then look.** mngr's ack is the busy marker's mtime, which advances even for
+        6. **Send, then look.** mngr's ack is the busy marker's mtime, which advances even for
            a message that merely parked -- so the ack is not evidence. The evidence is agy's
            own store gaining a user turn whose text is ours.
-        6. **Embargo the poll thread** for the span of the send, so the turn our block becomes
+        7. **Embargo the poll thread** for the span of the send, so the turn our block becomes
            departs the queue before it arrives in the transcript (A3b) no matter which thread
            happened to scan the row first.
         """
@@ -595,8 +599,6 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             # is genuinely parked now and must read as queued rather than Sending.
             self._queue.demote_pending()
             return
-        # A model switch goes first and on its own: agy runs a slash command without opening a
-        # turn, so it cannot ride in the block, whose delivery is witnessed by the turn it opens.
         # Typed here rather than by the switch request, so it never lands in a live turn.
         model_command = self._queue.model_command()
         if model_command is not None:
