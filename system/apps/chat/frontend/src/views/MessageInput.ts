@@ -1402,8 +1402,8 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
           : null;
 
       // The stop button is there whenever a message of the user's is in progress: while the
-      // agent has an interruptible turn -- the same condition that drives the activity indicator
-      // above the input, read straight off the backend-derived activity state -- and while a sent
+      // agent has an interruptible turn -- the same condition that drives the status row at the
+      // end of the transcript, read straight off the backend-derived activity state -- and while a sent
       // message waits for the agent to come up, when Stop takes it back. While the chat switches
       // harness the turn in progress is the switch's own (the summary it asked for), so the button
       // is the switch's cancel instead, for as long as that is possible.

@@ -42,7 +42,7 @@ export interface ActiveAgent {
   // flight.
   shoulder_tap_available: boolean;
   // A send is in flight and waiting for the agent to come up: the Connecting sub-state of
-  // Sending, shown beside the model bar.
+  // Sending, shown on the status row at the end of the transcript.
   is_connecting: boolean;
   // The agent will resume on its own: a turn is in flight, or a background task is pending.
   is_busy: boolean;

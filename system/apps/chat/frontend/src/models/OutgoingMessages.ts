@@ -32,6 +32,8 @@ export interface OutgoingMessage {
    *  carries the same id (a message held while the chat switches harness) replaces this bubble
    *  exactly, rather than by position. */
   messageId?: string;
+  /** When the bubble was painted (epoch ms): how long the send has been waiting on the agent. */
+  sentAt: number;
 }
 
 const byChat: Record<string, OutgoingMessage[]> = {};
@@ -49,7 +51,8 @@ let nextId = 0;
  *  so the caller can drop it on failure. */
 export function addOutgoing(chatId: string, content: string, messageId?: string): string {
   const id = `outgoing-${nextId++}`;
-  (byChat[chatId] ??= []).push(messageId === undefined ? { id, content } : { id, content, messageId });
+  const sentAt = Date.now();
+  (byChat[chatId] ??= []).push(messageId === undefined ? { id, content, sentAt } : { id, content, messageId, sentAt });
   m.redraw();
   return id;
 }

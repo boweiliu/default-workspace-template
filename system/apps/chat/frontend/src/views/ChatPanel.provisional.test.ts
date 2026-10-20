@@ -91,7 +91,7 @@ import { chatSnapshotFixture } from "../models/chatSnapshotFixture";
 import { ChatPanel } from "./ChatPanel";
 import { MESSAGE_LIST_CLASS } from "./conversation-rows";
 
-type AnyVnode = { tag?: unknown; attrs?: Record<string, unknown>; children?: unknown };
+type AnyVnode = { tag?: unknown; key?: unknown; attrs?: Record<string, unknown>; children?: unknown };
 
 const AGENT_ID = "agent-1";
 
@@ -272,8 +272,12 @@ describe("ChatPanel over a provisional chat", () => {
     mocks.chat = chatSnapshotFixture(AGENT_ID);
     const started = render();
 
-    expect(bubbleListOf(starting)?.children).toEqual([bubble]);
-    expect(bubbleListOf(started)?.children).toEqual([bubble]);
+    // The bubble, then the status row saying where it is, in the same places before and after.
+    const keysOf = (list: AnyVnode | undefined): unknown[] => flatten(list?.children).map((child) => child.key);
+    expect(flatten(bubbleListOf(starting)?.children)[0]).toEqual(bubble);
+    expect(flatten(bubbleListOf(started)?.children)[0]).toEqual(bubble);
+    expect(keysOf(bubbleListOf(starting))).toEqual(["outgoing-0", "turn-status"]);
+    expect(keysOf(bubbleListOf(started))).toEqual(["outgoing-0", "turn-status"]);
   });
 
   it("shows an unseeded chat awaiting its first send as an empty conversation with no placeholder, not a failure", () => {

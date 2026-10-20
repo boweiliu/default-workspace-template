@@ -13,8 +13,10 @@
  *
  * In the phone layout (``isCompact``) the model menu opens from a settings button at the
  * composer's left rather than the chip in the under-bar, and carries the Source view switch as
- * one of its rows; the under-bar keeps the connecting and fast-mode notices, and the switch while
- * the terminal face is up, since the composer and its button turn over with the chat face.
+ * one of its rows; the under-bar keeps the fast-mode notice, and the switch while the terminal
+ * face is up, since the composer and its button turn over with the chat face. What the agent is
+ * doing -- a send on its way or connecting, a turn running, closing or done -- is one status row
+ * at the end of the transcript, where the reply appears.
  */
 
 import m from "mithril";
@@ -57,7 +59,6 @@ import { EmptySlot } from "./EmptySlot";
 import { uploadFilesToComposer } from "../models/ComposerAttachments";
 import { MessageInput } from "./MessageInput";
 import { ModelProviderMenu } from "./ModelProviderMenu";
-import { ConnectingIndicator } from "./ConnectingIndicator";
 import { AgentTerminalPanel } from "./AgentTerminalPanel";
 import { chatFlipCard } from "./chat-flip";
 import { TerminalViewToggle } from "./TerminalViewToggle";
@@ -68,7 +69,9 @@ import {
   renderTranscriptSegments,
   type RowDescriptor,
 } from "./conversation-rows";
-import { ActivityIndicator } from "./ActivityIndicator";
+import { ActivityIndicator, turnStatusPlacement } from "./ActivityIndicator";
+import { TurnDoneMark } from "./TurnDoneMark";
+import type { TranscriptEvent } from "../models/Response";
 import { requestFrameFocus } from "@imbue/workspace-ui/src/terminalFocus";
 import { renderQueuedMessages } from "./QueuedMessageView";
 import { renderOutgoingMessages } from "./OutgoingMessageView";
@@ -346,9 +349,23 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
    *  watched being created (its first load follows the create), the loading shape otherwise. */
   function renderWhileLoading(chatId: string): m.Vnode {
     if (chatId === lastStartingChatId) {
-      return renderEmptyConversation("message-list-loading", renderOutgoingMessages(chatId), STARTING_STATUS);
+      return renderEmptyConversation(
+        "message-list-loading",
+        withTurnStatus(chatId, renderOutgoingMessages(chatId)),
+        STARTING_STATUS,
+      );
     }
     return renderLoadingConversation();
+  }
+
+  /** The status row at the live end of the transcript (see ActivityIndicator), keyed like the rows beside it. */
+  function renderTurnStatus(chatId: string, events: TranscriptEvent[]): m.Children {
+    return m(ActivityIndicator, { key: "turn-status", chatId, events });
+  }
+
+  /** Messages already on their way to a chat with no transcript yet, with the row saying where they are. */
+  function withTurnStatus(chatId: string, nodes: m.Children[]): m.Children[] {
+    return nodes.length === 0 ? nodes : [...nodes, renderTurnStatus(chatId, [])];
   }
 
   // The chat this page last showed as being created: the transcript load that follows its create keeps the
@@ -361,7 +378,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     lastStartingChatId = chatId;
     return renderEmptyConversation(
       "message-list-creating",
-      [...renderProvisionalHeldSends(chatId), ...renderOutgoingMessages(chatId)],
+      withTurnStatus(chatId, [...renderProvisionalHeldSends(chatId), ...renderOutgoingMessages(chatId)]),
       STARTING_STATUS,
     );
   }
@@ -643,7 +660,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
       }
       return m("div", { class: "message-list-wrapper" }, [
         failedReloadNotice,
-        m("div", { class: MESSAGE_LIST_CLASS }, tailNodes),
+        m("div", { class: MESSAGE_LIST_CLASS }, [...tailNodes, renderTurnStatus(chatId, events)]),
       ]);
     }
 
@@ -682,6 +699,7 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     // live), and -- in afterRender -- where the viewport sits. Rendered as
     // spacer / row-run / spacer via the shared segment renderer.
     const plan = engine.computeRenderPlan();
+    const isTurnStatusAfterSends = turnStatusPlacement(chatId) === "after-sends";
     return m("div", { class: "message-list-wrapper" }, [
       failedReloadNotice,
       // The queued-message group renders after the virtualized rows so it sits at
@@ -699,11 +717,17 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
         ...[renderHandoffTailNode(chatId, hasOpenHandoffRequest(events, chat?.handoff ?? null))].filter(
           (node) => node !== null,
         ),
+        // The status row under the latest turn while the agent works on it, or that turn's done
+        // mark once it has finished; anything queued behind it follows.
+        ...(isTurnStatusAfterSends ? [] : [renderTurnStatus(chatId, events)]),
+        m(TurnDoneMark, { key: "turn-done", chatId, events }),
         ...renderQueuedMessages(chatId),
         // The messages the chat app holds while the chat switches harness, then this page's
         // own not-yet-delivered sends.
         ...renderHeldSends(chatId),
         ...renderOutgoingMessages(chatId),
+        // The status row under the user's own send while it waits on the agent.
+        ...(isTurnStatusAfterSends ? [renderTurnStatus(chatId, events)] : []),
       ]),
     ]);
   }
@@ -847,12 +871,6 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
                 // failed, with a retry on any account (spec 5.10).
                 m(SwitchDialog, { chatId }),
                 m(HandoffFailedNotice, { chatId }),
-                isConversationNotFound(chatId)
-                  ? null
-                  : m(ActivityIndicator, {
-                      chatId,
-                      events: getEventsForChat(chatId),
-                    }),
                 m(MessageInput, {
                   chatId,
                   leading:
@@ -892,7 +910,6 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
               [
                 // On a phone a chat with no agent yet still names its account here: it has no menu to open.
                 isCompact && isListed ? null : m(ModelProviderMenu, { chatId }),
-                m(ConnectingIndicator, { chatId }),
                 m(FastModeNotice, { chatId }),
                 !isListed || (isCompact && !isFlipped)
                   ? null
