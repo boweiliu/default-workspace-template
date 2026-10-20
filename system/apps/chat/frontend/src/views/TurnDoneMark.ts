@@ -25,7 +25,8 @@ import { formatElapsed, latestTurnSpan } from "./turnTiming";
 /** What the mark says for the transcript's latest turn, or null when it shows nothing. */
 export function turnDoneLabel(chatId: string, events: readonly TranscriptEvent[]): string | null {
   const chat = getChatById(chatId);
-  if (chat === undefined || (chat.status !== "idle" && chat.status !== "working") || chat.handoff !== null) return null;
+  if (chat === undefined || (chat.status !== "idle" && chat.status !== "working") || chat.handoff !== null)
+    return null;
   const agent = chat.active_agent;
   if (agent.activity_state !== "IDLE" || agent.queued_messages.length > 0 || agent.is_connecting) return null;
   if (getOutgoingMessages(chatId).length > 0) return null;
