@@ -125,8 +125,8 @@ class ModelChoice(FrozenModel):
 class SwitchMode(StrEnum):
     """How a harness's model bar behaves. ONE value per harness; it governs the
     model, effort, and fast axes uniformly. It has nothing to do with which axes
-    are *shown* -- that is decided purely by the matched model's data. claude and pi
-    use EAGER_THEN_RECONCILE; codex uses ON_CHANGE."""
+    are *shown* -- that is decided purely by the matched model's data. claude, pi and
+    antigravity use EAGER_THEN_RECONCILE; codex uses ON_CHANGE."""
 
     # Optimistic: the chip moves on click, then reconciles from disk.
     EAGER_THEN_RECONCILE = "eager_then_reconcile"
@@ -137,12 +137,6 @@ class SwitchMode(StrEnum):
     # choice reads as instant while never showing a value the daemon has not accepted. The frontend
     # derives ``optimistic = switch_mode === "eager_then_reconcile"``, so this yields no overlay.
     ON_CHANGE = "on_change"
-    # Display-only: the bar REFLECTS the harness's model and cannot drive it. The frontend
-    # renders the slots non-interactive (a readonly trigger + "use the agent terminal"
-    # tooltip) and never opens a picker. antigravity uses it: agy's `/model` is an
-    # interactive TUI picker with no scriptable one-shot form, and its `--model` flag applies
-    # only at launch, so there is no mid-session switch to offer.
-    READ_ONLY = "read_only"
 
 
 class PickerMode(StrEnum):
