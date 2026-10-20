@@ -195,6 +195,33 @@ function elapsedSince(startedAt: number | null, now: number): string | null {
   return formatElapsed(now - startedAt);
 }
 
+// Per chat, the message that opened the last turn this page saw settle. The backend can report a new
+// turn running a moment before that turn's own message reaches the transcript; until it does, the
+// latest message there is the finished turn's, which is no start to count from.
+const settledTurnByChat = new Map<string, string>();
+
+/** When the turn the row reports started, or null when the row reports none or its message has not
+ *  landed yet. Notes the latest turn as settled whenever the agent is idle. */
+function runningTurnStartedAt(
+  chatId: string,
+  state: string | null,
+  isTurnReported: boolean,
+  events: readonly TranscriptEvent[],
+): number | null {
+  const span = latestTurnSpan(events);
+  if (span === null) return null;
+  if (state === "IDLE") {
+    settledTurnByChat.set(chatId, span.openingEventId);
+    return null;
+  }
+  return isTurnReported && settledTurnByChat.get(chatId) !== span.openingEventId ? span.startedAt : null;
+}
+
+/** Forget what the page has seen of each chat's turns. */
+export function resetSettledTurnsForTesting(): void {
+  settledTurnByChat.clear();
+}
+
 /** When the chat's oldest send still on its way was made, or null when none is. */
 function oldestSendingAt(chatId: string): number | null {
   const outgoing = getOutgoingMessages(chatId);
@@ -402,7 +429,7 @@ export function ActivityIndicator(): m.Component<ActivityIndicatorAttrs> {
     const now = Date.now();
     // How long the turn has run, for a row that reports one: from the transcript's record of the
     // message that opened it, so a reloaded page counts from the same moment.
-    const turnStartedAt = label === null ? null : (latestTurnSpan(events)?.startedAt ?? null);
+    const turnStartedAt = runningTurnStartedAt(chatId, state, label !== null, events);
     const turnElapsed = elapsedSince(turnStartedAt, now);
     if (turnStartedAt !== null) scheduleTick(turnStartedAt, now);
     if (state === "TOOL_RUNNING" && label !== null) {

@@ -42,6 +42,7 @@ describe("latestTurnSpan", () => {
     ]);
 
     expect(span).toEqual({
+      openingEventId: "u-2026-10-20T10:01:00Z",
       startedAt: Date.parse("2026-10-20T10:01:00Z"),
       lastEventAt: Date.parse("2026-10-20T10:01:14Z"),
       hasAgentWork: true,
@@ -70,6 +71,7 @@ describe("latestTurnSpan", () => {
 
   it("says when the agent has done nothing in the turn yet", () => {
     expect(latestTurnSpan([userMessage("2026-10-20T10:00:00Z")])).toEqual({
+      openingEventId: "u-2026-10-20T10:00:00Z",
       startedAt: Date.parse("2026-10-20T10:00:00Z"),
       lastEventAt: Date.parse("2026-10-20T10:00:00Z"),
       hasAgentWork: false,

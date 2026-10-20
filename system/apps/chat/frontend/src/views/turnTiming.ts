@@ -15,6 +15,8 @@ import { isNonBoundaryUserMessage } from "./message-classification";
 
 /** The span of the transcript's latest turn, in epoch milliseconds. */
 export interface TurnSpan {
+  /** The event id of the message that opened the turn. */
+  openingEventId: string;
   startedAt: number;
   /** When the agent last recorded work in the turn; equal to `startedAt` while it has recorded none. */
   lastEventAt: number;
@@ -31,7 +33,12 @@ export function latestTurnSpan(events: readonly TranscriptEvent[]): TurnSpan | n
     const at = Date.parse(event.timestamp);
     if (event.type === "user_message" && !isNonBoundaryUserMessage(event)) {
       if (Number.isNaN(at)) return null;
-      return { startedAt: at, lastEventAt: Math.max(at, lastWorkAt ?? at), hasAgentWork };
+      return {
+        openingEventId: event.event_id,
+        startedAt: at,
+        lastEventAt: Math.max(at, lastWorkAt ?? at),
+        hasAgentWork,
+      };
     }
     if (event.type === "assistant_message" || event.type === "tool_result") {
       hasAgentWork = true;

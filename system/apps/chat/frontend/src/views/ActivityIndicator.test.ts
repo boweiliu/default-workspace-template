@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   ELAPSED_SHOWN_AFTER_MS,
   labelForActivityState,
+  resetSettledTurnsForTesting,
   SENDING_LABEL_AFTER_MS,
   turnStatusPlacement,
   wakeUpSpinnerDeadline,
@@ -423,6 +424,7 @@ describe("ActivityIndicator — the row before, during and after a turn", () => 
     handoffState.handoff = null;
     chatState.status = "idle";
     now = NOW;
+    resetSettledTurnsForTesting();
     vi.spyOn(m, "redraw").mockImplementation(() => undefined);
     vi.spyOn(Date, "now").mockImplementation(() => now);
   });
@@ -495,6 +497,19 @@ describe("ActivityIndicator — the row before, during and after a turn", () => 
     ]);
     expect(partOf(tool, "label")).toBe("Reading app.py");
     expect(partOf(tool, "elapsed")).toBe("2m 05s");
+  });
+
+  it("does not count from a finished turn while the next turn's own message is still on its way", () => {
+    const finished = [userMsg(isoAt(NOW - 3_600_000)), toolResult(isoAt(NOW - 3_590_000), "c0")];
+    render(finished);
+
+    // The backend reports the next turn a beat before its message reaches the transcript.
+    agentState.activity_state = "THINKING";
+    expect(partOf(render(finished), "label")).toBe("Thinking…");
+    expect(partOf(render(finished), "elapsed")).toBeNull();
+
+    // Once it lands, the count runs from it.
+    expect(partOf(render([...finished, userMsg(isoAt(NOW - 5_000))]), "elapsed")).toBe("5s");
   });
 
   it("keeps the dot while the harness closes a turn whose reply is in, and names that once it lasts", () => {
