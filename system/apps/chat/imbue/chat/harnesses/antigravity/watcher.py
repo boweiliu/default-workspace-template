@@ -579,7 +579,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         if send is None or is_alive is None:
             return
         self._queue.republish()
-        if not self._queue.has_entries():
+        if not self._queue.has_entries() and self._queue.model_command() is None:
             return
         if not is_alive():
             # HELD, not taken. "Returned to the composer" is the RESPONSE to a stop request;
@@ -595,6 +595,12 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             # is genuinely parked now and must read as queued rather than Sending.
             self._queue.demote_pending()
             return
+        # A model switch goes first and on its own: agy runs a slash command without opening a
+        # turn, so it cannot ride in the block, whose delivery is witnessed by the turn it opens.
+        # Typed here rather than by the switch request, so it never lands in a live turn.
+        model_command = self._queue.model_command()
+        if model_command is not None:
+            self._queue.settle_model_command(model_command, is_delivered=send(model_command))
         block, claimed, generation = self._queue.begin_flush()
         if not claimed:
             return

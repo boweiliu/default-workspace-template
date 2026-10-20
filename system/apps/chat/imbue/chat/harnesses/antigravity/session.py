@@ -118,7 +118,7 @@ class AntigravityHarnessSession(FileHarnessSession):
         identity = read_model_identity(self._deps.model_state_path)
         if identity is None or match_option(identity, options) is not None:
             return options
-        return (*options, derived_option(identity.model_id))
+        return (*options, derived_option(identity))
 
 
 def _now_iso() -> str:

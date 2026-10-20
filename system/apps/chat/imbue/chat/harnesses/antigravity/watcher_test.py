@@ -11,6 +11,7 @@ from typing import Any
 
 from imbue.chat.activity_state import ACTIVE_MARKER_FILENAME
 from imbue.chat.agent_discovery import AgentInfo
+from imbue.chat.harnesses.antigravity.model import AntigravityModelResolver
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
 from imbue.chat.harnesses.antigravity.testing import append_step
 from imbue.chat.harnesses.antigravity.testing import build_metadata
@@ -24,6 +25,8 @@ from imbue.chat.harnesses.antigravity.testing import set_step_status
 from imbue.chat.harnesses.antigravity.testing import str_field
 from imbue.chat.harnesses.antigravity.turn_state import drop_turn_state
 from imbue.chat.harnesses.antigravity.watcher import AntigravitySessionWatcher
+from imbue.chat.harnesses.model import ModelAxis
+from imbue.chat.harnesses.model import ModelIdentity
 
 _STATUS_RUNNING = 2
 _STATUS_DONE = 3
@@ -48,23 +51,26 @@ def _tool_payload(result: str = "output", *, short: str = "Running ls") -> bytes
     return build_step_payload(metadata, body=build_tool_body(result=result, tool_action=short))
 
 
-def _make_watcher(tmp_path: Path, conv_ids: list[str]) -> AntigravitySessionWatcher:
-    (tmp_path / "antigravity_conversation_ids").write_text("\n".join(conv_ids) + "\n")
-    (tmp_path / "plugin" / "antigravity" / "home" / ".gemini" / "antigravity-cli" / "conversations").mkdir(
-        parents=True, exist_ok=True
-    )
+def _agent_info(tmp_path: Path) -> AgentInfo:
     # Unique per test: the tracker and turn-state registries are keyed by agent id and live
     # for the agent's life, so a shared id leaks one test's queue into the next.
-    agent_id = f"agent-{tmp_path.name}"
-    drop_tracker(agent_id)
-    drop_turn_state(agent_id)
-    agent_info = AgentInfo(
-        id=agent_id,
+    return AgentInfo(
+        id=f"agent-{tmp_path.name}",
         name="agy-test",
         state="RUNNING",
         agent_state_dir=tmp_path,
         claude_config_dir=tmp_path,
     )
+
+
+def _make_watcher(tmp_path: Path, conv_ids: list[str]) -> AntigravitySessionWatcher:
+    (tmp_path / "antigravity_conversation_ids").write_text("\n".join(conv_ids) + "\n")
+    (tmp_path / "plugin" / "antigravity" / "home" / ".gemini" / "antigravity-cli" / "conversations").mkdir(
+        parents=True, exist_ok=True
+    )
+    agent_info = _agent_info(tmp_path)
+    drop_tracker(agent_info.id)
+    drop_turn_state(agent_info.id)
     return AntigravitySessionWatcher.build(agent_info, lambda _agent_id, _events: None)
 
 
@@ -616,3 +622,130 @@ def test_a_loader_reads_a_settled_conversation_with_no_thread_and_releases_what_
     assert loader._connections != {}
     loader.close()
     assert loader._connections == {}
+
+
+# --- model switches: typed by the same worker, alone, between turns --------------------------
+
+
+def _switching_watcher(tmp_path: Path, conv: str, sent: list[str], *, is_slash_command_delivered: bool = True):
+    """A watcher whose send records the text and, like agy, commits only a message as a user turn.
+
+    agy runs a slash command such as ``/model`` without opening a turn, so it writes no row.
+    """
+    watcher = _make_watcher(tmp_path, [conv])
+    next_idx = [100]
+
+    def _send(text: str) -> bool:
+        sent.append(text)
+        if text.startswith("/"):
+            return is_slash_command_delivered
+        append_step(_conv_db_path(tmp_path, conv), (next_idx[0], _TYPE_USER, _STATUS_DONE, _user_payload(text)))
+        next_idx[0] += 1
+        return True
+
+    watcher.set_flush_hooks(_send, lambda: True)
+    return watcher
+
+
+def _type_now(text: str) -> bool:
+    raise AssertionError(f"the switch typed {text!r} itself instead of leaving it to the worker")
+
+
+def _pick(tmp_path: Path, model_id: str, effort: str | None) -> None:
+    """Make a pick the way the model bar's route does: through the agent's resolver."""
+    result = AntigravityModelResolver.build(_agent_info(tmp_path)).switch(
+        ModelIdentity(model_id=model_id, effort=effort, fast=False),
+        frozenset({ModelAxis.MODEL, ModelAxis.EFFORT}),
+        _type_now,
+    )
+    assert result.ok
+
+
+def _close_turn(tmp_path: Path, conv: str, watcher: AntigravitySessionWatcher) -> None:
+    append_step(_conv_db_path(tmp_path, conv), (2, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("done")))
+    (tmp_path / ACTIVE_MARKER_FILENAME).unlink(missing_ok=True)
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+
+
+def test_a_model_switch_waits_for_the_turn_to_close(tmp_path: Path) -> None:
+    """A pick made mid-turn is not typed into it: agy may be showing a dialog the keys would answer."""
+    conv = "conv-switch-open"
+    sent: list[str] = []
+    watcher = _switching_watcher(tmp_path, conv, sent)
+    build_steps_db(
+        _conv_db_path(tmp_path, conv),
+        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_RUN_COMMAND, _STATUS_DONE, _tool_payload())],
+    )
+    (tmp_path / ACTIVE_MARKER_FILENAME).write_text("")
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+    _pick(tmp_path, "gemini-3.8-flash", "low")
+
+    watcher._attempt_flush()
+    assert sent == []
+
+    _close_turn(tmp_path, conv, watcher)
+    watcher._attempt_flush()
+    assert sent == ["/model gemini-3.8-flash-low"]
+
+    watcher._attempt_flush()
+    assert sent == ["/model gemini-3.8-flash-low"], "a delivered switch is typed once"
+
+
+def test_a_model_switch_is_typed_alone_ahead_of_held_messages(tmp_path: Path) -> None:
+    """The command never rides in the block: agy would read it as part of the message."""
+    conv = "conv-switch-block"
+    sent: list[str] = []
+    watcher = _switching_watcher(tmp_path, conv, sent)
+    build_steps_db(
+        _conv_db_path(tmp_path, conv),
+        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
+    )
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+    watcher._queue.enqueue("next thing", "t0")
+    watcher._queue.enqueue("and another", "t1")
+    _pick(tmp_path, "claude-opus-4-6-thinking", None)
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model claude-opus-4-6-thinking", "next thing\nand another"]
+    assert watcher.get_queued_messages() == []
+
+
+def test_only_the_newest_model_pick_is_typed(tmp_path: Path) -> None:
+    conv = "conv-switch-newest"
+    sent: list[str] = []
+    watcher = _switching_watcher(tmp_path, conv, sent)
+    build_steps_db(
+        _conv_db_path(tmp_path, conv),
+        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
+    )
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+    _pick(tmp_path, "claude-sonnet-4-6", None)
+    _pick(tmp_path, "gemini-3.8-flash", "medium")
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model gemini-3.8-flash-medium"]
+
+
+def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> None:
+    """A failed send is retried on later passes, but not forever."""
+    conv = "conv-switch-retry"
+    sent: list[str] = []
+    watcher = _switching_watcher(tmp_path, conv, sent, is_slash_command_delivered=False)
+    build_steps_db(
+        _conv_db_path(tmp_path, conv),
+        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
+    )
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+    _pick(tmp_path, "gemini-3.8-flash", "high")
+
+    for _ in range(5):
+        watcher._attempt_flush()
+
+    assert sent == ["/model gemini-3.8-flash-high"] * 3

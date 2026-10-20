@@ -377,19 +377,6 @@ def test_account_model_options_offers_the_catalog_for_a_static_harness_and_the_a
         assert client.get("/api/accounts/acct-nope/model-options").status_code == 404
 
 
-def test_account_model_options_offers_nothing_for_a_harness_whose_model_the_chat_cannot_switch(
-    tmp_path: Path,
-) -> None:
-    """Antigravity's model is changed from its terminal, so the dialog is offered no pick it could not apply."""
-    agy_id, _ = mint_account_dir()
-    commit_account(agy_id, "google", "Google")
-    manager = AgentManager.build(WebSocketBroadcaster(), mngr_binary="/bin/true")
-    with _client_for(build_test_state(agent_manager=manager)) as client:
-        answered = client.get(f"/api/accounts/{agy_id}/model-options")
-        assert answered.status_code == 200
-        assert answered.get_json() == {"models": None, "options": []}
-
-
 # the relayed browser callback
 
 

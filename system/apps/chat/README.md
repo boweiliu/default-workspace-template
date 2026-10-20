@@ -315,9 +315,10 @@ while since `mngr start` does not wait for the harness to come up. A new chat
 created with a pick (`POST /api/chats/create` takes `model` too) is set up the
 same way. `GET /api/accounts/<account-id>/model-options` is where the dialog
 gets the target account's models, for a handoff's successor and a rebound agent
-alike: the catalog for a static harness, for codex the options an agent of the
-account was last offered, and nothing for antigravity, whose model is changed
-from the agent's terminal.
+alike: the catalog for a static harness, and for codex the options an agent of
+the account was last offered. An antigravity pick is typed into the agent as
+`/model <slug>` by the same worker that delivers its held messages, once no turn
+is open, so a pick made mid-turn takes effect when that turn ends.
 
 The send route is also how anything inside the workspace messages a chat:
 `system/scripts/message_chat.py` posts to it by chat id (the browser app's

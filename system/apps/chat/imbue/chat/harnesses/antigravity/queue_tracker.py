@@ -97,6 +97,11 @@ class AntigravityQueueTracker:
     _attempts: dict[str, int]
     _publish: PublishCallback | None
     _wake: Callable[[], None] | None
+    # The model switch waiting for agy to be idle: the slash command the worker types ahead of
+    # the held block. One slot, because only the newest pick matters. Not journalled and not
+    # cleared by a session change: a pick the user made still applies to the agy that comes up.
+    _model_command: str | None
+    _model_command_attempts: int
 
     @classmethod
     def build(cls, outbox_path: Path, session_token: str) -> "AntigravityQueueTracker":
@@ -111,6 +116,8 @@ class AntigravityQueueTracker:
         self._attempts = {}
         self._publish = None
         self._wake = None
+        self._model_command = None
+        self._model_command_attempts = 0
         self._replay()
         return self
 
@@ -243,6 +250,39 @@ class AntigravityQueueTracker:
         if wake is not None:
             wake()
         return queued_id
+
+    def request_model_command(self, command: str) -> None:
+        """Hold ``command`` for the worker to type once agy is idle, replacing any older one."""
+        with self._lock:
+            self._model_command = command
+            self._model_command_attempts = 0
+            wake = self._wake
+        if wake is not None:
+            wake()
+
+    def model_command(self) -> str | None:
+        with self._lock:
+            return self._model_command
+
+    def settle_model_command(self, command: str, *, is_delivered: bool) -> None:
+        """Record the outcome of typing ``command``. A newer pick that arrived meanwhile is kept.
+
+        An undelivered command stays held for the next attempt until it has used
+        :data:`MAX_DELIVERY_ATTEMPTS`, then is dropped: the chip's optimistic pick then times out
+        back to the model agy actually reports.
+        """
+        with self._lock:
+            if self._model_command != command:
+                return
+            if is_delivered:
+                self._model_command = None
+                self._model_command_attempts = 0
+                return
+            self._model_command_attempts += 1
+            if self._model_command_attempts >= MAX_DELIVERY_ATTEMPTS:
+                logger.warning("antigravity: giving up on {!r} after {} attempts", command, MAX_DELIVERY_ATTEMPTS)
+                self._model_command = None
+                self._model_command_attempts = 0
 
     def begin_flush(self) -> tuple[str, tuple[str, ...], int]:
         """Claim the current queue for a flush: returns (block, claimed ids, generation).
