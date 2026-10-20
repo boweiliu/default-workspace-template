@@ -337,7 +337,7 @@ class HarnessModelResolver(ABC):
     the spec, beside ``catalog_factory`` -- deliberately NOT on this resolver, which is
     now write-only) -- so the resolver only owns the harness-specific WRITE side:
 
-    * :meth:`switch` -- apply a selection (a no-op for a display-only harness)
+    * :meth:`switch` -- apply a selection
     * :meth:`list_offered_models` -- the picker's offer set (only pi overrides it;
       its offer set is per-agent and auth-gated)
 
