@@ -67,12 +67,12 @@ describe("the done mark under the latest reply", () => {
     vi.restoreAllMocks();
   });
 
-  it("says the turn is done, and how long the agent took, once the chat is idle", () => {
-    expect(turnDoneLabel(CHAT_ID, finishedTurn)).toBe("Done in 14s");
+  it("says the turn is done, and how long the agent worked on it, once the chat is idle", () => {
+    expect(turnDoneLabel(CHAT_ID, finishedTurn)).toBe("Worked for 14s");
 
     const root = document.createElement("div");
     m.render(root, m(TurnDoneMark, { chatId: CHAT_ID, events: finishedTurn }));
-    expect(root.querySelector(".turn-done-mark .turn-done-mark__label")?.textContent).toBe("Done in 14s");
+    expect(root.querySelector(".turn-done-mark .turn-done-mark__label")?.textContent).toBe("Worked for 14s");
     expect(root.querySelector(".turn-done-mark__check svg")).not.toBeNull();
   });
 

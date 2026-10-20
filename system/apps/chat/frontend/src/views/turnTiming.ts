@@ -6,7 +6,7 @@
  * verdict), not a skill expansion or a framework injection inside the turn. It ends at the agent's
  * last reply, tool call or tool result after that message -- not at a compaction that ran once the
  * agent was idle, which lands later without opening a turn. Both are the transcript's own
- * timestamps, so the running timer and the "Done in" mark agree, and a reloaded page reads the same
+ * timestamps, so the running timer and the "Worked for" mark agree, and a reloaded page reads the same
  * numbers.
  */
 

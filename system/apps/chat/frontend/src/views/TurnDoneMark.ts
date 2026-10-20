@@ -1,6 +1,8 @@
 /**
- * "Done in 14s" under the latest reply, once the agent has finished the turn: the explicit end the
- * status row above it hands over to, so a finished chat never reads as one that might still be going.
+ * "Worked for 14s", with a check, under the latest reply once the agent has finished the turn: the
+ * explicit end the status row above it hands over to, so a finished chat never reads as one that
+ * might still be going. The number is the agent's own working time, so it says "worked for" rather
+ * than claiming to be how long the user waited.
  *
  * It shows only when the backend reports the chat idle -- nothing in flight, nothing closing,
  * no background task to resume on, no permission to answer -- and this page has no send of its own
@@ -30,7 +32,7 @@ export function turnDoneLabel(chatId: string, events: readonly TranscriptEvent[]
   const span = latestTurnSpan(events);
   if (span === null || !span.hasAgentWork) return null;
   const took = span.lastEventAt - span.startedAt;
-  return took < 1000 ? "Done" : `Done in ${formatElapsed(took)}`;
+  return took < 1000 ? "Done" : `Worked for ${formatElapsed(took)}`;
 }
 
 export function TurnDoneMark(): m.Component<{ chatId: string; events: TranscriptEvent[] }> {
