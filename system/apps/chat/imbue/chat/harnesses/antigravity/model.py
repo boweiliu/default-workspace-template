@@ -13,6 +13,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
+from loguru import logger
+
 from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.harnesses.antigravity.queue_tracker import OUTBOX_FILENAME
 from imbue.chat.harnesses.antigravity.queue_tracker import get_tracker
@@ -78,6 +80,8 @@ ANTIGRAVITY_CATALOG: Final[HarnessCatalog] = HarnessCatalog(
     native_atomic_shoulder_tap_possible=True,
 )
 
+_CATALOG_SLUGS: Final[frozenset[str]] = frozenset(slug for slug, _, _, _ in _MODEL_ROWS)
+
 
 def derived_option(identity: ModelIdentity) -> ModelOption:
     """An option for a model agy reports that is absent from :data:`_MODEL_ROWS`.
@@ -121,6 +125,12 @@ class AntigravityModelResolver(HarnessModelResolver):
     def switch(self, identity: ModelIdentity, axes: frozenset[ModelAxis], send: Callable[[str], bool]) -> SwitchResult:
         # Not through ``send``, which types now whatever agy is doing (see the module docstring).
         if ModelAxis.MODEL not in axes and ModelAxis.EFFORT not in axes:
+            return SwitchResult(ok=True)
+        if identity.model_id not in _CATALOG_SLUGS:
+            # A pick can only name an unlisted model through `derived_option`, which is in the
+            # option set only while the agent reports that model at that effort, so the agent is
+            # already on it. Its id is a display name, which `/model` would not accept.
+            logger.debug("antigravity: {} already runs the unlisted model {!r}", self._agent_id, identity.model_id)
             return SwitchResult(ok=True)
         tracker = get_tracker(self._agent_id, self._state_dir / OUTBOX_FILENAME, session_token(self._state_dir))
         tracker.request_model_command(model_command(identity))

@@ -165,6 +165,23 @@ def test_an_unknown_model_is_rendered_instead_of_shrugged(
     assert options[: len(ANTIGRAVITY_CATALOG.options)] == ANTIGRAVITY_CATALOG.options
 
 
+def test_a_carried_pick_of_an_unlisted_model_types_nothing(tmp_path: Path) -> None:
+    """A rebind carries the chat's model, which can be one newer than the list. The restarted agent
+    still reports it, so the pick validates against its derived option, but its id is a display
+    name `/model` does not take, and the agent is already on it."""
+    state = tmp_path / "model_state.json"
+    state.write_text(json.dumps({"model": "Gemini 9.9 Flash", "effort": "high"}))
+    agent_info = _agent_info(tmp_path)
+    validate_model_pick(_session(state).switch_options(), "Gemini 9.9 Flash", "high", fast=False)
+
+    result = AntigravityModelResolver.build(agent_info).switch(
+        ModelIdentity(model_id="Gemini 9.9 Flash", effort="high", fast=False), frozenset(ModelAxis), _type_now
+    )
+
+    assert result.ok
+    assert _held_command(agent_info) is None
+
+
 def test_no_model_state_leaves_the_catalog_alone(tmp_path: Path) -> None:
     """Before agy's first statusline fire there is no file, so the bar renders no slots."""
     assert _session(tmp_path / "absent.json").switch_options() == ANTIGRAVITY_CATALOG.options
