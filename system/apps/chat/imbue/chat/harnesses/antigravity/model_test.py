@@ -63,7 +63,7 @@ def test_every_offered_pick_passes_validation() -> None:
     """Each model at each of its efforts is a pick the model bar's route accepts."""
     options = ANTIGRAVITY_CATALOG.options
     for option in options:
-        for effort in option.efforts or ():
+        for effort in option.efforts:
             validate_model_pick(options, option.id, effort.level, fast=False)
         if not option.efforts:
             validate_model_pick(options, option.id, None, fast=False)
