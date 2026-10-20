@@ -14,6 +14,7 @@ from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.harnesses.antigravity.model import AntigravityModelResolver
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
 from imbue.chat.harnesses.antigravity.testing import append_step
+from imbue.chat.harnesses.antigravity.testing import build_agent_info
 from imbue.chat.harnesses.antigravity.testing import build_metadata
 from imbue.chat.harnesses.antigravity.testing import build_step_payload
 from imbue.chat.harnesses.antigravity.testing import build_steps_db
@@ -21,6 +22,7 @@ from imbue.chat.harnesses.antigravity.testing import build_tool_body
 from imbue.chat.harnesses.antigravity.testing import build_tool_metadata
 from imbue.chat.harnesses.antigravity.testing import encode_varint
 from imbue.chat.harnesses.antigravity.testing import len_field
+from imbue.chat.harnesses.antigravity.testing import refuse_to_type
 from imbue.chat.harnesses.antigravity.testing import set_step_status
 from imbue.chat.harnesses.antigravity.testing import str_field
 from imbue.chat.harnesses.antigravity.turn_state import drop_turn_state
@@ -51,24 +53,12 @@ def _tool_payload(result: str = "output", *, short: str = "Running ls") -> bytes
     return build_step_payload(metadata, body=build_tool_body(result=result, tool_action=short))
 
 
-def _agent_info(tmp_path: Path) -> AgentInfo:
-    # Unique per test: the tracker and turn-state registries are keyed by agent id and live
-    # for the agent's life, so a shared id leaks one test's queue into the next.
-    return AgentInfo(
-        id=f"agent-{tmp_path.name}",
-        name="agy-test",
-        state="RUNNING",
-        agent_state_dir=tmp_path,
-        claude_config_dir=tmp_path,
-    )
-
-
 def _make_watcher(tmp_path: Path, conv_ids: list[str]) -> AntigravitySessionWatcher:
     (tmp_path / "antigravity_conversation_ids").write_text("\n".join(conv_ids) + "\n")
     (tmp_path / "plugin" / "antigravity" / "home" / ".gemini" / "antigravity-cli" / "conversations").mkdir(
         parents=True, exist_ok=True
     )
-    agent_info = _agent_info(tmp_path)
+    agent_info = build_agent_info(tmp_path)
     drop_tracker(agent_info.id)
     drop_turn_state(agent_info.id)
     return AntigravitySessionWatcher.build(agent_info, lambda _agent_id, _events: None)
@@ -217,17 +207,29 @@ def _tag(field: int, wire: int) -> bytes:
 # into a live turn every 5 seconds -- shipped green.
 
 
-def _flushing_watcher(tmp_path: Path, conv: str, sent: list[str], *, is_alive: bool = True, does_commit: bool = True):
-    """A watcher whose send records the text and, like agy, commits it as a user turn.
+def _flushing_watcher(
+    tmp_path: Path,
+    conv: str,
+    sent: list[str],
+    *,
+    is_alive: bool = True,
+    does_commit: bool = True,
+    is_slash_command_delivered: bool = True,
+) -> AntigravitySessionWatcher:
+    """A watcher whose send records the text and, like agy, commits a message as a user turn.
 
     ``does_commit=False`` is the parked case: mngr reports the send accepted (its probe is the
-    busy marker's mtime, which advances either way) but agy wrote no user row.
+    busy marker's mtime, which advances either way) but agy wrote no user row. agy runs a slash
+    command such as ``/model`` without opening a turn, so one writes no row either way, and its
+    send returns ``is_slash_command_delivered``.
     """
     watcher = _make_watcher(tmp_path, [conv])
     next_idx = [100]
 
     def _send(text: str) -> bool:
         sent.append(text)
+        if text.startswith("/"):
+            return is_slash_command_delivered
         if does_commit:
             append_step(_conv_db_path(tmp_path, conv), (next_idx[0], _TYPE_USER, _STATUS_DONE, _user_payload(text)))
             next_idx[0] += 1
@@ -627,36 +629,12 @@ def test_a_loader_reads_a_settled_conversation_with_no_thread_and_releases_what_
 # Model switches: typed by the same worker, alone, between turns
 
 
-def _switching_watcher(tmp_path: Path, conv: str, sent: list[str], *, is_slash_command_delivered: bool = True):
-    """A watcher whose send records the text and, like agy, commits only a message as a user turn.
-
-    agy runs a slash command such as ``/model`` without opening a turn, so it writes no row.
-    """
-    watcher = _make_watcher(tmp_path, [conv])
-    next_idx = [100]
-
-    def _send(text: str) -> bool:
-        sent.append(text)
-        if text.startswith("/"):
-            return is_slash_command_delivered
-        append_step(_conv_db_path(tmp_path, conv), (next_idx[0], _TYPE_USER, _STATUS_DONE, _user_payload(text)))
-        next_idx[0] += 1
-        return True
-
-    watcher.set_flush_hooks(_send, lambda: True)
-    return watcher
-
-
-def _type_now(text: str) -> bool:
-    raise AssertionError(f"the switch typed {text!r} itself instead of leaving it to the worker")
-
-
 def _pick(tmp_path: Path, model_id: str, effort: str | None) -> None:
     """Make a pick the way the model bar's route does: through the agent's resolver."""
-    result = AntigravityModelResolver.build(_agent_info(tmp_path)).switch(
+    result = AntigravityModelResolver.build(build_agent_info(tmp_path)).switch(
         ModelIdentity(model_id=model_id, effort=effort, fast=False),
         frozenset({ModelAxis.MODEL, ModelAxis.EFFORT}),
-        _type_now,
+        refuse_to_type,
     )
     assert result.ok
 
@@ -672,7 +650,7 @@ def test_a_model_switch_waits_for_the_turn_to_close(tmp_path: Path) -> None:
     """A pick made mid-turn is not typed into it: agy may be showing a dialog the keys would answer."""
     conv = "conv-switch-open"
     sent: list[str] = []
-    watcher = _switching_watcher(tmp_path, conv, sent)
+    watcher = _flushing_watcher(tmp_path, conv, sent)
     build_steps_db(
         _conv_db_path(tmp_path, conv),
         [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_RUN_COMMAND, _STATUS_DONE, _tool_payload())],
@@ -697,7 +675,7 @@ def test_a_model_switch_is_typed_alone_ahead_of_held_messages(tmp_path: Path) ->
     """The command never rides in the block: agy would read it as part of the message."""
     conv = "conv-switch-block"
     sent: list[str] = []
-    watcher = _switching_watcher(tmp_path, conv, sent)
+    watcher = _flushing_watcher(tmp_path, conv, sent)
     build_steps_db(
         _conv_db_path(tmp_path, conv),
         [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
@@ -717,7 +695,7 @@ def test_a_model_switch_is_typed_alone_ahead_of_held_messages(tmp_path: Path) ->
 def test_only_the_newest_model_pick_is_typed(tmp_path: Path) -> None:
     conv = "conv-switch-newest"
     sent: list[str] = []
-    watcher = _switching_watcher(tmp_path, conv, sent)
+    watcher = _flushing_watcher(tmp_path, conv, sent)
     build_steps_db(
         _conv_db_path(tmp_path, conv),
         [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
@@ -736,7 +714,7 @@ def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> 
     """A failed send is retried on later passes, but not forever."""
     conv = "conv-switch-retry"
     sent: list[str] = []
-    watcher = _switching_watcher(tmp_path, conv, sent, is_slash_command_delivered=False)
+    watcher = _flushing_watcher(tmp_path, conv, sent, is_slash_command_delivered=False)
     build_steps_db(
         _conv_db_path(tmp_path, conv),
         [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],

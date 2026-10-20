@@ -14,6 +14,8 @@ from imbue.chat.harnesses.antigravity.queue_tracker import OUTBOX_FILENAME
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
 from imbue.chat.harnesses.antigravity.queue_tracker import get_tracker
 from imbue.chat.harnesses.antigravity.session import AntigravityHarnessSession
+from imbue.chat.harnesses.antigravity.testing import build_agent_info
+from imbue.chat.harnesses.antigravity.testing import refuse_to_type
 from imbue.chat.harnesses.harness_type import HarnessType
 from imbue.chat.harnesses.model import ModelAxis
 from imbue.chat.harnesses.model import ModelIdentity
@@ -68,13 +70,7 @@ def test_every_offered_pick_passes_validation() -> None:
 
 
 def _agent_info(tmp_path: Path) -> AgentInfo:
-    agent_info = AgentInfo(
-        id=f"agent-{tmp_path.name}",
-        name="agy-test",
-        state="RUNNING",
-        agent_state_dir=tmp_path,
-        claude_config_dir=tmp_path,
-    )
+    agent_info = build_agent_info(tmp_path)
     drop_tracker(agent_info.id)
     return agent_info
 
@@ -84,16 +80,12 @@ def _held_command(agent_info: AgentInfo) -> str | None:
     return tracker.model_command()
 
 
-def _type_now(text: str) -> bool:
-    raise AssertionError(f"the switch typed {text!r} itself instead of leaving it to the worker")
-
-
 def test_a_switch_holds_its_command_for_the_worker(tmp_path: Path) -> None:
     agent_info = _agent_info(tmp_path)
     result = AntigravityModelResolver.build(agent_info).switch(
         ModelIdentity(model_id="gemini-3.8-flash", effort="medium", fast=False),
         frozenset({ModelAxis.EFFORT}),
-        _type_now,
+        refuse_to_type,
     )
     assert result.ok
     assert _held_command(agent_info) == "/model gemini-3.8-flash-medium"
@@ -102,7 +94,7 @@ def test_a_switch_holds_its_command_for_the_worker(tmp_path: Path) -> None:
 def test_a_switch_that_changes_neither_model_nor_effort_holds_nothing(tmp_path: Path) -> None:
     agent_info = _agent_info(tmp_path)
     result = AntigravityModelResolver.build(agent_info).switch(
-        ModelIdentity(model_id="claude-sonnet-4-6", effort=None, fast=False), frozenset(), _type_now
+        ModelIdentity(model_id="claude-sonnet-4-6", effort=None, fast=False), frozenset(), refuse_to_type
     )
     assert result.ok
     assert _held_command(agent_info) is None
@@ -175,7 +167,7 @@ def test_a_carried_pick_of_an_unlisted_model_types_nothing(tmp_path: Path) -> No
     validate_model_pick(_session(state).switch_options(), "Gemini 9.9 Flash", "high", fast=False)
 
     result = AntigravityModelResolver.build(agent_info).switch(
-        ModelIdentity(model_id="Gemini 9.9 Flash", effort="high", fast=False), frozenset(ModelAxis), _type_now
+        ModelIdentity(model_id="Gemini 9.9 Flash", effort="high", fast=False), frozenset(ModelAxis), refuse_to_type
     )
 
     assert result.ok
