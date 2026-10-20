@@ -404,8 +404,9 @@ class AntigravityQueueTracker:
     def demote_pending(self) -> bool:
         """Stop presenting the not-yet-claimed entries as Sending; they are parked after all.
 
-        Called when a turn turns out to be open, so the worker declined to take them. Returns
-        True when anything changed, so the caller can skip a pointless publish.
+        Called when the worker declines to take them after all: a turn turned out to be open,
+        or a failed model switch holds them back until its retry. Returns True when anything
+        changed, so the caller can skip a pointless publish.
         """
         with self._lock:
             pending = self._pending_send - self._sending_ids
