@@ -647,6 +647,20 @@ def _close_turn(tmp_path: Path, conv: str, watcher: AntigravitySessionWatcher) -
     watcher._publish_turn_state()
 
 
+def _idle_flushing_watcher(
+    tmp_path: Path, conv: str, sent: list[str], *, is_slash_command_delivered: bool = True
+) -> AntigravitySessionWatcher:
+    """A ``_flushing_watcher`` whose agent has just finished a turn, so nothing holds the flush."""
+    watcher = _flushing_watcher(tmp_path, conv, sent, is_slash_command_delivered=is_slash_command_delivered)
+    build_steps_db(
+        _conv_db_path(tmp_path, conv),
+        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
+    )
+    watcher._collect_new_events()
+    watcher._publish_turn_state()
+    return watcher
+
+
 def test_a_model_switch_waits_for_the_turn_to_close(tmp_path: Path) -> None:
     """A pick made mid-turn is not typed into it: agy may be showing a dialog the keys would answer."""
     conv = "conv-switch-open"
@@ -674,15 +688,8 @@ def test_a_model_switch_waits_for_the_turn_to_close(tmp_path: Path) -> None:
 
 def test_a_model_switch_is_typed_alone_ahead_of_held_messages(tmp_path: Path) -> None:
     """The command never rides in the block: agy would read it as part of the message."""
-    conv = "conv-switch-block"
     sent: list[str] = []
-    watcher = _flushing_watcher(tmp_path, conv, sent)
-    build_steps_db(
-        _conv_db_path(tmp_path, conv),
-        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
-    )
-    watcher._collect_new_events()
-    watcher._publish_turn_state()
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-block", sent)
     watcher._queue.enqueue("next thing", "t0")
     watcher._queue.enqueue("and another", "t1")
     _pick(tmp_path, "claude-opus-4-6-thinking", None)
@@ -694,15 +701,8 @@ def test_a_model_switch_is_typed_alone_ahead_of_held_messages(tmp_path: Path) ->
 
 
 def test_only_the_newest_model_pick_is_typed(tmp_path: Path) -> None:
-    conv = "conv-switch-newest"
     sent: list[str] = []
-    watcher = _flushing_watcher(tmp_path, conv, sent)
-    build_steps_db(
-        _conv_db_path(tmp_path, conv),
-        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
-    )
-    watcher._collect_new_events()
-    watcher._publish_turn_state()
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-newest", sent)
     _pick(tmp_path, "claude-sonnet-4-6", None)
     _pick(tmp_path, "gemini-3.8-flash", "medium")
 
@@ -713,15 +713,8 @@ def test_only_the_newest_model_pick_is_typed(tmp_path: Path) -> None:
 
 def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> None:
     """A failed send is retried on later passes, but not forever, and held messages wait behind it."""
-    conv = "conv-switch-retry"
     sent: list[str] = []
-    watcher = _flushing_watcher(tmp_path, conv, sent, is_slash_command_delivered=False)
-    build_steps_db(
-        _conv_db_path(tmp_path, conv),
-        [(0, _TYPE_USER, _STATUS_DONE, _user_payload("go")), (1, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("ok"))],
-    )
-    watcher._collect_new_events()
-    watcher._publish_turn_state()
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-retry", sent, is_slash_command_delivered=False)
     watcher._queue.enqueue("next thing", "t0")
     _pick(tmp_path, "gemini-3.8-flash", "high")
 
