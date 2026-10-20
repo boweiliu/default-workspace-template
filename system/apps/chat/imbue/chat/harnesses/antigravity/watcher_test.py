@@ -12,6 +12,7 @@ from typing import Any
 from imbue.chat.activity_state import ACTIVE_MARKER_FILENAME
 from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.harnesses.antigravity.model import AntigravityModelResolver
+from imbue.chat.harnesses.antigravity.queue_tracker import MAX_DELIVERY_ATTEMPTS
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
 from imbue.chat.harnesses.antigravity.testing import append_step
 from imbue.chat.harnesses.antigravity.testing import build_agent_info
@@ -723,7 +724,7 @@ def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> 
     watcher._publish_turn_state()
     _pick(tmp_path, "gemini-3.8-flash", "high")
 
-    for _ in range(5):
+    for _ in range(MAX_DELIVERY_ATTEMPTS + 2):
         watcher._attempt_flush()
 
-    assert sent == ["/model gemini-3.8-flash-high"] * 3
+    assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS
