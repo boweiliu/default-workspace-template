@@ -722,3 +722,17 @@ def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> 
         watcher._attempt_flush()
 
     assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS + ["next thing"]
+
+
+def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path: Path) -> None:
+    """Accepted against an idle agy, a message reads Sending; once the switch ahead of it fails, it is waiting."""
+    sent: list[str] = []
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-demote", sent, is_slash_command_delivered=False)
+    watcher._queue.enqueue("next thing", "t0", is_turn_open=False)
+    _pick(tmp_path, "gemini-3.8-flash", "low")
+    assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [True]
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model gemini-3.8-flash-low"]
+    assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [False]

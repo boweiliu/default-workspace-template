@@ -602,9 +602,13 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         # Typed here rather than by the switch request, so it never lands in a live turn.
         model_command = self._queue.model_command()
         if model_command is not None:
-            self._queue.settle_model_command(model_command, is_delivered=send(model_command))
+            is_switch_delivered = send(model_command)
+            self._queue.settle_model_command(model_command, is_delivered=is_switch_delivered)
             if self._queue.model_command() is not None:
                 # Still held (a failed send, or a newer pick): the block waits so it runs on the pick.
+                if not is_switch_delivered:
+                    # Waiting a retry cadence behind the switch, the block is parked, not on its way.
+                    self._queue.demote_pending()
                 return
         block, claimed, generation = self._queue.begin_flush()
         if not claimed:
