@@ -736,3 +736,28 @@ def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path
 
     assert sent == ["/model gemini-3.8-flash-low"]
     assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [False]
+
+
+def test_a_pick_made_while_a_switch_is_typed_goes_next_and_the_block_runs_on_it(tmp_path: Path) -> None:
+    sent: list[str] = []
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-superseded", sent)
+    record_and_commit = watcher._flush_send
+
+    def _send_while_the_user_picks_again(text: str) -> bool:
+        if text == "/model claude-sonnet-4-6":
+            _pick(tmp_path, "gemini-3.8-flash", "low")
+        return record_and_commit(text)
+
+    watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
+    watcher._queue.enqueue("next thing", "t0")
+    _pick(tmp_path, "claude-sonnet-4-6", None)
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model claude-sonnet-4-6"]
+    assert [entry["content"] for entry in watcher.get_queued_messages()] == ["next thing"]
+
+    watcher._attempt_flush()
+
+    assert sent == ["/model claude-sonnet-4-6", "/model gemini-3.8-flash-low", "next thing"]
+    assert watcher.get_queued_messages() == []
