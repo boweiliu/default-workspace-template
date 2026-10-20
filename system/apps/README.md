@@ -1,7 +1,7 @@
 # system/apps/
 
 Apps: everything you can open as a window on the workspace's desktop. Each app is a folder
-here -- the built-in ones ship with the template, and apps your mind builds for
+here -- the built-in ones ship with the template, and apps your agent builds for
 you land here too (see the build-app skill). The top-level `apps` symlink
 points at this folder.
 
@@ -14,8 +14,8 @@ Built-in apps:
   inside a window's iframe at its own origin. The `chat` package (`chat-app`)
   follows the workspace's agent observer (the `agent-observer` program, one
   `mngr observe` per workspace), serves the chat pages and their API on port
-  8010, and owns the provider accounts. Its frontend, the shell's, and the
-  Getting Started app's are builds of one npm workspace (`system/package.json`)
+  8010, and owns the provider accounts. Its frontend, the shell's, the
+  Getting Started app's and Files' are builds of one npm workspace (`system/package.json`)
   sharing the `system/libs/workspace_ui` library.
 - `getting_started/` - The Getting Started page: the "Start something" intents
   and the "Start from a template" shelves (the published template catalog it
@@ -33,14 +33,25 @@ Built-in apps:
 - `terminal_pty/` - Only the manifest of that ttyd origin (`terminal-pty`,
   internal); the program that registers it is the `terminal-pty` entry point of
   `terminal/`.
-- `files/` - The file viewer: dufs over `data/`, run from its program line with
-  a vendored, patched frontend.
+- `files/` - Files: a Finder-like browser of the container's filesystem, opened
+  at the workspace folder. Its `files-app` entry point runs a small server that
+  serves the files, and the files shared from the user's computers, with a
+  frontend from that same npm workspace.
 - `browser/` - The live browser: a fleet of Chromium browsers streamed to the
   UI by its daemon (`browser-service`).
+- `system_monitor/` - Memory & disk: one page showing how much memory and disk
+  the workspace is using, which chats, code checkers, and apps hold the memory,
+  and which programs the memory guard stopped in the last 24 hours. Served on
+  port 8040 by the `system-monitor` package; it keeps nothing on disk.
+- `datalib/` - The Datalib app: datalib's web UI (`datalib-http`) over the store
+  the `datalib` skill writes. Not announced to users yet: its program is not in
+  `system/supervisord.conf.d/` until that skill's install script copies it there,
+  so the app is not listed until then.
 
 Every app describes itself in an `app.toml` manifest beside its code: its
 registered name, the display name users see, its icon, the launch paths the
-desktop opens windows at, its memory-shedding `priority`, whether it is `critical`, and the
+desktop opens windows at, its memory-shedding `priority`, whether it is `critical`, whether it
+stops once no window shows it (`stop_when_no_windows`), and the
 supervisord `program` that runs it (the schema is the `app_manifest` library
 in `system/libs/`). An app runs as a supervised program (a `[program:*]` entry
 in its own `system/supervisord.conf.d/<name>.conf`) that registers the manifest
@@ -60,7 +71,7 @@ the supervisord programs the app owns beyond its own block and its
 inside the app's own directory (already implicit) or into another app's (that is
 a `pyproject.toml` dependency), and every one must exist, which
 `system/test_app_manifests.py` checks for every manifest in the tree. Together
-with the app's directory and its `system/supervisord.conf` blocks, these make up
+with the app's directory and the supervisord blocks that run it, these make up
 the app's footprint, which `app-manifest footprint <manifest>` writes out as a
 scope file; `app-manifest references --for-path <path>` runs the lookup the
 other way, from an owned path back to the app that claims it. Registration

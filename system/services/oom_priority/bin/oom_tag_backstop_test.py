@@ -97,7 +97,7 @@ def test_never_lowers_a_process_already_above_its_band() -> None:
         {
             300: bands.SERVICE_BANDS["browser"],
             310: bands.SHARED_BROWSER,
-            301: bands.SERVICE_BANDS["app-watcher"],
+            301: bands.SERVICE_BANDS["host-backup"],
         }
     )
     oom_tag_backstop.handle_running_event(
@@ -108,7 +108,7 @@ def test_never_lowers_a_process_already_above_its_band() -> None:
         priority_by_program={},
     )
     oom_tag_backstop.handle_running_event(
-        _running_payload("app-watcher", 301),
+        _running_payload("host-backup", 301),
         read_adj=proc.read,
         write_adj=proc.write,
         list_descendants=lambda pid: [],
@@ -123,7 +123,13 @@ def test_protected_programs_are_never_touched() -> None:
     # _NON_SERVICE_PROGRAM_BANDS is not merely left alone but actively pushed to
     # USER_SERVICE (200), above every built-in.
     proc = _FakeProc({400: 0})
-    for program_name in ("earlyoom", "oom-tag-backstop", "env-converge", "vm-exec-register"):
+    for program_name in (
+        "earlyoom",
+        "oom-tag-backstop",
+        "publish_cgroup_meminfo",
+        "env-converge",
+        "vm-exec-register",
+    ):
         oom_tag_backstop.handle_running_event(
             _running_payload(program_name, 400),
             read_adj=proc.read,

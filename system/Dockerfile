@@ -18,11 +18,10 @@ ENV PATH="/root/.local/bin:$PATH"
 # re-run of setup_system.sh (the update apply) would read it over the merged
 # tree's default and silently reinstall the image's version.
 
-# ============================================================================
 # System toolchain (repo-independent). Shared verbatim with the Lima provider,
 # which runs this exact script in the VM. setup_system.sh installs the system
 # toolchain AND invokes the sibling installers (secret scanners, agy,
-# owner-exec, dufs), so every provisioning path -- docker-built images, Lima
+# owner-exec, earlyoom), so every provisioning path -- docker-built images, Lima
 # VMs, and the update apply's live re-run -- gets every global binary from one
 # common script; system/test_provisioner_single_entry.py holds it to that.
 # Copied with its sibling _provision_guard.sh (which setup_system.sh sources
@@ -35,7 +34,7 @@ ENV PATH="/root/.local/bin:$PATH"
 # Caching tradeoff: a pin bump in any installer rebuilds the whole
 # system-toolchain layer rather than an installer-only layer -- accepted so a
 # single common script covers every provider.
-# ============================================================================
+
 # Pin every apt operation (this build and all runtime installs) to the
 # committed archive snapshot timestamp. Runs before any apt usage so the
 # system-toolchain layer below resolves against the frozen universe; the
@@ -51,8 +50,9 @@ COPY system/scripts/_provision_guard.sh /usr/local/bin/_provision_guard.sh
 COPY system/scripts/install_secret_scanners.sh /usr/local/bin/default-workspace-template-install-secret-scanners
 COPY system/scripts/agy_install-1.1.22.sh /usr/local/bin/default-workspace-template-install-agy
 COPY system/scripts/install_owner_exec.sh /usr/local/bin/default-workspace-template-install-owner-exec
-COPY system/scripts/install_dufs.sh /usr/local/bin/default-workspace-template-install-dufs
-RUN chmod +x /usr/local/bin/default-workspace-template-setup-system /usr/local/bin/default-workspace-template-install-secret-scanners /usr/local/bin/default-workspace-template-install-agy /usr/local/bin/default-workspace-template-install-owner-exec /usr/local/bin/default-workspace-template-install-dufs && default-workspace-template-setup-system
+COPY system/scripts/install_earlyoom.sh /usr/local/bin/default-workspace-template-install-earlyoom
+COPY system/scripts/install_agent_plugins.sh /usr/local/bin/default-workspace-template-install-agent-plugins
+RUN chmod +x /usr/local/bin/default-workspace-template-setup-system /usr/local/bin/default-workspace-template-install-secret-scanners /usr/local/bin/default-workspace-template-install-agy /usr/local/bin/default-workspace-template-install-owner-exec /usr/local/bin/default-workspace-template-install-earlyoom /usr/local/bin/default-workspace-template-install-agent-plugins && default-workspace-template-setup-system
 
 # /var/cache/user is the off-volume cache target, pinned via ENV so BOTH the
 # build layers below (dependency pre-warm) and the runtime container cache to
@@ -64,24 +64,22 @@ ENV XDG_CACHE_HOME=/var/cache/user
 ENV UV_CACHE_DIR=/var/cache/user/uv
 ENV npm_config_cache=/var/cache/user/npm
 
-# ============================================================================
 # Pre-COPY manifest layer.
 # Copies only the dependency manifests (no application source) so the
 # expensive dependency install below caches against dependency-manifest
 # changes only. Application code edits land on the `COPY . /home/user/workspace/`
 # further down -- they do not invalidate the cache here.
-# ============================================================================
 WORKDIR /home/user/workspace/
 
 # Root + per-workspace-member pyproject.toml + uv.lock.
 COPY pyproject.toml uv.lock /home/user/workspace/
-COPY system/services/app_watcher/pyproject.toml /home/user/workspace/system/services/app_watcher/pyproject.toml
 COPY system/libs/bootstrap/pyproject.toml /home/user/workspace/system/libs/bootstrap/pyproject.toml
 COPY system/services/share_gateway/pyproject.toml /home/user/workspace/system/services/share_gateway/pyproject.toml
 COPY system/libs/github_sync/pyproject.toml /home/user/workspace/system/libs/github_sync/pyproject.toml
 COPY system/apps/system_interface/pyproject.toml /home/user/workspace/system/apps/system_interface/pyproject.toml
 COPY system/apps/chat/pyproject.toml /home/user/workspace/system/apps/chat/pyproject.toml
 COPY system/apps/getting_started/pyproject.toml /home/user/workspace/system/apps/getting_started/pyproject.toml
+COPY system/apps/files/pyproject.toml /home/user/workspace/system/apps/files/pyproject.toml
 
 # Frontend npm manifests (the workspace root's lockfile + package.json, and each member's
 # package.json) -- install needs only these.
@@ -90,19 +88,31 @@ COPY system/libs/workspace_ui/package.json /home/user/workspace/system/libs/work
 COPY system/apps/system_interface/frontend/package.json /home/user/workspace/system/apps/system_interface/frontend/
 COPY system/apps/chat/frontend/package.json /home/user/workspace/system/apps/chat/frontend/
 COPY system/apps/getting_started/frontend/package.json /home/user/workspace/system/apps/getting_started/frontend/
+COPY system/apps/files/frontend/package.json /home/user/workspace/system/apps/files/frontend/
 
 # Dependency install (manifests only). Shared verbatim with the Lima provider.
+# Copied with its sibling _mngr_git_auth.sh (which it sources via `dirname "$0"`).
+#
+# While pyproject.toml pins mngr from the private mngr-internal repo, this RUN
+# and the workspace build below carry a `--mount=type=secret` of the credential
+# the creator hands the build (`mngr_internal_git_token`, see the build_arg in
+# .mngr/settings.toml); system/scripts/set_mngr_pin.py adds the mount with such
+# a pin and removes it with a public one, because a mount needs BuildKit, which
+# a public pin must not require. Never edit those lines by hand. The mount is
+# optional (an unset creator-side env var mounts an empty file, which the auth
+# helper treats as absent), and the secret never lands in a layer.
 COPY system/scripts/install_dependencies.sh /usr/local/bin/default-workspace-template-install-dependencies
+COPY system/scripts/_mngr_git_auth.sh /usr/local/bin/_mngr_git_auth.sh
 RUN chmod +x /usr/local/bin/default-workspace-template-install-dependencies && default-workspace-template-install-dependencies
 
-# ============================================================================
 # End pre-COPY manifest layer. Source-changing layers begin below.
-# ============================================================================
 
 # copy in all of our code:
 COPY . /home/user/workspace/
 
 # Build the workspace from full source. Shared verbatim with the Lima provider.
+# With a private pin, set_mngr_pin.py gives this RUN the same secret mount as
+# the dependency install above: the tool installs fetch mngr from the pin.
 RUN bash /home/user/workspace/system/scripts/build_workspace.sh
 
 # Move the baked workspace off the volume mount path so the shipped
@@ -110,8 +120,12 @@ RUN bash /home/user/workspace/system/scripts/build_workspace.sh
 # volume mount; any image-layer content sitting at /home/user/workspace/ would
 # be shadowed by the mount. /docker_build_code holds the workspace
 # until first boot, where the post-host-create seed step (see below)
-# atomically relocates it onto the volume.
-RUN mv /home/user/workspace /docker_build_code
+# atomically relocates it onto the volume. The empty directory is recreated
+# here because it is the WORKDIR of every later step: docker's builder would
+# create it for the next step itself, but a builder that runs the steps one
+# container at a time (Modal, through offload in CI) refuses to start a step
+# whose working directory is gone.
+RUN mv /home/user/workspace /docker_build_code && mkdir /home/user/workspace
 
 # The user-data layout: the per-host persistent volume mounts at /home/user
 # (the ONE persistent tree -- workspace checkout, worktrees, mngr state at

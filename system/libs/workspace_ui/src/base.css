@@ -54,6 +54,9 @@
   --c-text-faint: #8c8c8c;
   --c-border: #e4e3df;
   --c-border-faint: #efeeeb;
+  /* A step up from the default edge, for a control that has to read as one you type into rather than
+     as a panel seam: still lighter than the faintest text, so it draws a box without drawing a rule. */
+  --c-border-strong: #cfcdc7;
   --c-border-code: #e0e0e0;
   --c-accent: #2f6b4f;
   --c-accent-hover: #24573f;
@@ -93,6 +96,8 @@
   /* Row text: the dense-chrome step between body and helper. */
   --font-size-row: 13px;
   --font-size-helper: 12px;
+  /* A word badge set beside other text ("Read-only"): the smallest step. */
+  --font-size-tag: 10px;
   /* (No --weight-medium: 500 in markup is Tailwind's font-medium, and no type
      role uses it -- see the type-roles note below.) */
   --weight-regular: 400;
@@ -114,7 +119,7 @@
   --z-overlay: 10000;
   --z-popover: 10001;
   --z-tooltip: 10002;
-  --width-message-column: 740px;
+  --width-message-column: 672px;
   /* The agent's side of the column keeps this much clear on the right. The user's
      bubbles already stop short (they cap at 80% and hug the right edge); without
      it the agent's prose and task rows were the only thing running the column's
@@ -132,9 +137,10 @@
   --color-secondary: var(--c-text-secondary);
   --color-faint: var(--c-text-faint);
   --color-on-accent: var(--c-text-on-accent);
-  /* borders: border-default / border-subtle */
+  /* borders: border-default / border-subtle / border-strong */
   --color-default: var(--c-border);
   --color-subtle: var(--c-border-faint);
+  --color-strong: var(--c-border-strong);
   /* surfaces: bg-page / -sidebar / -chat / -composer / -code / -user-bubble /
      -surface / -surface-secondary / -inverse / -inverse-hover */
   --color-page: var(--c-bg);
@@ -248,6 +254,11 @@ body {
   font-weight: var(--weight-regular);
   line-height: 1.4;
 }
+@utility type-tag {
+  font-size: var(--font-size-tag);
+  font-weight: var(--weight-regular);
+  line-height: 1;
+}
 @utility type-section {
   font-size: var(--font-size-helper);
   font-weight: var(--weight-semibold);
@@ -277,9 +288,9 @@ body {
  * track/arc default to --c-border / --c-accent, overridable via
  * --spinner-track / --spinner-arc.
  * .spinner--current makes it monochrome (currentColor ring with a transparent
- * gap) for use on coloured contexts. (The login screen's fancier SVG arc is
- * its own svg drawing -- see loginSpinnerIcon in components/icons.ts -- but shares
- * this @keyframes.) */
+ * gap) for use on coloured contexts. (The fancier SVG arc that sign-in and an
+ * attachment's upload show is its own svg drawing -- see spinnerIcon in
+ * components/icons.ts -- but shares this @keyframes.) */
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -327,6 +338,14 @@ body {
   }
 }
 
+/* A toast rises into place (components/toasts.ts). */
+@keyframes toast-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0.6;
+  }
+}
+
 /* The activity dot's pulse (components/activityDot.ts); like the modal's, only the
  * @keyframes live here, the utility references them by name. */
 @keyframes agent-activity-pulse {
@@ -339,4 +358,13 @@ body {
     opacity: 1;
     transform: scale(1.15);
   }
+}
+
+/* While a keystroke edits text, the pointer is hidden until it moves, so it never sits over what
+ * is being typed (hideCursorWhileTyping.ts toggles the class). ``*`` with ``!important`` because
+ * fields, links, buttons, and the window drag handle set their own cursors, which would otherwise
+ * win over the hidden one. */
+html.typing-hides-cursor,
+html.typing-hides-cursor * {
+  cursor: none !important;
 }

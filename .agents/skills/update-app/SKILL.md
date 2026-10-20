@@ -35,7 +35,8 @@ touches and the `app.toml` of the app that owns it (`system/apps/<package>/app.t
 If it says `critical = true` -- the shell (`system_interface`), the chat, the
 terminal, and any user app that declares it -- or if the change is under
 `system/libs/workspace_ui/` (the shared library both critical bundles are built
-from), **follow [`references/critical-app.md`](references/critical-app.md) and
+from) or `system/libs/workspace_layout/` (the layout wire contract the shell, the
+chat, and the terminal all run), **follow [`references/critical-app.md`](references/critical-app.md) and
 stop reading here.** A critical app is never edited in the served tree: that
 flow runs the same live loop against an isolated worktree, with a preview window
 as the user's view, and goes live through the atomic update apply once a
@@ -152,6 +153,34 @@ a skill that drives it, a script, a doc -- is registered in the app's `app.toml`
 under `[[references]]` with a `note` naming the surface it uses, so it travels
 with the app through hardening, testing, and publishing.
 
+Check the app's `stop_when_no_windows` against what the change makes it do.
+The scaffold writes `true`: the shell stops the program a minute after the
+app's last window closes and starts it again only on the next request. If
+the change gives the app work between requests -- a background thread or
+scheduler that refreshes data, a poller or file watcher, a websocket or
+subscription to an outside service, a job that must finish after the user
+closes the window, or an API another agent drives with no window open --
+set it to `false` in `app.toml`, or that work is lost or interrupted at the
+stop. The reverse holds: an app that no longer does anything between
+requests can go back to `true`. The field is read at registration, so the
+restart in step 2 is what applies it; `uv run app-manifest validate-manifest
+system/apps/<package>/app.toml` checks the file.
+
+An app with an `api_schema_path` in its manifest describes its own API there:
+an OpenAPI document built from its routes on every request, which is what a
+visiting agent reads instead of the code (`build-app`, "The app describes its
+own API"). A route the change adds is listed on its own; what the change owes
+the document is a docstring on each new or changed view (its first paragraph is
+the operation's summary, in the user's terms), an entry in the app's route table
+for each new route (`RouteModels` with the pydantic models it reads through
+`parse_request_body` and answers through `model_response`, or `SchemalessRoute`
+with the reason it exchanges no JSON), the table updated when a route's models
+or status change, and an updated `description` in `app.toml` when the change
+moves what the app is for. A parse or an answer the table does not name fails
+the request, and the app's own test (`runner_test.py` in a scaffolded app) fails
+when the document and the manifest disagree, a view has no docstring, or a
+route is missing from the table, so run it with the change.
+
 ### 2. Apply it so it actually takes effect
 
 The scaffolded web runner runs with `use_reloader=False`, and daemons
@@ -209,12 +238,12 @@ pre-change content. Refresh it so the user sees the update without being told
 to click Refresh:
 
 ```bash
-python3 system/scripts/layout.py refresh --app <name>
+uv run --no-sync workspace-layout refresh --app <name>
 ```
 
 `refresh --app` reloads every page of the service on every client. If no
 window is open yet and the change is ready to show, surface it instead with
-`python3 system/scripts/layout.py open <name>`: with no `--desktop` it lands
+`uv run --no-sync workspace-layout open <name>`: with no `--desktop` it lands
 on the desktop the user is looking at, and `--desktop <name>` targets one
 desktop (and switches the client to it).
 **That `open` puts the window on the user's screen the moment it returns** -- it
@@ -235,7 +264,7 @@ the user's whole view instead:
 python3 system/scripts/refresh_workspace_view.py
 ```
 
-Nothing else does this for you. The Mind app only intervenes when a workspace
+Nothing else does this for you. The Imbue Studio app only intervenes when a workspace
 looks unreachable for a sustained stretch, and a services restart that comes
 back quickly never crosses that bar, so the user is left reading the page the
 previous build rendered. The helper is fire-and-forget and always exits 0; it
@@ -293,27 +322,35 @@ where the data dies. Encode these, cheapest first:
   and the live service is yours only for a `curl` or a health probe.
 
 - **If exercising the change must write, mutate, or delete data, never
-  point it at the live store.** Copy the store to a scratch path *outside*
-  `data/` (so it is neither served by the live service nor backed up), boot a
-  throwaway instance against the copy on a *spare* port, exercise it there,
-  then delete the *copy*. The shared
+  point it at the live store.** Boot a throwaway instance against a *copy* of
+  the store on a *spare* port, exercise it there, then tear it down with its
+  copy. The shared
   [`serve_isolated_instance.py`](../../shared/scripts/serve_isolated_instance.py)
-  script owns the boot + teardown -- it picks a free port, injects it (via the
-  `<PACKAGE_UPPER>_PORT` override) plus your data-dir override, waits for the
-  instance to answer, and prints its URL:
+  script owns all of it -- `--copy` copies the store into the instance's own
+  space on disk, it picks a free port, injects it (via the
+  `<PACKAGE_UPPER>_PORT` override) plus your data-dir override pointed at the
+  copy, waits for the instance to answer, and prints its URL; `down` stops it
+  and deletes the copy:
 
   ```bash
-  cp -r data/.apps/<name> /tmp/<name>-scratch
   URL=$(python3 .agents/shared/scripts/serve_isolated_instance.py up \
       --name <name>-test --cwd . \
       --port-env <PACKAGE_UPPER>_PORT \
-      --env <PACKAGE_UPPER>_DATA_DIR=/tmp/<name>-scratch \
+      --copy data=data/.apps/<name> \
+      --env '<PACKAGE_UPPER>_DATA_DIR={copy:data}' \
       --health-path /health \
       -- uv run <name>)
   # ...exercise the change at "$URL" (curl / Playwright); it can write freely...
   python3 .agents/shared/scripts/serve_isolated_instance.py down --name <name>-test
-  rm -rf /tmp/<name>-scratch      # deleting a copy can't harm real data
   ```
+
+  **Never copy app data into `/tmp`.** In the workspace container `/tmp` is a
+  small RAM disk (about 1 GiB): a copy of any real store fails part way with
+  "No space left on device", and the partial copy fills `/tmp` for everything
+  else until you delete it. `--copy` writes to disk, outside the backup, and
+  refuses a copy that would not leave the disk room to spare. If it refuses,
+  copy only what the test needs (`--copy` a subdirectory, or seed a small store
+  for the test) or verify read-only.
 
   **To pick up a further edit, refresh in place -- don't tear down and re-`up`.**
   A `down`/`up` cycle picks a new port, so a surfaced preview window would point at
@@ -329,7 +366,7 @@ where the data dies. Encode these, cheapest first:
 
   This is the point of the `DATA_DIR` + `<PACKAGE_UPPER>_PORT` overrides: the
   isolation you need is **data isolation, not code isolation**, and it's a
-  copy-plus-one-command setup, not a worktree. The live store is only ever
+  one-command setup, not a worktree. The live store is only ever
   *read* (once, to make the copy); the only delete lands on a disposable path
   where real data never lived.
 
@@ -342,10 +379,17 @@ where the data dies. Encode these, cheapest first:
   ```bash
   uv run python3 .agents/skills/update-app/scripts/preview_app.py up \
       --app <name> --worktree <dir>          # prints <name>-preview
-  python3 system/scripts/layout.py open <name>-preview   # puts a window of it in front of the user
+  uv run --no-sync workspace-layout open <name>-preview   # puts a window of it in front of the user
   uv run python3 .agents/skills/update-app/scripts/preview_app.py refresh --app <name>   # after a rebuild, in place
   uv run python3 .agents/skills/update-app/scripts/preview_app.py down --app <name>
   ```
+
+  The worktree needs its own environment before the first `up`. A fresh
+  `git worktree add` has no `.venv`, and without one the app's command
+  resolves to the live install, so the preview silently serves the live code.
+  Run `uv sync --all-packages` in the worktree first, and again before
+  `refresh` after changing a dependency or entry point. If the app has a
+  frontend, build it there too.
 
   `--with <sibling>` boots a sibling app's preview from the same worktree first
   and points the app's copied registry at it: a shell preview frames the
@@ -366,8 +410,20 @@ where the data dies. Encode these, cheapest first:
 
 - **Snapshot before any genuinely in-place change to the real store.** If a
   change truly must rewrite the live store (a data migration you can't run
-  on a copy), `cp -r data/.apps/<name> /tmp/<name>-pre-<change>` first, run the
-  change, confirm the real data survived, and only then remove the snapshot.
+  on a copy), snapshot it to disk under `/var/tmp` first, run the change,
+  confirm the real data survived, and only then remove the snapshot:
+
+  ```bash
+  du -sh data/.apps/<name>; df -h /var/tmp    # the copy must leave several GB free
+  cp -a data/.apps/<name> /var/tmp/<name>-pre-<change>
+  # ...run the change, confirm the real data survived...
+  rm -rf /var/tmp/<name>-pre-<change>
+  ```
+
+  If the copy would not leave the disk room to spare, free space first or ask
+  the user before changing the live store without one -- never snapshot into
+  `/tmp` instead.
+
   The snapshot is a *recovery net* -- do **not** turn it into a routine
   "wipe live and restore backup" step: overwriting a running service's store
   tears its state, and any real writes that landed during your test window

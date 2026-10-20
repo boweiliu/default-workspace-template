@@ -14,7 +14,7 @@ import os
 import shutil
 from abc import ABC
 from abc import abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -251,7 +251,7 @@ def is_seed_entry(entry: ChatAgentEntry) -> bool:
 class ChatRecord(FrozenModel):
     """A multi-agent chat: its agents in order, and its handoff or rebind state.
 
-    A chat the Mind app seeded (``chat_seed.py``) has the seed as its first member, under the
+    A chat the Imbue Studio app seeded (``chat_seed.py``) has the seed as its first member, under the
     chat's own id and already ended, so the record is well-formed before any real agent exists
     and the seed reads as the first segment once one does.
     """
@@ -452,7 +452,7 @@ class FileChatRecordStore(ChatRecordStore):
         return self.root / chat_id
 
     @contextlib.contextmanager
-    def _chat_lock(self, chat_id: ChatId) -> Iterator[None]:
+    def _chat_lock(self, chat_id: ChatId) -> Generator[None, None, None]:
         chat_dir = self._chat_dir(chat_id)
         chat_dir.mkdir(parents=True, exist_ok=True)
         with (chat_dir / _LOCK_FILENAME).open("w") as handle:

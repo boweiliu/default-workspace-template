@@ -2,10 +2,15 @@
 # by the ``chat`` program at its own port (docs/system/blueprint/workspace-app-model/).
 name = "chat"
 display_name = "Chat"
+description = "The chats with the workspace's agents: one page per chat, where messages are sent and an agent's work is followed."
+api_schema_path = "/api/schema"
 icon = "icon.svg"
 critical = true
 priority = "chat"
 launcher_rank = 10
+# Part of the workspace itself rather than an app built on it, so the Share tab tucks it under its System group
+# rather than offering it up front.
+system = true
 
 # A desktop shortcut opens the chat list; a chat is created only from inside it, or through the
 # intake route below.
@@ -66,6 +71,22 @@ method = "POST"
 params = [{name = "message", label = "Draft message", required = false}]
 presets = {target = "current_chat", is_draft = "true"}
 draft_param = "message"
+
+# A chat's launch stacks on the ``chat`` create template the committed mngr settings hold, and the
+# chat's create defaults resolve beside that file, so a change to it can break chat creation.
+[[references]]
+path = ".mngr/settings.toml"
+note = "Holds the chat create template every chat launch stacks on"
+
+[[references]]
+path = ".agents/skills/connect-external-service"
+note = "request_secret.py files secret requests through /api/secret-requests"
+
+# The Imbue Studio app's ask to show a chat (its chat notifications): the shell posts it here, and this app asks the
+# shell's ``show`` op for the window (desktop-interface contracts.md section 8).
+[[message_handlers]]
+type = "minds:focus-chat"
+path = "/api/focus-chat"
 
 # A chat preview is a secondary chat: it follows the live observer and reads the
 # live accounts, but writes nothing the live chat owns. It opens on the chat list

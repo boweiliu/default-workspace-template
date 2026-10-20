@@ -1,14 +1,17 @@
+import base64
+import hashlib
+import json
+import re
 import subprocess
-import threading
 from collections.abc import Sequence
-from http.server import BaseHTTPRequestHandler
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Final
 
-from imbue.imbue_common.mutable_model import MutableModel
-from pydantic import Field
-from pydantic import PrivateAttr
+from werkzeug.test import TestResponse
+
+from app_manifest.registry import SHELL_APP_CONTRACT_PATH
+from app_manifest.registry import SHELL_MODULE_PATHS
+from app_manifest.selection import ALWAYS_RUN_GUARDS
 
 APP_ICON_MARKUP: Final[str] = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 2h20v20H2z"/></svg>'
@@ -111,55 +114,191 @@ def build_news_workspace(repo_root: Path) -> Path:
     return manifest_path
 
 
-class ShellStub(MutableModel):
-    """A loopback stand-in for the shell that answers every GET with one configured status and body."""
+_SELECTION_ROOT_PYPROJECT: Final[str] = """
+[project]
+name = "workspace"
+version = "0.1.0"
 
-    model_config = {"arbitrary_types_allowed": True, "extra": "forbid", "frozen": False}
+[tool.uv.workspace]
+members = ["system/libs/*", "system/apps/*"]
+exclude = ["system/libs/ui"]
 
-    status: int = Field(default=200, description="The status every request is answered with")
-    body: str = Field(default="{}", description="The body every request is answered with")
-    _server: ThreadingHTTPServer | None = PrivateAttr(default=None)
-    _thread: threading.Thread | None = PrivateAttr(default=None)
+[tool.pytest.ini_options]
+addopts = ["--ignore=system/apps/chat"]
+"""
 
-    def start(self) -> None:
-        stub = self
+_NOTES_MANIFEST: Final[str] = """
+name = "notes"
+display_name = "Notes"
+icon = "icon.svg"
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                encoded = stub.body.encode("utf-8")
-                self.send_response(stub.status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(encoded)))
-                self.end_headers()
-                self.wfile.write(encoded)
+[[references]]
+path = "system/scripts/run_notes.sh"
+"""
 
-            def log_message(self, format: str, *args: object) -> None:
-                return
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self._server = server
-        self._thread = thread
+def _python_package(repo_root: Path, directory: str, name: str, dependencies: Sequence[str]) -> None:
+    listed = ", ".join(f'"{dependency}"' for dependency in dependencies)
+    module = name.replace("-", "_")
+    write_repo_file(
+        repo_root,
+        f"{directory}/pyproject.toml",
+        f'[project]\nname = "{name}"\ndependencies = [{listed}]\n\n'
+        f'[tool.hatch.build.targets.wheel]\npackages = ["src/{module}"]\n',
+    )
+    write_repo_file(repo_root, f"{directory}/src/{module}/__init__.py", "")
+    write_repo_file(repo_root, f"{directory}/src/{module}/core.py", "VALUE = 1\n")
+    write_repo_file(repo_root, f"{directory}/src/{module}/core_test.py", "def test_value() -> None:\n    pass\n")
 
-    @property
-    def url(self) -> str:
-        if self._server is None:
-            raise RuntimeError("the shell stub is not serving")
-        host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
 
-    def answer(self, status: int, body: str) -> None:
-        self.status = status
-        self.body = body
+def build_selection_workspace(repo_root: Path) -> None:
+    """A committed repo shaped like the workspace, for the test selection: a shared library
+    (``corelib``) that another library (``midlib``) and the chat app depend on, an app
+    (``notes``) that depends on ``midlib`` and references a script, the chat app as its own
+    pytest root with a browser test and a frontend, the shared ``ui`` npm library that
+    frontend depends on, a flat script and its test, a skill, the repo guards, and the check
+    that every supervisord block names its OOM band. The shell's modules are built, and ignored
+    by git, as in the live workspace; ``remove_shell_modules`` makes it a fresh worktree."""
+    init_git_repository(repo_root)
+    write_repo_file(repo_root, "pyproject.toml", _SELECTION_ROOT_PYPROJECT)
+    write_repo_file(repo_root, ".gitignore", f"{SHELL_APP_CONTRACT_PATH.parent.parent}/\n")
+    for module_path in SHELL_MODULE_PATHS:
+        write_repo_file(repo_root, str(module_path), "export {};\n")
+    write_repo_file(repo_root, "conftest.py", "")
+    write_repo_file(repo_root, "README.md", "# workspace\n")
+    write_repo_file(repo_root, "docs/guide.md", "# guide\n")
 
-    def close(self) -> None:
-        """Stop serving; the URL then refuses connections, as a shell that is down does."""
-        if self._server is None:
-            return
-        self._server.shutdown()
-        self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-        self._server = None
-        self._thread = None
+    # Python packages
+    _python_package(repo_root, "system/libs/corelib", "corelib", ())
+    _python_package(repo_root, "system/libs/midlib", "midlib", ("corelib>=0.1",))
+    _python_package(repo_root, "system/apps/notes", "notes", ("midlib",))
+    write_app_manifest(repo_root, "notes", _NOTES_MANIFEST, is_icon_written=True)
+    write_repo_file(repo_root, "system/scripts/run_notes.sh", "#!/bin/sh\n")
+
+    # The chat app: its own pytest root, with a browser test and a type-check ratchet
+    write_repo_file(
+        repo_root,
+        "system/apps/chat/pyproject.toml",
+        '[project]\nname = "chat"\ndependencies = ["corelib"]\n\n'
+        '[tool.hatch.build.targets.wheel]\npackages = ["imbue"]\n\n'
+        '[tool.pytest.ini_options]\naddopts = ["--cov=imbue.chat", "-m", "not browser and not real_claude"]\n',
+    )
+    write_repo_file(repo_root, "system/apps/chat/imbue/chat/__init__.py", "")
+    write_repo_file(repo_root, "system/apps/chat/imbue/chat/server.py", "PORT = 1\n")
+    write_repo_file(repo_root, "system/apps/chat/imbue/chat/server_test.py", "def test_port() -> None:\n    pass\n")
+    write_repo_file(
+        repo_root,
+        "system/apps/chat/imbue/chat/test_e2e.py",
+        "import pytest\n\npytestmark = pytest.mark.browser\n\n\ndef test_page() -> None:\n    pass\n",
+    )
+    write_repo_file(repo_root, "system/apps/chat/imbue/chat/test_ratchets.py", "def test_no_type_errors() -> None:\n    pass\n")
+
+    # The npm workspace
+    write_repo_file(
+        repo_root,
+        "system/package.json",
+        json.dumps({"name": "frontends", "workspaces": ["libs/ui", "apps/chat/frontend"]}),
+    )
+    write_repo_file(
+        repo_root,
+        "system/libs/ui/package.json",
+        json.dumps(
+            {
+                "name": "@workspace/ui",
+                "scripts": {"test": "vitest run", "lint": "eslint src/", "format:check": "prettier --check src", "typecheck": "tsc --noEmit"},
+            }
+        ),
+    )
+    write_repo_file(repo_root, "system/libs/ui/src/index.ts", "export const x = 1;\n")
+    write_repo_file(
+        repo_root,
+        "system/apps/chat/frontend/package.json",
+        json.dumps(
+            {
+                "name": "chat-frontend",
+                "dependencies": {"@workspace/ui": "0.1.0"},
+                "scripts": {"build": "tsc --noEmit && vite build", "test": "vitest run", "lint": "eslint src/", "format:check": "prettier --check src", "typecheck": "tsc --noEmit"},
+            }
+        ),
+    )
+    write_repo_file(repo_root, "system/apps/chat/frontend/src/main.ts", "export {};\n")
+
+    # Flat scripts, a skill, and the repo guards
+    write_repo_file(repo_root, "system/scripts/forward_port.py", "PORT = 1\n")
+    write_repo_file(repo_root, "system/scripts/forward_port_test.py", "def test_port() -> None:\n    pass\n")
+    for guard in ALWAYS_RUN_GUARDS:
+        write_repo_file(repo_root, guard, "def test_guard() -> None:\n    pass\n")
+    write_repo_file(repo_root, "system/test_layout.py", "def test_layout() -> None:\n    pass\n")
+    write_repo_file(
+        repo_root,
+        "system/services/oom_priority/bin/oom_tag_service_test.py",
+        "def test_every_program_has_a_band() -> None:\n    pass\n",
+    )
+    write_repo_file(repo_root, ".agents/skills/refresh/SKILL.md", "# refresh\n")
+    write_repo_file(repo_root, ".agents/skills/refresh/scripts/refresh.py", "VALUE = 1\n")
+    write_repo_file(repo_root, ".agents/skills/refresh/scripts/refresh_test.py", "def test_refresh() -> None:\n    pass\n")
+    commit_everything(repo_root, "workspace")
+
+
+def remove_shell_modules(repo_root: Path) -> None:
+    """Delete the shell's built modules, as a fresh worktree lacks them."""
+    for module_path in SHELL_MODULE_PATHS:
+        (repo_root / module_path).unlink()
+
+
+def selection_lock(requests_version: str) -> str:
+    """A uv.lock for the selection workspace in which corelib depends on requests."""
+    return f"""
+version = 1
+
+[[package]]
+name = "workspace"
+version = "0.1.0"
+source = {{ virtual = "." }}
+
+[[package]]
+name = "corelib"
+version = "0.1.0"
+source = {{ editable = "system/libs/corelib" }}
+dependencies = [{{ name = "requests" }}]
+
+[[package]]
+name = "midlib"
+version = "0.1.0"
+source = {{ editable = "system/libs/midlib" }}
+dependencies = [{{ name = "corelib" }}]
+
+[[package]]
+name = "notes"
+version = "0.1.0"
+source = {{ editable = "system/apps/notes" }}
+dependencies = [{{ name = "midlib" }}]
+
+[[package]]
+name = "chat"
+version = "0.1.0"
+source = {{ editable = "system/apps/chat" }}
+dependencies = [{{ name = "corelib" }}]
+
+[[package]]
+name = "requests"
+version = "{requests_version}"
+source = {{ registry = "https://pypi.org/simple" }}
+"""
+
+
+def assert_document_policy_admits_page(response: TestResponse) -> None:
+    """Fail unless ``response`` is an HTML page under the document policy that admits each of its inline scripts.
+
+    The hashes are recomputed here from the page as served, independently of the production code, so the
+    assertion holds exactly when a browser enforcing the header would run the page's own scripts.
+    """
+    assert response.mimetype == "text/html", response.mimetype
+    policy = response.headers["Content-Security-Policy"]
+    assert policy.startswith("default-src 'self'; "), policy
+    page = response.get_data(as_text=True)
+    for attributes, body in re.findall(r"<script\b([^>]*)>(.*?)</script>", page, re.IGNORECASE | re.DOTALL):
+        if not body or re.search(r"(?<![\w-])src\s*=", attributes, re.IGNORECASE):
+            continue
+        digest = base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode("ascii")
+        assert f"'sha256-{digest}'" in policy, (body[:80], policy)

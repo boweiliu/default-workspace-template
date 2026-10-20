@@ -7,7 +7,8 @@
     "libs/workspace_ui",
     "apps/system_interface/frontend",
     "apps/chat/frontend",
-    "apps/getting_started/frontend"
+    "apps/getting_started/frontend",
+    "apps/files/frontend"
   ],
   "scripts": {
     "prebuild": "bash scripts/fetch_mngr_assets.sh",
@@ -15,6 +16,7 @@
     "pretest": "bash scripts/fetch_mngr_assets.sh",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present"
   },

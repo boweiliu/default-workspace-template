@@ -3,8 +3,10 @@
 You are here because the app's `app.toml` says `critical = true` (the shell,
 the chat, the terminal, and any user app that declares it), or because the
 change is under `system/libs/workspace_ui/`, which rebuilds both the shell's and
-the chat's bundles. A broken build of one of these is served straight to the
-user as their workspace, or as the surface they would use to fix it. That forces
+the chat's bundles, or under `system/libs/workspace_layout/`, the wire contract
+of the shell's layout routes that the shell, the chat, and the terminal all run.
+A broken build of one of these is served straight to the user as their
+workspace, or as the surface they would use to fix it. That forces
 three adjustments to `update-app`'s ordinary live loop, and nothing else changes:
 the editing lease, the demonstrative-prototype taxonomy, and the turn-end harden
 handoff are all `update-app`'s and the references it points at.
@@ -30,31 +32,48 @@ worker, only after the user approves the shape.
 
 **Never edit a critical app's tree in the served checkout.** Do not run
 `Edit`/`Write` on files under its `system/apps/<package>/` (or under
-`system/libs/workspace_ui/`) here, and do not rebuild or restart the live app
+`system/libs/workspace_ui/` or `system/libs/workspace_layout/`) here, and do not rebuild or restart the live app
 from uncommitted edits. Every change is made in the worktree, built and
 previewed there, and landed on the live tree only through the apply once the
 user has approved it and the worker has hardened it. (A heal of a critical app
 is the one exception, and `heal-creation` says what it costs.)
 
-## 1. On entry: take the lease, provision in the background, clarify the shape
+## 1. On entry: take the leases, provision in the background, clarify the shape
 
-**Take the editing lease first**, exactly as `update-app`'s "One editor at a
+**Take the editing leases first**, exactly as `update-app`'s "One editor at a
 time" describes. Three deltas:
 
-- **The lease name is fixed:** `editing critical apps`. One lease covers every
-  critical app, because one apply lands them all and one preview per app is
-  all the workspace can show.
-- **It is held for the whole pass**, not per turn: entry through go-live or
-  abandonment, including the waits for the user's feedback. Release it only at
-  final teardown (step 4) or on explicit abandonment.
+- **One lease per critical app the pass touches:** `editing critical app
+  <name>` for every critical app whose code it changes or whose preview it
+  boots, a `--with` sibling included. A change under `system/libs/workspace_ui/`
+  or to `system/package.json` / `system/package-lock.json` rebuilds every
+  frontend, so it takes `system_interface` and `chat`; a change under
+  `system/libs/workspace_layout/` changes what the shell, the chat, and the
+  terminal read each other's layout messages with, so it takes
+  `system_interface`, `chat`, and `terminal`. Take them all or none,
+  before editing any of them: check each one in `tk ready`
+  (`grep -E -- "- editing critical app <name>$"`), take them in name order, and
+  if any is held by another agent, release the ones you took before surfacing
+  it, so two passes that need the same apps at entry never sit holding one
+  each. If the pass grows to another critical app later, take that app's lease
+  before touching it; if another agent holds it, surface that together with
+  the leases this pass already holds, since that holder may be waiting on one
+  of yours.
+  Passes on different critical apps run side by side: step 4's freshness check
+  catches a pass whose files moved under it, the apply refuses to start while
+  another apply is in flight, and it builds the bundles from the merged tree
+  instead of installing yours when another pass changed their sources.
+- **They are held for the whole pass**, not per turn: entry through go-live or
+  abandonment, including the waits for the user's feedback. Release them only
+  at final teardown (step 4) or on explicit abandonment.
 - **Breaking a stale one means tearing down its orphaned pass too:** its
   preview and its window, its worktree, and its worker if one exists. Run the step 4
   teardown for whatever the abandoned pass left behind. A stale lease is broken
   only on the user's call, never silently.
 
 **Check for an open notice.** If a "recently updated" notice from an earlier
-apply is still open (`GET /api/updates/pending` on the shell answers a record
-rather than `null`; its `apps` are the apps the banner names, or empty when
+apply is still open (`GET /api/updates/pending` on the shell answers a `notice` that
+is a record rather than `null`; its `apps` are the apps the banner names, or empty when
 that apply changed only how the workspace starts), the previous update is
 unconfirmed. Proceed, but tell the user so,
 and that this pass's apply will replace that rollback point, whichever apps it
@@ -125,7 +144,9 @@ free port over a copy of its store, framing a pty preview it is booted with
 (`--app terminal --with terminal-pty`), since the pages frame the pty the
 registry names. A `workspace_ui` change previews as the shell with the chat:
 `--app system_interface --with chat --instance-key "${MINDS_CHAT_ID:-$MNGR_AGENT_ID}"`, and the
-preview shell's copied registry points at that secondary chat. Exit 0 means it
+preview shell's copied registry points at that secondary chat. A `workspace_layout`
+change previews the same way, since the chat's ops and the shell's answers are
+where its shapes cross. Exit 0 means it
 came up healthy; on a non-zero exit, fix the build and re-run, and do not open
 a window on a broken boot. It refuses to boot if another pass's preview of the
 same app is up rather than hijacking it; surface that and coordinate.
@@ -133,7 +154,7 @@ same app is up rather than hijacking it; surface that and coordinate.
 Only once it is up, open its window:
 
 ```bash
-python3 system/scripts/layout.py open <name>-preview
+uv run --no-sync workspace-layout open <name>-preview
 ```
 
 **That `open` is the hand-off, not setup.** It puts the window on the user's
@@ -173,7 +194,7 @@ registrations, same wrapper page -- and only the window comes and goes. Close it
 first, so the user is not watching a half-built round land:
 
 ```bash
-python3 system/scripts/layout.py close <name>-preview
+uv run --no-sync workspace-layout close <name>-preview
 ```
 
 (A `close` with no connected client answers the same `HTTP 412` an `open` does;
@@ -199,7 +220,7 @@ Then edit, and refresh the preview in place:
   user never sees the broken round.
 
 Check the round on the preview's own port while the window is still closed, then
-`layout.py open <name>-preview` again. That re-open is the round's hand-off,
+`workspace-layout open <name>-preview` again. That re-open is the round's hand-off,
 exactly as the first one was.
 
 **Commit before each surface**, so branch `HEAD` always equals what the user is
@@ -219,7 +240,7 @@ holds; there is just no shape to preview.
 
 The preview and its worktree **persist across turns**; if the user drifts away
 and never approves, nothing is released automatically. Explicit abandonment
-tears everything down (the step 4 teardown) and releases the lease.
+tears everything down (the step 4 teardown) and releases the leases.
 
 ## 3. On approval: hand off to a background harden worker on the same branch
 
@@ -233,7 +254,7 @@ shapes.
 worktrees, so before creating the worker, release your hold on it:
 
 ```bash
-python3 system/scripts/layout.py close <name>-preview
+uv run --no-sync workspace-layout close <name>-preview
 uv run python3 .agents/skills/update-app/scripts/preview_app.py down --app <name>
 git worktree remove "data/.tasks/critical-live/update-$SLUG"
 ```
@@ -247,6 +268,10 @@ branch you are about to hand the worker is the only copy.
 tracking ticket, the task file with `operation: update` / `type: app`
 frontmatter, launch, background-poll) with these specifics:
 
+- The task file's `diff_base` is the commit the branch forked from the served
+  tree, `$(git merge-base HEAD "mngr/update-$SLUG")` run in the served tree, so
+  the worker's test gate selects from exactly the branch's changes. There is no
+  `## Change origin` to pick it by.
 - Launch with the **branch passthrough**, so the worker checks out and extends
   the branch you built up instead of branching anew from the served HEAD:
 
@@ -288,7 +313,7 @@ WORK_DIR=$(mngr ls --include "name == \"update-$SLUG\"" --format json \
     | python3 -c 'import sys, json; print(json.load(sys.stdin)["agents"][0]["work_dir"])')
 uv run python3 .agents/skills/update-app/scripts/preview_app.py up \
     --app <name> --worktree "$WORK_DIR" [--with <sibling>]... [--instance-key <key>]
-python3 system/scripts/layout.py open <name>-preview
+uv run --no-sync workspace-layout open <name>-preview
 ```
 
 A fix whose effect the user cannot trigger on demand gives them nothing to look
@@ -298,22 +323,31 @@ tear the preview down and decide with them whether to re-brief the worker.
 
 ## 4. Go live: freshness-check, apply, tear down
 
-With the worker `done` (and any final preview approved), land the change. You
-hold the editing lease from step 1, so no other chat's merge or apply can
-interleave.
+With the worker `done` (and any final preview approved), land the change. Your
+leases from step 1 keep other passes off the apps you touched, but a pass on
+another critical app may have applied since you branched.
 
-1. **Freshness check.** The branch is mergeable only if nothing the bundles
-   are built from has changed on the served branch since the worker branched:
+1. **Freshness check.** The branch is mergeable only if nothing the apps you
+   hold leases on are built from (each one's package, the shared library, the
+   npm files), and no file the branch itself changes, has changed on the served
+   branch since the worker branched (a change to another critical app's sources
+   is not staleness: the apply rebuilds that bundle from the merged tree). Name
+   `system/apps/<package>/` once per leased app:
 
    ```bash
    BASE=$(git merge-base HEAD "mngr/update-$SLUG")
-   git diff --name-only "$BASE" HEAD -- system/apps/<package>/ system/libs/workspace_ui/ \
-       system/package.json system/package-lock.json
+   git diff --name-only --no-renames "$BASE" "mngr/update-$SLUG" > /tmp/update-$SLUG-files.txt
+   git diff --name-only "$BASE" HEAD -- system/apps/<package>/ system/libs/workspace_ui/ system/libs/workspace_layout/ \
+       system/package.json system/package-lock.json $(cat /tmp/update-$SLUG-files.txt)
    ```
 
    Empty output means fresh: continue. Any output means the pass is stale; do
    **not** merge and never hand-resolve a conflicted merge (see
    `harden-contention.md`). Re-brief the worker to rebase and re-verify.
+
+   If a "recently updated" notice has appeared since entry (another pass's
+   apply), tell the user this apply will replace its rollback point, as step 1
+   does.
 
 2. **Apply.** Run the general update apply, the same script `update-self` lands
    releases with, pointing it at the pass branch and at the bundles the user
@@ -371,10 +405,10 @@ interleave.
 4. **Tear down and release.** Whatever the exit code, and after a rejection
    where nothing was merged, close the preview's window and tear it down, retire the
    worker (destroy it, or stop it after a failed apply; see below), close the
-   ticket, and release the lease:
+   ticket, and release the leases:
 
    ```bash
-   python3 system/scripts/layout.py close <name>-preview
+   uv run --no-sync workspace-layout close <name>-preview
    uv run python3 .agents/skills/update-app/scripts/preview_app.py down --app <name>
    ```
 
@@ -393,7 +427,7 @@ interleave.
    (`create_worker.py stop --name "update-$SLUG"`) and keep it until the
    diagnosis is done. Then close the
    `update-$SLUG` ticket, remove the worktree if it still exists (again without
-   `--force`), and release the lease with `tk close "$LEASE_ID" "Live edit
+   `--force`), and release each lease with `tk close <lease-id> "Live edit
    hardened, applied, and torn down."`.
 
 ## Why this shape

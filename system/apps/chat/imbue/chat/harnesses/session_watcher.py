@@ -41,6 +41,9 @@ IsAliveCallback = Callable[[], bool]
 # ``harnesses.claude.queue_tracker``).
 QueueSnapshotCallback = Callable[[list[dict[str, Any]]], None]
 
+# Called with the ids of the agent's own background tasks its harness has reported as over.
+FinishedTasksCallback = Callable[[tuple[str, ...]], None]
+
 
 class TranscriptReader(ABC):
     """The read side of one agent's transcript: what a chat transcript's segments are made of.
@@ -137,13 +140,19 @@ class AgentSessionWatcher(TranscriptReader, ABC):
     def is_main_session_event(self, event: dict[str, Any]) -> bool:
         """True when ``event`` belongs to the agent's own session rather than a subagent's."""
 
-    # --- Queued messages (the shoulder-tap surface). ---------------------------
-    # Concrete no-op defaults so a harness without a queued-message populator
-    # needs no changes; the Claude watcher overrides them. Everything downstream
+    # The queued-message (shoulder-tap) surface has concrete no-op defaults so a harness
+    # without a queued-message populator needs no changes. Everything downstream
     # (the WS snapshot field and the two common actions) is harness-agnostic.
 
     def set_queue_snapshot_callback(self, callback: QueueSnapshotCallback) -> None:
         """Register the sink that receives each new queued-message snapshot. No-op by default."""
+
+    def set_finished_tasks_callback(self, callback: FinishedTasksCallback) -> None:
+        """Register the sink that receives the ids of harness-native background tasks as they end.
+
+        No-op by default: only a harness whose transcript records the end of its own background
+        tasks (Claude's ``<task-notification>``) calls it.
+        """
 
     def get_queued_messages(self) -> list[dict[str, Any]]:
         """The current queued-message snapshot; empty for a harness with no populator."""
@@ -168,6 +177,11 @@ class AgentSessionWatcher(TranscriptReader, ABC):
     def notify_idle(self) -> list[dict[str, Any]]:
         """Apply the working->IDLE backstop and return the resulting snapshot (empty by default)."""
         return []
+
+    def notify_busy(self) -> list[dict[str, Any]] | None:
+        """Undo the idle backstop's marks on an IDLE->working transition, returning the resulting
+        snapshot, or None when the harness keeps no such marks (the default)."""
+        return None
 
     def take_unclaimed_queue(self) -> tuple[str, tuple[str, ...]]:
         """Remove and return the queue entries no delivery has claimed, as one block.

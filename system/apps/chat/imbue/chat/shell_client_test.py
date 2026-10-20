@@ -1,44 +1,46 @@
-"""What ``post_to_shell`` logs for a shell that is down, refuses the body, or fails."""
+"""The chat app's client of the shell's layout asks as the chat app: a show names this app's page and carries this
+app as the requester, over a loopback stand-in for the shell."""
 
-from flask import Flask
-from flask import Response
+from workspace_layout.primitives import ClientId
+from workspace_layout.primitives import ShowOutcome
+from workspace_layout.primitives import WindowPage
+from workspace_layout.primitives import WindowPath
+from workspace_layout.shell_url import LAYOUT_OP_ROUTE
+from workspace_layout.testing import LoopbackShell
+from workspace_layout.testing import desktop_answer
+from workspace_layout.testing import fake_desktop
 
-from imbue.chat.shell_client import post_to_shell
-from imbue.chat.testing import serve_app
-from imbue.system_interface.testing import find_free_port
-
-
-def _shell_answering(status: int, body: str) -> Flask:
-    application = Flask("answering-shell")
-    application.add_url_rule(
-        "/api/client-activity",
-        view_func=lambda: Response(body, status=status),
-        methods=["POST"],
-        endpoint="client_activity",
-    )
-    return application
+from imbue.chat.shell_client import build_chat_shell_client
+from imbue.chat.shell_client import chat_show_args
 
 
-def test_an_unreachable_shell_is_a_debug_log_and_no_error(loguru_records: list[str]) -> None:
-    post_to_shell(f"http://127.0.0.1:{find_free_port()}/api/client-activity", {"kind": "message"})
+def test_a_show_is_asked_for_as_the_chat_app_of_one_of_its_pages() -> None:
+    with LoopbackShell(
+        op_answer={**desktop_answer(fake_desktop("home"), "client-1", "win-0123456789abcdef"), "shown": "raised"}
+    ) as shell:
+        answer = build_chat_shell_client(shell.url).show(
+            chat_show_args(
+                WindowPath("/?chat=agent-1"),
+                showing=(WindowPath("/agent-1"),),
+                repoint=(WindowPage("/"),),
+                client_id=ClientId("client-1"),
+            )
+        )
 
-    assert any(record.startswith("DEBUG Skipped posting to the shell") for record in loguru_records)
-    assert not any("refused the body" in record for record in loguru_records)
-
-
-def test_a_shell_that_refuses_the_body_is_a_warning_quoting_the_refusal(loguru_records: list[str]) -> None:
-    with serve_app(_shell_answering(400, "desktop_id is required")) as served:
-        post_to_shell(f"{served.http_url}/api/client-activity", {"kind": "message"})
-
-    assert any(
-        record.startswith("WARNING") and "refused the body with 400: desktop_id is required" in record
-        for record in loguru_records
-    )
-
-
-def test_a_failing_shell_is_a_debug_log_and_no_warning(loguru_records: list[str]) -> None:
-    with serve_app(_shell_answering(500, "boom")) as served:
-        post_to_shell(f"{served.http_url}/api/client-activity", {"kind": "message"})
-
-    assert any(record.startswith("DEBUG") and "answered 500" in record for record in loguru_records)
-    assert not any("refused the body" in record for record in loguru_records)
+    assert answer.shown is ShowOutcome.RAISED
+    assert shell.posted == [
+        (
+            LAYOUT_OP_ROUTE,
+            {
+                "op": "show",
+                "args": {
+                    "app": "chat",
+                    "path": "/?chat=agent-1",
+                    "showing": ["/agent-1"],
+                    "repoint": ["/"],
+                    "client": "client-1",
+                },
+                "requester": {"app": "chat", "marker": ""},
+            },
+        )
+    ]

@@ -26,8 +26,9 @@ env-var check goes stale when the user changes auth.
 Inside an agent the variable is always set, so a skill script, a worker and the
 agent itself all use the account that chat is bound to. Outside one -- a
 supervisord service, a cron job -- nothing sets it and `claude_p.py` falls back
-to the workspace's most recently used account. Either way, use its resolver
-rather than reading a path yourself:
+to the workspace's default Claude account (the pinned default, else the most
+recently used one), for both its resolver and the `claude -p` it launches.
+Either way, use its resolver rather than reading a path yourself:
 
 ```bash
 uv run python -c "from claude_p import read_workspace_ai_credentials; print('keyed' if read_workspace_ai_credentials().api_key else 'keyless')"
@@ -48,8 +49,12 @@ Only the key + base URL go in the snapshot -- NEVER `CLAUDE_CODE_OAUTH_TOKEN`
 (a subscription token cannot authenticate direct API calls, and the writer
 refuses it). The snapshot pins the integration: if the user later switches the
 workspace's sign-in (e.g. to a subscription), built services keep billing
-against the key they were set up with. To re-key or retire an integration,
-rewrite or delete `data/.secrets/anthropic.env` when the user asks.
+against the key they were set up with. To retire an integration, delete
+`data/.secrets/anthropic.env` when the user asks; to re-key one, delete it and run
+the snapshot writer again. Never edit the file: the snapshot writer is the one
+program-mediated copy the secrets guard allows (its command names neither the
+value nor the path), and the guard refuses the direct reads and writes of
+`data/.secrets/` it recognises (see the `connect-external-service` skill).
 
 Which path applies rarely changes for a deployment, so **do not branch on it at
 call time in simple flows** -- but keyed callers must still resolve the
@@ -97,7 +102,7 @@ from litellm import completion, completion_cost
 from claude_p import read_workspace_ai_credentials  # the file you copied in
 
 # Resolve credentials at call time: the data/.secrets/anthropic.env snapshot
-# first (see setup above), then the shared Claude settings, then the process
+# first (see setup above), then the Claude account's settings, then the process
 # env. litellm reads differently-named vars and is picky about a trailing
 # slash, so pass both explicitly.
 creds = read_workspace_ai_credentials()

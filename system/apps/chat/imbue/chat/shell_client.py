@@ -1,53 +1,39 @@
-"""How the chat reaches the shell over loopback: where it is, and one fire-and-forget POST.
+"""How the chat app reaches the shell's layout: the shared ``workspace_layout`` client, asking as this app.
 
-The shell is a separate app that may be down or restarting, so a post that cannot be made is a
-debug log, never an error: the chat keeps working without it. A shell that is up and refuses the
-body is a warning: the two apps disagree about the route's shape. The auto-open reactor, which needs
-to know whether the shell accepted an op, makes its own requests (``auto_open.py``).
+Every op carries this app as its requester with no marker (the app itself asks, not one of its chats' agents), and a
+``show`` of one of this app's paths names this app as the one whose page to show.
 """
 
-import time
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Sequence
 from typing import Final
 
-import httpx
-from app_manifest.shell_windows import shell_base_url as _shared_shell_base_url
-from loguru import logger
+from workspace_layout.client import ShellLayoutClient
+from workspace_layout.ops import OpRequester
+from workspace_layout.ops import ShowArgs
+from workspace_layout.primitives import ClientId
+from workspace_layout.primitives import WindowPage
+from workspace_layout.primitives import WindowPath
+from workspace_layout.shell_url import shell_base_url
 
-# A post to the shell is one loopback request the shell answers without work; past the first
-# threshold it is suspicious, past the second it is broken.
-SHELL_POST_SLOW_SECONDS: Final[float] = 0.5
-SHELL_POST_TIMEOUT_SECONDS: Final[float] = 2.0
+from imbue.chat.primitives import CHAT_APP_NAME
 
-# How much of a refusal's body the warning quotes.
-_REFUSAL_DETAIL_LIMIT: Final[int] = 200
+# One loopback request the shell answers without work; past this it is not answering.
+SHELL_TIMEOUT_SECONDS: Final[float] = 2.0
 
-
-def shell_base_url() -> str:
-    return _shared_shell_base_url()
+CHAT_APP_REQUESTER: Final[OpRequester] = OpRequester(app=CHAT_APP_NAME, marker="")
 
 
-def post_to_shell(url: str, body: Mapping[str, Any]) -> None:
-    """POST ``body`` as JSON to the shell route at ``url``; an unreachable or failing shell is a debug log, a slow
-    one or one that refuses the body a warning."""
-    started_at = time.monotonic()
-    try:
-        response = httpx.post(url, json=body, timeout=SHELL_POST_TIMEOUT_SECONDS)
-    except httpx.HTTPError as e:
-        logger.debug("Skipped posting to the shell at {}: {}", url, e)
-        return
-    elapsed = time.monotonic() - started_at
-    if elapsed > SHELL_POST_SLOW_SECONDS:
-        logger.warning("Posted to the shell at {} slowly, in {:.1f}s", url, elapsed)
-    if not response.is_error:
-        return
-    if response.is_client_error:
-        logger.warning(
-            "Posted to the shell at {} and it refused the body with {}: {}",
-            url,
-            response.status_code,
-            response.text[:_REFUSAL_DETAIL_LIMIT],
-        )
-    else:
-        logger.debug("Posted to the shell at {} and it answered {}", url, response.status_code)
+def build_chat_shell_client(shell_url: str) -> ShellLayoutClient:
+    return ShellLayoutClient(shell_url=shell_url, requester=CHAT_APP_REQUESTER, timeout_seconds=SHELL_TIMEOUT_SECONDS)
+
+
+def build_live_chat_shell_client() -> ShellLayoutClient:
+    """The client of the shell the workspace runs (``MINDS_WORKSPACE_SERVER_URL``, else its loopback port)."""
+    return build_chat_shell_client(shell_base_url())
+
+
+def chat_show_args(
+    path: WindowPath, showing: Sequence[WindowPath], repoint: Sequence[WindowPage], client_id: ClientId
+) -> ShowArgs:
+    """A ``show`` of one of this app's paths on one client's screen."""
+    return ShowArgs(app=CHAT_APP_NAME, path=path, showing=tuple(showing), repoint=tuple(repoint), client=client_id)

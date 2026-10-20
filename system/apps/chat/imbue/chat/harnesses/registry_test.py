@@ -1,5 +1,6 @@
 """Unit tests for the harness registry's declared popups."""
 
+from imbue.chat.harnesses.registry import ComposerCompactHandling
 from imbue.chat.harnesses.registry import HARNESS_SPECS
 from imbue.chat.harnesses.registry import HarnessPopup
 from imbue.chat.harnesses.registry import HarnessType
@@ -60,3 +61,46 @@ def test_the_model_bar_commands_are_not_also_in_a_harness_declined_tuple() -> No
                 continue
             overlap = set(popup.commands) & {"/model", "/effort", "/fast"}
             assert overlap == set(), f"{harness}: {overlap} duplicated in the terminal-notice tuple"
+
+
+def test_only_claude_adds_the_billing_line_to_the_fast_mode_notice() -> None:
+    bodies = {
+        harness: popup.notice_body
+        for harness in HARNESS_SPECS
+        for popup in HARNESS_SPECS[harness].popups
+        if popup.action is PopupAction.FAST_MODE_LIMIT
+    }
+    assert bodies == {
+        HarnessType.CLAUDE: "Fast mode always uses API billing, not subscription usage.",
+        HarnessType.CODEX: None,
+    }
+
+
+def test_only_the_harnesses_mngr_can_compact_support_compaction_and_only_claude_interrupts_one() -> None:
+    capabilities = {
+        harness: (spec.supports_compaction, spec.can_interrupt_compaction) for harness, spec in HARNESS_SPECS.items()
+    }
+    assert capabilities == {
+        HarnessType.CLAUDE: (True, True),
+        HarnessType.CODEX: (True, False),
+        HarnessType.PI_CODING: (True, False),
+        HarnessType.OPENCODE: (False, False),
+        HarnessType.ANTIGRAVITY: (False, False),
+        HarnessType.SEED: (False, False),
+    }
+
+
+def test_a_composer_compact_runs_on_every_harness_mngr_can_compact_and_is_declined_on_none() -> None:
+    handling = {harness: spec.composer_compact_handling for harness, spec in HARNESS_SPECS.items()}
+    assert handling == {
+        HarnessType.CLAUDE: ComposerCompactHandling.FORWARDED_TO_HARNESS,
+        HarnessType.CODEX: ComposerCompactHandling.REQUESTED_FROM_MNGR,
+        HarnessType.PI_CODING: ComposerCompactHandling.REQUESTED_FROM_MNGR,
+        HarnessType.OPENCODE: ComposerCompactHandling.SENT_AS_TEXT,
+        HarnessType.ANTIGRAVITY: ComposerCompactHandling.SENT_AS_TEXT,
+        HarnessType.SEED: ComposerCompactHandling.SENT_AS_TEXT,
+    }
+    for harness, spec in HARNESS_SPECS.items():
+        if spec.composer_compact_handling is not ComposerCompactHandling.SENT_AS_TEXT:
+            assert spec.supports_compaction
+            assert all("/compact" not in popup.commands for popup in _notice_popups(harness))

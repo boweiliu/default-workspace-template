@@ -20,14 +20,14 @@ Manifests
 ---------
 An app with a directory ships ``system/apps/<package>/app.toml`` (see
 ``system/libs/app_manifest`` for the schema). ``--manifest <path>`` reads it
-and copies its static fields onto the row: ``display_name``, ``critical``,
-``priority``, ``program`` (default: the name), ``internal``, ``launcher_rank``,
+and copies its static fields onto the row: ``display_name``, ``description``, ``api_schema_path``, ``critical``,
+``stop_when_no_windows``, ``priority``, ``program`` (default: the name), ``internal``, ``system``, ``launcher_rank``,
 ``default_shortcut`` (launch and mode), ``launch_paths`` (id, label, path,
 the names of the params, and ``method``, ``presets``, ``text_param``, and
 ``draft_param`` when given), ``pin`` (path, and style, scope, and
-default_mode when given), and ``window_closed_path``; the icon is read from the file the
-manifest names, relative to the manifest. Every manifest field is authoritative
-on every call, so a re-registration with a changed manifest updates the row.
+default_mode when given), ``window_closed_path``, and ``message_handlers`` (type, and path or show and showing);
+the icon is read from the file the manifest names, relative to the manifest. Every manifest
+field is authoritative on every call, so a re-registration with a changed manifest updates the row.
 Only what is copied from files is checked here (the name rule, the icon markup,
 the value types); the manifest's other rules are the ``app_manifest`` library's
 job, applied by ``validate-manifest`` and by every reader of the registry.
@@ -39,12 +39,16 @@ name is what the workspace falls back to.
 Icons
 -----
 An app may register an icon so the workspace UI can draw it instead of a
-generic glyph. **The registry stores the SVG markup itself**, as a plain TOML
-string on the entry, not a path to a file. A path would have to be readable by
+generic glyph. ``docs/system/app-icons.md`` holds what one must look like (a
+216 by 216 two-layer tile, and the palette it is coloured from); this module only
+checks that the markup is safe to store.
+
+**The registry stores the SVG markup itself**, as a plain TOML string on the
+entry, not a path to a file. A path would have to be readable by
 every consumer -- the system-interface server, the desktop client, and anything
 reading the registry off a shared host -- at whatever moment it renders, and
 those do not share a filesystem view with the service that registered. The
-markup travels with the entry through the existing apps.toml -> app-watcher
+markup travels with the entry through the existing apps.toml -> services
 event -> WebSocket path with no extra plumbing and no file access at all.
 ``--icon-file`` (and the manifest's ``icon``) is only an input convenience: the
 file is read once here, at registration time, and its contents (not its path)
@@ -85,6 +89,14 @@ ENV_APPS_FILE = "MINDS_APPS_FILE"
 # which no longer routes. The random suffix is the one hostname component CT
 # never sees. Minted once per service and persisted (stable across re-share so
 # bookmarks/layouts keep working); see blueprint/random-service-labels/.
+#
+# A label is a strict RFC 1123 hostname label: a name's underscores become
+# hyphens. Browsers tolerate an underscore in a hostname, but ``java.net.URI``
+# (so every JDK-based HTTP client) refuses to parse it as a host, and Python's
+# ``ssl`` will not match a wildcard certificate against it. Labels minted
+# before this rule keep their underscore (a label never changes once
+# persisted), so readers map a label back to its name through the registry,
+# never by transforming the label.
 _LABEL_RANDOM_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 _LABEL_RANDOM_LENGTH = 8
 
@@ -101,15 +113,16 @@ MAX_DISPLAY_NAME_LENGTH = 64
 
 # Service-name rule: lowercase alphanumeric/underscore runs separated by
 # single hyphens (no uppercase, no leading/trailing/consecutive hyphens).
-# The registered name becomes the leading label of the service's origin
-# hostname (http://<name>.host-<hex>.localhost:8421/ locally; share
-# hostnames follow the same prefix rule on a longer base), so it must work
-# as a hostname label. Underscores are tolerated for legacy names --
-# ``system_interface`` predates this scheme and underscore labels resolve
-# fine in browsers -- but new apps should stick to kebab-case (the build-app
-# scaffold enforces the stricter rule; a drift test in forward_port_test.py
-# keeps that rule a subset of this one, and keeps the app_manifest library's
-# copy of this rule identical).
+# The registered name seeds the leading label of the service's origin
+# hostname: ``mint_service_label`` derives ``<name>-<rand>`` from it, served
+# at http://<name>-<rand>.host-<hex>.localhost:8421/ locally (share hostnames
+# follow the same prefix rule on a longer base), so the name must work as a
+# hostname label. Underscores are tolerated for legacy names --
+# ``system_interface`` predates this scheme; ``mint_service_label`` turns
+# them into hyphens in the origin label -- but new apps should stick to
+# kebab-case (the build-app scaffold enforces the stricter rule; a drift test
+# in forward_port_test.py keeps that rule a subset of this one, and keeps the
+# app_manifest library's copy of this rule identical).
 NAME_PATTERN = re.compile(r"^[a-z0-9_]+(?:-[a-z0-9_]+)*$")
 
 # Workspace hostnames carry their coordinate as a ``host-<hex>`` label (and
@@ -128,7 +141,8 @@ RESERVED_NAME_PREFIXES = ("host-", "agent-")
 RESERVED_NAMES = frozenset({"localhost", "auth", "share", "app", "owner", "vm", "host", "env", "github", "agent"})
 
 # Cap on the stored SVG markup. Generous for a hand-drawn or exported glyph
-# (icons in this repo run a few hundred bytes) while keeping apps.toml small:
+# (icons in this repo run from a few hundred bytes to a couple of kilobytes)
+# while keeping apps.toml small:
 # every consumer re-reads the whole registry on every change, and the markup
 # is broadcast to every connected client.
 MAX_ICON_LENGTH = 16384
@@ -152,10 +166,18 @@ _ALLOWED_CONTROL_CHARACTERS = frozenset({"\t", "\n", "\r"})
 
 # The manifest keys copied verbatim onto the row, with the type each must have.
 # ``name`` (validated separately), ``icon`` (read from the named file), and the
-# structured keys (``default_shortcut``, ``launch_paths``, ``pin``) are handled
-# on their own. ``program`` defaults to the name when the manifest omits it.
-_MANIFEST_STRING_KEYS = ("display_name", "priority", "program", "window_closed_path")
-_MANIFEST_BOOL_KEYS = ("critical", "internal")
+# structured keys (``default_shortcut``, ``launch_paths``, ``pin``,
+# ``message_handlers``) are handled on their own. ``program`` defaults to the
+# name when the manifest omits it.
+_MANIFEST_STRING_KEYS = (
+    "display_name",
+    "description",
+    "api_schema_path",
+    "priority",
+    "program",
+    "window_closed_path",
+)
+_MANIFEST_BOOL_KEYS = ("critical", "internal", "system", "stop_when_no_windows")
 _MANIFEST_INT_KEYS = ("launcher_rank",)
 # A per-entry copier for one manifest array of tables: ``(copied, None)`` or ``(None, error)``.
 _TableCopier = Callable[[Any, Path], tuple[dict[str, object] | None, str | None]]
@@ -169,18 +191,23 @@ _TableCopier = Callable[[Any, Path], tuple[dict[str, object] | None, str | None]
 # workspace has re-registered its apps under this release.
 _MANIFEST_OWNED_KEYS = (
     "display_name",
+    "description",
+    "api_schema_path",
     "instances",
     "instances_url",
     "critical",
+    "stop_when_no_windows",
     "priority",
     "program",
     "internal",
+    "system",
     "launcher_rank",
     "default_shortcut",
     "actions",
     "launch_paths",
     "pin",
     "window_closed_path",
+    "message_handlers",
 )
 
 # The optional keys of a manifest's ``[pin]`` table, each a string when present; ``path`` is
@@ -314,11 +341,15 @@ def read_icon_file(path: Path) -> tuple[str | None, str | None]:
 
 
 def mint_service_label(name: str) -> str:
-    """Mint an unguessable ``<name>-<rand>`` origin label for a freshly-registered service."""
+    """Mint an unguessable ``<name>-<rand>`` origin label for a freshly-registered service.
+
+    The name's underscores become hyphens so the label is a valid hostname
+    label everywhere (``system_interface`` -> ``system-interface-<rand>``).
+    """
     suffix = "".join(
         secrets.choice(_LABEL_RANDOM_ALPHABET) for _ in range(_LABEL_RANDOM_LENGTH)
     )
-    return f"{name}-{suffix}"
+    return f"{name.replace('_', '-')}-{suffix}"
 
 
 def validate_display_name(value: str) -> str | None:
@@ -368,7 +399,7 @@ def _apps_file() -> Path:
     Defaults to ``data/.state/apps.toml`` relative to cwd. Override
     via ``MINDS_APPS_FILE`` -- used by tests and by callers that
     need to point at a non-default registry (e.g. when running outside
-    the agent's repo root). Mirrors ``system/scripts/layout.py``.
+    the agent's repo root). Mirrors ``app_manifest.registry.registry_path``.
     """
     return Path(os.environ.get(ENV_APPS_FILE, DEFAULT_APPS_FILE))
 
@@ -498,7 +529,7 @@ def _save_apps(path: Path, apps: list[dict[str, object]]) -> None:
         return
 
     # Atomic write: write to a temp file in the same directory, then os.replace()
-    # into place. This guarantees that readers (like app-watcher) never observe
+    # into place. This guarantees that readers (like the shell) never observe
     # a truncated/partial file during the write window.
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_path = tempfile.mkstemp(
@@ -596,7 +627,7 @@ def _read_manifest(
 def _copied_tables(
     entries: Any, path: Path, key: str, copy_entry: _TableCopier
 ) -> tuple[list[dict[str, object]] | None, str | None]:
-    """A manifest array of tables (``launch_paths``) as the registry row
+    """A manifest array of tables (``launch_paths``, ``message_handlers``) as the registry row
     carries it, each entry copied by ``copy_entry``. Returns ``(copied, None)``, or
     ``(None, error)`` when the value is not an array or an entry is not shaped as the
     manifest requires."""
@@ -709,8 +740,39 @@ def _copied_param_names(
     return [param["name"] for param in params], None
 
 
+def _copied_message_handler(
+    handler: Any, path: Path
+) -> tuple[dict[str, object] | None, str | None]:
+    """One manifest message handler as the registry row carries it: ``type`` and either ``path`` (the route the
+    shell posts the message to) or ``show`` (the page it shows) with ``showing`` when the manifest gives it. Returns
+    ``(copied, None)``, or ``(None, error)`` when the entry is not shaped as the manifest requires."""
+    if not (isinstance(handler, dict) and isinstance(handler.get("type"), str)):
+        return None, f"manifest {str(path)!r}: every message handler needs a string 'type'"
+    is_path_given = isinstance(handler.get("path"), str)
+    is_show_given = isinstance(handler.get("show"), str)
+    if is_path_given == is_show_given:
+        return (
+            None,
+            f"manifest {str(path)!r}: every message handler needs exactly one of a string 'path' or 'show'",
+        )
+    showing = handler.get("showing")
+    if is_path_given:
+        if showing is not None:
+            return None, f"manifest {str(path)!r}: a message handler gives 'showing' only beside 'show'"
+        return {"type": handler["type"], "path": handler["path"]}, None
+    copied: dict[str, object] = {"type": handler["type"], "show": handler["show"]}
+    if showing is not None:
+        if not (isinstance(showing, list) and all(isinstance(page, str) for page in showing)):
+            return None, f"manifest {str(path)!r}: a message handler's showing must be an array of strings"
+        copied["showing"] = list(showing)
+    return copied, None
+
+
 # The manifest arrays of tables copied onto the row, each with the copier for its entries.
-_MANIFEST_TABLE_ARRAY_COPIERS: tuple[tuple[str, _TableCopier], ...] = (("launch_paths", _copied_launch_path),)
+_MANIFEST_TABLE_ARRAY_COPIERS: tuple[tuple[str, _TableCopier], ...] = (
+    ("launch_paths", _copied_launch_path),
+    ("message_handlers", _copied_message_handler),
+)
 
 
 def _upsert(
@@ -839,8 +901,9 @@ def main() -> None:
         "--manifest",
         help=(
             "Path to the app's app.toml. Its name, icon, and static fields (display_name, "
-            "critical, priority, program, internal, launcher_rank, default_shortcut, "
-            "launch_paths with their text_param, pin, window_closed_path) are copied onto the row on every call."
+            "critical, priority, program, internal, system, launcher_rank, default_shortcut, "
+            "launch_paths with their text_param, pin, window_closed_path, message_handlers) are copied onto the row on "
+            "every call."
         ),
     )
     parser.add_argument(
@@ -982,9 +1045,9 @@ def main() -> None:
                     )
                 if icon is None and not args.no_icon and is_new_pickable:
                     parser.error(
-                        f"app {name!r} is new and has no icon: pass --icon-file with a house-style "
-                        "SVG (see the build-app skill), name one in the manifest, or pass --no-icon "
-                        "to keep the generic letter monogram"
+                        f"app {name!r} is new and has no icon: pass --icon-file with a tile icon "
+                        "drawn to docs/system/app-icons.md, name one in the manifest, or pass "
+                        "--no-icon to keep the generic letter monogram"
                     )
                 _upsert(
                     apps_file,

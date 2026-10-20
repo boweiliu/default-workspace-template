@@ -8,16 +8,19 @@ import { MarkdownContent } from "../markdown";
 import type { TranscriptEvent, AssistantMessageEvent, ToolResultEvent, ToolCall } from "../models/Response";
 import { getEventDetailState, getEventDetailVersion, requestEventDetail } from "../models/Response";
 import { getChatById } from "../models/Chats";
-import { openProviderChooser } from "../models/Providers";
+import { accountForAgent, areAccountsLoaded, openProviderChooser } from "../models/Providers";
 import { openSubagentView } from "../shell";
 import { beginSwitchToAccountId } from "./SwitchDialog";
 import { hoverTooltipAttrs } from "@imbue/workspace-ui/src/components/hoverTooltip";
 import { activityDotClass } from "@imbue/workspace-ui/src/components/activityDot";
 import { getExpansionVersion, isBlockExpanded, setBlockExpanded } from "./expansion-state";
-import type { PermissionResolution } from "./message-classification";
+import type { PermissionResolution, RequestResolution, SecretResolution } from "./message-classification";
 import { isSkillExpansionUserMessage } from "./message-classification";
 import { PermissionCard, isFiledPermissionRequest, parsePermissionRequest } from "./permission-card";
-import { ToolChipGroup, type ChipCall } from "./ToolChipGroup";
+import { SecretCard, isFiledSecretRequest, parseSecretRequest } from "./secret-card";
+import { ToolChipGroup, type ChipEntry } from "./ToolChipGroup";
+import { AutocompactNotice } from "./AutocompactNotice";
+import { compactionChips, type CompactionPart } from "./compaction-chips";
 import { badgeClass } from "@imbue/workspace-ui/src/components/Badge";
 
 /** A permission-request tool call's own verdict: its own request id's entry in
@@ -26,10 +29,22 @@ import { badgeClass } from "@imbue/workspace-ui/src/components/Badge";
 function resolutionForCall(
   toolCall: ToolCall,
   toolResult: ToolResultEvent | null,
-  resolutionsByRequestId: ReadonlyMap<string, PermissionResolution>,
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution>,
 ): PermissionResolution | null {
   const details = parsePermissionRequest(toolCall, toolResult);
-  return (details ? resolutionsByRequestId.get(details.requestId) : undefined) ?? null;
+  const resolution = details ? resolutionsByRequestId.get(details.requestId) : undefined;
+  return resolution === "granted" || resolution === "denied" || resolution === "error" ? resolution : null;
+}
+
+/** A secret request's own verdict, by its request id, or null while it awaits an answer. */
+function secretResolutionForCall(
+  toolCall: ToolCall,
+  toolResult: ToolResultEvent | null,
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution>,
+): SecretResolution | null {
+  const details = parseSecretRequest(toolCall, toolResult);
+  const resolution = details ? resolutionsByRequestId.get(details.requestId) : undefined;
+  return resolution === "stored" || resolution === "declined" || resolution === "superseded" ? resolution : null;
 }
 
 // Per-kind user_message rendering lives in user-message-display.ts (the display
@@ -96,9 +111,9 @@ export function buildToolResultsWithSkillExpansions(events: TranscriptEvent[]): 
  * Hide auth-error turns from the pre-login prefix once login has recovered.
  *
  * A fresh chat with no Claude credentials produces a run of "Not logged in"
- * assistant messages before the user authenticates. Once login succeeds and
- * /welcome is resent, the first visible turn should be the friendly greeting,
- * not the prior failed attempts.
+ * assistant messages before the user authenticates. Once login succeeds, the
+ * first visible turn should be the first successful reply, not the prior
+ * failed attempts.
  *
  * Restricted to the PREFIX of the transcript (turns that occurred before any
  * successful assistant message). A mid-session token expiration -- where the
@@ -260,6 +275,68 @@ export function renderAssistantMessage(
   );
 }
 
+/** Whether this call renders as a sub-agent card. Gated on the description,
+ *  which rides the tool input, so the card stands as soon as the Agent call is
+ *  issued -- before its subagent session is linked -- showing a non-clickable
+ *  "Running…" until `subagent_metadata.session_id` arrives. A sub-agent is a
+ *  whole conversation, not an action, so it never joins the chips. */
+function isSubagentCardCall(toolCall: ToolCall): boolean {
+  return toolCall.tool_name === "Agent" && Boolean(toolCall.subagent_metadata || toolCall.description);
+}
+
+/** Whether a call renders as a card of its own instead of joining the chip row.
+ *  Naming the rule once keeps {@link isChipOnlyEvent} from drifting away from
+ *  what appendEventParts actually does with a call. */
+function rendersAsCard(toolCall: ToolCall, result: ToolResultEvent | null): boolean {
+  return isSubagentCardCall(toolCall) || isFiledPermissionRequest(toolCall, result);
+}
+
+/** One member of an assistant run: an assistant event, or a compaction, whose chips
+ *  join the run's chip row like a tool call's. */
+export type RunPart = AssistantMessageEvent | CompactionPart;
+
+/** Whether a part's entire contribution to a run is chips: no thinking
+ *  toggle, no prose, and every call one that chips rather than cards. Nothing
+ *  in such a part can break a chip row, which is what lets a consecutive run
+ *  of them share one (see buildRows). A compaction is chips alone. */
+export function isChipOnlyEvent(event: RunPart, toolResults: Map<string, ToolResultEvent>): boolean {
+  if (event.type === "compaction") return true;
+  if (event.has_thinking) return false;
+  if (event.text) return false;
+  const toolCalls = event.tool_calls || [];
+  if (toolCalls.length === 0) return false;
+  return toolCalls.every((call) => !rendersAsCard(call, toolResults.get(call.tool_call_id) ?? null));
+}
+
+/**
+ * A run of assistant events as ONE top-level row.
+ *
+ * A harness emits an event per model response, so what a reader sees as one
+ * message -- a line of intent, then the calls that carry it out -- arrives as
+ * several. A row each sets them a full message gap apart and stacks a lone chip
+ * per row; handing the run to renderAssistantRun lays them out exactly as they
+ * would have laid out had the harness sent them as one event: prose, then the
+ * single wrapping chip row tucked under it. Both are what a step's revealed
+ * work already gets.
+ *
+ * Unmemoized, unlike {@link renderAssistantMessage}, which is why buildRows
+ * sends a lone event there instead. The cost is a shallow vnode diff per
+ * redraw: MarkdownContent guards its own re-parse on unchanged content, so the
+ * markdown is not re-rendered either way.
+ */
+export function renderAssistantRunRow(
+  events: RunPart[],
+  toolResults: Map<string, ToolResultEvent>,
+  chatId: string,
+): m.Vnode {
+  const key = events[0].event_id;
+  return m(
+    "div",
+    { id: key, class: "message message-assistant mb-5", key },
+    renderAssistantRun(events, toolResults, chatId),
+  );
+}
+
 export function renderSubagentCard(toolCall: ToolCall, chatId: string, isRunning: boolean): m.Vnode {
   const metadata = toolCall.subagent_metadata;
   // Description and agent type come from the tool call itself, so the card renders fully
@@ -349,9 +426,10 @@ export function renderSubagentCard(toolCall: ToolCall, chatId: string, isRunning
 /** The two ways out under an auth failure: "Sign in again", and the switch link beside it.
  *
  * "Sign in again" resolves the chat's own account from its `account` label, so the chooser opens
- * ON that account and re-authenticates it in place -- every chat bound to it recovers. Without
- * the label (a chat from before accounts, say) it opens the chooser plainly, which is still the
- * right destination.
+ * ON that account and re-authenticates it in place -- every chat bound to it recovers. When the
+ * label names no signed-in account (a chat from before accounts, or one whose account was signed
+ * out and signed in again as a new one), there is nothing to re-authenticate: the account signed
+ * in, or picked, is what this chat moves to.
  */
 const REAUTH_ACTION_CLASS = "message-api-error-action cursor-pointer text-accent underline hover:text-accent-hover";
 
@@ -365,7 +443,19 @@ function renderReauthAction(chatId: string): m.Children {
       {
         type: "button",
         class: REAUTH_ACTION_CLASS,
-        onclick: () => openProviderChooser(accountId ? { accountId } : {}),
+        onclick: () => {
+          // Before the account list has loaded no account reads as signed in, which says nothing
+          // about whether this chat's is gone.
+          const isOwnAccountSignedIn =
+            accountId !== "" && (!areAccountsLoaded() || accountForAgent(accountId) !== null);
+          openProviderChooser(
+            isOwnAccountSignedIn
+              ? { accountId }
+              : chat === undefined
+                ? {}
+                : { onSignedIn: (chosen) => beginSwitchToAccountId(chatId, chosen) },
+          );
+        },
       },
       "Sign in again",
     ),
@@ -402,7 +492,7 @@ function renderReauthAction(chatId: string): m.Children {
 function providerFaultNote(kind: string | null): string {
   const cause =
     kind === "api_error" ? "the model provider's servers hit an error" : "the model provider's servers are overloaded";
-  return `This isn't Mind's fault -- ${cause}. Try again in a moment.`;
+  return `This isn't Imbue Studio's fault -- ${cause}. Try again in a moment.`;
 }
 
 /** The tiny muted "thinking" toggle atop an assistant message whose harness recorded
@@ -461,6 +551,8 @@ function renderThinkingDisclosure(event: AssistantMessageEvent, chatId: string):
  * a harness emits one event per model response, so three tool calls in a row are
  * usually three events, and grouping only within an event would leave them as
  * three separate rows. Prose breaks the run and starts a fresh row after it.
+ * A compaction's chips join the row like a call's, and the one-time Auto-compact
+ * notice goes under the row that holds its anchor compaction.
  *
  * Callers that hold a whole list of events (a step's revealed work, an ungrouped
  * run, a handoff's body) pass them all so the merging can happen; a caller that
@@ -468,26 +560,46 @@ function renderThinkingDisclosure(event: AssistantMessageEvent, chatId: string):
  * on its own) passes just that one and gets a row per event.
  */
 export function renderAssistantRun(
-  events: AssistantMessageEvent[],
+  events: RunPart[],
   toolResults: Map<string, ToolResultEvent>,
   chatId: string,
-  resolutionsByRequestId: ReadonlyMap<string, PermissionResolution> = new Map(),
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution> = new Map(),
+  secretNotesByRequestId: ReadonlyMap<string, string> = new Map(),
 ): m.Children[] {
   const children: m.Children[] = [];
   // One array for the whole run, emptied in place by `splice` rather than
   // reassigned: appendEventParts holds this same reference, so swapping in a
   // fresh array here would leave it pushing into the flushed one.
-  const pendingChips: ChipCall[] = [];
+  const pendingChips: ChipEntry[] = [];
+  let isNoticeUnderRow = false;
 
   // Anything that is not a tool chip ends the run in progress: the row has to
   // land above whatever interrupted it, in transcript order.
   const flushChips = (): void => {
     if (pendingChips.length === 0) return;
     children.push(m(ToolChipGroup, { chips: pendingChips.splice(0), toolResults, chatId }));
+    if (isNoticeUnderRow) {
+      children.push(m(AutocompactNotice));
+      isNoticeUnderRow = false;
+    }
   };
 
   for (const event of events) {
-    appendEventParts(event, toolResults, chatId, resolutionsByRequestId, children, pendingChips, flushChips);
+    if (event.type === "compaction") {
+      pendingChips.push(...compactionChips(event));
+      isNoticeUnderRow ||= event.isNoticeAnchor;
+      continue;
+    }
+    appendEventParts(
+      event,
+      toolResults,
+      chatId,
+      resolutionsByRequestId,
+      secretNotesByRequestId,
+      children,
+      pendingChips,
+      flushChips,
+    );
   }
   flushChips();
   return children;
@@ -502,9 +614,10 @@ export function renderAssistantMessageChildren(
   event: AssistantMessageEvent,
   toolResults: Map<string, ToolResultEvent>,
   chatId: string,
-  resolutionsByRequestId: ReadonlyMap<string, PermissionResolution> = new Map(),
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution> = new Map(),
+  secretNotesByRequestId: ReadonlyMap<string, string> = new Map(),
 ): m.Children[] {
-  return renderAssistantRun([event], toolResults, chatId, resolutionsByRequestId);
+  return renderAssistantRun([event], toolResults, chatId, resolutionsByRequestId, secretNotesByRequestId);
 }
 
 /** One event's contribution to a run: its thinking toggle, its prose and its
@@ -520,9 +633,10 @@ function appendEventParts(
   event: AssistantMessageEvent,
   toolResults: Map<string, ToolResultEvent>,
   chatId: string,
-  resolutionsByRequestId: ReadonlyMap<string, PermissionResolution>,
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution>,
+  secretNotesByRequestId: ReadonlyMap<string, string>,
   children: m.Children[],
-  pendingChips: ChipCall[],
+  pendingChips: ChipEntry[],
   flushChips: () => void,
 ): void {
   const textContent = event.text || "";
@@ -536,7 +650,7 @@ function appendEventParts(
     flushChips();
     if (event.is_api_error || event.is_auth_error) {
       // A model API error: render the failure text in light red, and for a
-      // provider-side fault (5xx / overloaded) add a grey "not Mind's fault" note.
+      // provider-side fault (5xx / overloaded) add a grey "not Imbue Studio's fault" note.
       //
       // An auth error gets a button as well. It is the one failure the user can actually
       // fix, and the fix is not obvious from the provider's wording -- which is usually a
@@ -566,11 +680,8 @@ function appendEventParts(
     }
   }
   for (const toolCall of toolCalls) {
-    // Render the rich card as soon as we have the Agent call's description (from the tool
-    // input), even before its subagent session is linked; the card shows a non-clickable
-    // "Running…" state until subagent_metadata.session_id arrives. A sub-agent is a whole
-    // conversation, not an action, so it stays a card rather than joining the chips.
-    if (toolCall.tool_name === "Agent" && (toolCall.subagent_metadata || toolCall.description)) {
+    const result = toolResults.get(toolCall.tool_call_id) ?? null;
+    if (isSubagentCardCall(toolCall)) {
       // The Agent call's tool result arrives only when the sub-agent finishes, so its
       // absence is our signal that the sub-agent is still actively working.
       const subagentRunning = !toolResults.has(toolCall.tool_call_id);
@@ -578,7 +689,6 @@ function appendEventParts(
       children.push(renderSubagentCard(toolCall, chatId, subagentRunning));
       continue;
     }
-    const result = toolResults.get(toolCall.tool_call_id) ?? null;
     // A permission request renders as its own card (the request, a verdict or
     // button, and the raw call) rather than a chip: it is something to ACT on,
     // so it must not be one click away behind a chip.
@@ -595,7 +705,17 @@ function appendEventParts(
       );
       continue;
     }
-    pendingChips.push({ call: toolCall, eventId: event.event_id });
+    // A secret request renders as the secret card: the inputs the user answers on,
+    // then the verdict once the chat app's notice lands (or the page's own submit).
+    if (isFiledSecretRequest(toolCall, result)) {
+      const resolution = secretResolutionForCall(toolCall, result, resolutionsByRequestId);
+      const details = parseSecretRequest(toolCall, result);
+      const note = details ? (secretNotesByRequestId.get(details.requestId) ?? null) : null;
+      flushChips();
+      children.push(m(SecretCard, { toolCall, toolResult: result, resolution, note }));
+      continue;
+    }
+    pendingChips.push({ kind: "tool", call: toolCall, eventId: event.event_id });
   }
 }
 
@@ -610,8 +730,9 @@ export function renderPermissionItem(
   event: AssistantMessageEvent,
   toolResults: Map<string, ToolResultEvent>,
   chatId: string,
-  resolutionsByRequestId: ReadonlyMap<string, PermissionResolution>,
+  resolutionsByRequestId: ReadonlyMap<string, RequestResolution>,
   domId: string = event.event_id,
+  secretNotesByRequestId: ReadonlyMap<string, string> = new Map(),
 ): m.Vnode {
   // ``domId`` defaults to the event id but a top-level permission row passes its
   // row key (``perm-<event_id>``) so the rendered root's ``id`` matches the key
@@ -621,6 +742,6 @@ export function renderPermissionItem(
   return m(
     "div",
     { id: domId, class: "message message-assistant mb-5", key: event.event_id },
-    renderAssistantMessageChildren(event, toolResults, chatId, resolutionsByRequestId),
+    renderAssistantMessageChildren(event, toolResults, chatId, resolutionsByRequestId, secretNotesByRequestId),
   );
 }

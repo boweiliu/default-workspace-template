@@ -26,16 +26,19 @@ import socket as socket_module
 import threading
 import time
 from collections import deque
+from collections.abc import Coroutine
 from typing import Any, Callable
 
-from flask import Response, jsonify, request
+from app_schema.routes import error_response, model_response
+from flask import Response, request
+from flask.typing import ResponseReturnValue
 from loguru import logger
 from simple_websocket import ConnectionClosed
 
-from browser import telemetry
+from browser import telemetry, window_guardian
+from browser.api_models import ClipboardPasted
 from browser.audiopipe import AudioPipe, AudioPipeError
 from browser.audiopipe import is_available as is_audio_available
-from browser import window_guardian
 from browser.stream_conductor import StreamConnection, conductor
 from browser.videopipe import PixelfluxVideoPipe, VideoPipeError
 from browser.window_guardian import WindowGuardian
@@ -224,46 +227,57 @@ def _await_clipboard_owned(display: str, attempts: int = 20, interval: float = 0
     return False
 
 
-def clipboard_paste(browser_id: str, session: Any, data: bytes, mime: str) -> Response:
-    """Paste-in: set the browser's X CLIPBOARD from the POST body, then inject Ctrl+V.
+def clipboard_paste(
+    browser_id: str,
+    session: Any,
+    data: bytes,
+    mime: str,
+    # Runs a coroutine on the daemon's event loop from this request thread and returns
+    # its result (the runner's bridge).
+    run_on_loop: Callable[[Coroutine[Any, Any, bool]], bool],
+) -> ResponseReturnValue:
+    """Paste-in: set the browser's X CLIPBOARD from the POST body, then press Ctrl+V in the tab.
 
     GATED on ``session.input_allowed`` -- only the controlling human may write into the
     browser (an agent mid-task must not have a stray paste land). The selection is set
     BEFORE the paste keystroke, and the write is recorded so the copy-out monitor doesn't
-    echo it back (plus the fleet's control gate)."""
+    echo it back (plus the fleet's control gate). The keystroke goes through CDP rather than
+    the XTEST keyboard: the viewer's live input router is replaying the human's real keys on
+    that keyboard at the same moment, and a second X client pressing Ctrl+V beside it raced
+    those (and depended on X input focus), which is what made pastes land only sometimes."""
     if not session.input_allowed:
-        return jsonify({"error": "not controlling"}), 409
+        return error_response("not controlling", 409)
     with _clip_lock:
         clip = _clips.get(browser_id)
         display = clip.display if clip is not None else None
         monitor = clip.monitor if clip is not None else None
     if display is None:
-        return jsonify({"error": "no active viewer"}), 409
+        return error_response("no active viewer", 409)
     if not data:
-        return jsonify({"error": "empty clipboard"}), 400
+        return error_response("empty clipboard", 400)
     if len(data) > _CLIPBOARD_MAX_BYTES:  # enforce the declared cap (was previously unused)
-        return jsonify({"error": "clipboard too large"}), 413
-    router = InputRouter(display)
+        return error_response("clipboard too large", 413)
     try:
-        set_clipboard(display, data, mime)
+        # Recorded before the write: XFixes fires the moment xclip takes the selection, and
+        # the monitor must already know to swallow that echo.
         if monitor is not None:
             monitor.note_written(data)
-        # xclip -i forks a BACKGROUND selection owner; injecting Ctrl+V before it has
-        # actually claimed the X CLIPBOARD makes the paste read a stale/empty selection --
-        # the intermittent "nothing pasted" while the client still reported success. Confirm
-        # the selection is owned+readable before pasting (off-loop, in the Flask request
+        set_clipboard(display, data, mime)
+        # xclip -i forks a BACKGROUND selection owner; pasting before it has actually
+        # claimed the X CLIPBOARD makes the paste read a stale/empty selection. Confirm the
+        # selection is owned+readable before pasting (off-loop, in the Flask request
         # thread), and fail honestly if it never takes, so an ok response actually means the
-        # clipboard was set and Ctrl+V was injected.
+        # clipboard was set and the keystroke was delivered.
         if not _await_clipboard_owned(display):
             logger.warning("clipboard paste for {} never took ownership", browser_id)
-            return jsonify({"error": "clipboard not set"}), 500
-        router.paste()
+            return error_response("clipboard not set", 500)
     except ClipboardError as error:
         logger.warning("clipboard paste failed for {} ({})", browser_id, error)
-        return jsonify({"error": "paste failed"}), 500
-    finally:
-        router.close()
-    return jsonify({"ok": True})
+        return error_response("paste failed", 500)
+    if not run_on_loop(session.paste_into_active_tab()):
+        logger.warning("clipboard paste for {} could not reach the active tab", browser_id)
+        return error_response("paste failed", 500)
+    return model_response(ClipboardPasted(ok=True))
 
 
 def clipboard_out(browser_id: str) -> Response:

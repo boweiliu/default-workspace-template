@@ -6,10 +6,11 @@ chooser mints ``~/.minds/accounts/<id>/`` and ``mngr create`` binds the chat to 
 ``~/.claude``" is no longer the contract, and this file no longer claims it.
 
 What survives the accounts work, and is what these tests actually check, is the AMBIENT default:
-anything that did not ask for an account -- a bare ``claude`` in a terminal, the ``claude_p.py``
-resolver, a supervisord service -- must still land on claude's own ``~/.claude``. That holds only
-if nothing pins the variable at a level those inherit, which is exactly the two invariants below.
-They are spread across files that would otherwise drift silently:
+anything that did not ask for an account -- a bare ``claude`` in a terminal, a supervisord
+service -- must still land on claude's own ``~/.claude`` (``claude_p.py`` picks the workspace's
+default account itself when nothing has set the variable). That holds only if nothing pins the
+variable at a level those inherit, which is exactly the two invariants below. They are spread
+across files that would otherwise drift silently:
 
 1. Nothing in ``.mngr/settings.toml`` may export ``CLAUDE_CONFIG_DIR`` -- an exported value
    there is inherited by EVERY agent, which would override the per-account binding a chat was
@@ -19,6 +20,9 @@ They are spread across files that would otherwise drift silently:
    ``CLAUDE_CONFIG_DIR`` to its per-agent dir in its env, and everything it
    spawns (supervisord services, the bootstrap's / system_interface's
    ``mngr create`` calls) would inherit that pin.
+3. The chat app's baked model catalog fixture is lifted from one claude build, so it must be
+   the one for the pinned version: a bump that forgets to regenerate it would otherwise pass
+   every catalog test against the old binary's models.
 """
 
 from __future__ import annotations
@@ -39,6 +43,9 @@ from imbue.mngr_claude.plugin import ClaudeAgentConfig
 _REPO_ROOT = Path(__file__).parents[1]
 _SETTINGS_PATH = _REPO_ROOT / ".mngr" / "settings.toml"
 _DOCKERFILE_PATH = _REPO_ROOT / "system" / "Dockerfile"
+_CHAT_CLAUDE_HARNESS_DIR = (
+    _REPO_ROOT / "system" / "apps" / "chat" / "imbue" / "chat" / "harnesses" / "claude"
+)
 
 
 def _load_raw_settings() -> dict[str, Any]:
@@ -93,6 +100,17 @@ def test_main_agent_type_resolves_to_plain_command_agent() -> None:
     assert resolved.agent_class is CommandAgent
     assert not isinstance(resolved.agent_config, ClaudeAgentConfig)
     assert str(resolved.agent_config.command) == "sleep infinity"
+
+
+def test_baked_model_catalog_fixture_is_the_pinned_versions() -> None:
+    settings_version = _load_raw_settings()["agent_types"]["claude"]["version"]
+    fixtures = sorted(
+        path.name
+        for path in _CHAT_CLAUDE_HARNESS_DIR.glob("baked_model_catalog_v*.json")
+    )
+    assert fixtures == [
+        f"baked_model_catalog_v{settings_version.replace('.', '_')}.json"
+    ]
 
 
 def test_dockerfile_carries_no_toolchain_version_pin() -> None:

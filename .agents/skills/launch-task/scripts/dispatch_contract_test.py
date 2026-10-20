@@ -7,7 +7,9 @@ A worker dispatch crosses three hands: a lead skill's prose writes a task file
 and invokes ``create_worker.py``; ``create_worker.py`` provisions the worker and
 polls for the report named in that task file; the worker reads the task file
 back with ``parse_task_frontmatter.py`` and pushes its report to the path it
-names. Each hand has its own unit tests; nothing else checks that they agree.
+names. Meanwhile the lead's poll reads the worker's busy marker, which the
+worker's own ``run_in_background.py`` writes when it parks on a command. Each
+hand has its own unit tests; nothing else checks that they agree.
 These tests take the prose literally -- they execute the real fenced ``bash``
 blocks that write task files and parse the real ``create_worker.py`` argvs the
 prose contains -- so a drift in any hand (a renamed flag, a moved runtime dir,
@@ -28,6 +30,7 @@ dispatcher.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shlex
@@ -60,6 +63,9 @@ def _load_script_module(path: Path) -> Any:
 create_worker = _load_script_module(_SCRIPTS_DIR / "create_worker.py")
 parse_task_frontmatter = _load_script_module(
     _SHARED_SCRIPTS_DIR / "parse_task_frontmatter.py"
+)
+run_in_background = _load_script_module(
+    _REPO_ROOT / "system" / "scripts" / "run_in_background.py"
 )
 
 # A fenced block opened by three or more backticks and closed by the same
@@ -143,6 +149,19 @@ class _RecordingRunner(create_worker.Runner):
         return _CleanResult()
 
 
+class _WaitingWorkerRunner(create_worker.Runner):
+    """Answers ``mngr list`` with the worker ``launch`` created, its turn ended."""
+
+    def run(self, argv: Sequence[str], **kwargs):
+        record = {
+            "resource_type": "agent",
+            "id": _WORKER_ID,
+            "name": "demo",
+            "state": "WAITING",
+        }
+        return _CleanResult(stdout=json.dumps(record) + "\n")
+
+
 def _fenced_blocks(text: str) -> list[str]:
     """Every fenced block's content, with a list item's indentation removed so
     the commands inside read as they would at the top level."""
@@ -166,11 +185,16 @@ def _dispatcher_candidates() -> list[Path]:
     return sorted(_SKILLS_ROOT.glob("*/SKILL.md"))
 
 
+def _block_commands(block: str) -> list[str]:
+    """Every command in a fenced block, with its line continuations joined."""
+    return re.split(r"\n(?=\S)", block.replace("\\\n", " "))
+
+
 def _launcher_invocations(block: str) -> list[list[str]]:
     """Every ``create_worker.py <argv...>`` command in a fenced block, as the
     argv after the script path (line continuations joined, comments dropped)."""
     invocations: list[list[str]] = []
-    for command in re.split(r"\n(?=\S)", block.replace("\\\n", " ")):
+    for command in _block_commands(block):
         if "create_worker.py" not in command:
             continue
         words = shlex.split(command, comments=True)
@@ -285,6 +309,44 @@ def test_prose_launcher_invocation_is_accepted_by_the_real_parser(
             f"{prose}: `create_worker.py {' '.join(argv)}` is rejected by the "
             f"script's own parser (exit {exc.code})"
         ) from exc
+
+
+def _prose_await_commands() -> list[tuple[str, str]]:
+    """Every fenced command that runs ``create_worker.py await``, line continuations joined."""
+    return [
+        (str(prose.relative_to(_REPO_ROOT)), command)
+        for prose in _prose_files()
+        for block in _fenced_blocks(prose.read_text(encoding="utf-8"))
+        for command in _block_commands(block)
+        if "create_worker.py await" in command
+    ]
+
+
+def test_every_prose_await_is_started_through_the_harness_neutral_runner() -> None:
+    """A lead must be woken by its worker's report on every harness, and a harness's own
+    background tool does not wake its agent on most of them; ``run_in_background.py``
+    delivers the result to the lead's chat instead."""
+    await_commands = _prose_await_commands()
+    assert await_commands, "no prose runs create_worker.py await; this guard is vacuous"
+    for prose, command in await_commands:
+        assert "run_in_background.py" in command.split("create_worker.py await")[0], (
+            f"{prose}: `{command.strip()}` is not started through run_in_background.py"
+        )
+
+
+def test_no_prose_waits_through_a_harness_own_background_tool() -> None:
+    """A wait an agent must be woken from goes through ``run_in_background.py``: the
+    ``run_in_background`` flag is claude's alone, and no other harness has a background tool
+    that starts a turn when its command finishes."""
+    offenders = [
+        f"{prose.relative_to(_REPO_ROOT)}:{number}: {line.strip()}"
+        for prose in _prose_files()
+        for number, line in enumerate(
+            prose.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if re.search(r"run_in_background(?!\.py)\b", line)
+    ]
+    assert not offenders, "\n".join(offenders)
 
 
 def _run_task_block(dispatcher: _Dispatcher, cwd: Path) -> Path:
@@ -415,3 +477,35 @@ def test_launch_on_the_real_task_file_syncs_runtime_dir_and_addresses_the_worker
     # The runtime dir the prose synced is the one the worker's record names,
     # repo-relative, so a later destroy can pull it out of the lead's tree.
     assert labels["runtime_dir"] == runtime_dir.rstrip("/")
+
+
+def test_a_worker_parked_on_its_own_background_command_does_not_read_idle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker that starts a command through ``run_in_background.py`` and ends
+    its turn reads WAITING, which the idle check behind exit 76 would take for
+    a stalled worker. The runner marks the worker's chat busy under the chat
+    id it derives from the worker's own environment -- a worker ``launch``
+    created carries no ``MINDS_CHAT_ID``, so that is its agent id -- and the
+    lead's idle check reads that same chat's markers, so the parked worker is
+    not idle until its runner is done."""
+    root = tmp_path / "background_tasks"
+    monkeypatch.setenv(run_in_background.MARKER_ROOT_ENV, str(root))
+    worker_environ = {
+        "MNGR_AGENT_ID": _WORKER_ID,
+        run_in_background.MARKER_ROOT_ENV: str(root),
+    }
+    chat_id = run_in_background.own_chat_id(worker_environ)
+    marker = run_in_background.marker_path(worker_environ, chat_id, "run-tests")
+    run_in_background.write_marker(
+        marker, "run-tests", "Run the tests", ["just", "test"], os.getpid()
+    )
+
+    def _is_idle() -> bool:
+        return create_worker._worker_is_idle(
+            "demo", _WaitingWorkerRunner(), pending_shed_check=lambda _name: False
+        )
+
+    assert _is_idle() is False
+    marker.unlink()
+    assert _is_idle() is True

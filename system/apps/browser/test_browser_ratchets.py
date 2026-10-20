@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from imbue.imbue_common.ratchet_testing import standard_ratchet_checks as rc
+from imbue.imbue_common.ratchet_testing.ratchets import check_no_type_errors
 from inline_snapshot import snapshot
 
 _DIR = Path(__file__).parent
@@ -42,7 +43,7 @@ def test_prevent_time_sleep() -> None:
     # xinput.py's XTEST device-recycle settle (on its own capture thread), and
     # mediastream.py's _await_clipboard_owned
     # poll in the Flask request thread (confirms xclip has claimed the X selection before
-    # injecting Ctrl+V, so paste success is truthful). All are real hardware/display/daemon
+    # Ctrl+V is pressed in the tab over CDP, so paste success is truthful). All are real hardware/display/daemon
     # settles, not event-loop sleeps.
     # +3 for chrome_launcher.py, which owns the Chromium process directly now that
     # browser-use is gone: the debug-port poll (Chromium publishes DevToolsActivePort
@@ -82,7 +83,7 @@ def test_prevent_broad_exception_catch() -> None:
     #    drives Chromium over cdp-use, whose errors are NOT a fixed subclass of the
     #    _BROWSER_ERRORS tuple, so a narrow catch could let a CDP hiccup wedge the single
     #    event loop. These are bounded (asyncio.wait_for) and best-effort by design.
-    #  * 4 in xinput.py: XTEST injection is
+    #  * 3 in xinput.py: XTEST injection is
     #    best-effort and must never raise into the /stream request thread.
     #  * 3 in xclipboard.py: the XFixes monitor
     #    runs on its own thread against a python-xlib connection whose errors are an open
@@ -114,7 +115,7 @@ def test_prevent_broad_exception_catch() -> None:
     #    the browser in `init` while it holds its name and a slot against the fleet cap
     #    forever, with Chromium and Xvfb still running and the viewer stuck on "Starting".
     #    It re-raises as BrowserStartupError, which is what actually tears the browser down.
-    rc.check_broad_exception_catch(_DIR, snapshot(31))
+    rc.check_broad_exception_catch(_DIR, snapshot(30))
 
 
 def test_prevent_builtin_exception_raises() -> None:
@@ -125,20 +126,7 @@ def test_prevent_builtin_exception_raises() -> None:
 
 
 def test_prevent_inline_imports() -> None:
-    # +2 (MISFIRE) for names.py's module-level `try: from imbue.mngr... except
-    # ImportError: <local fallback>` block. This is the canonical optional-dependency
-    # pattern (the mngr name generator is reused when importable, with a tiny local
-    # word-pair generator as the fallback so the browser lib stands alone). The two
-    # imports are at MODULE level, not "inline within functions" -- the rule's actual
-    # target -- but the regex matches them because a `try` body is indented. Done once
-    # at import time (a `_generate` callable is bound), so the importability check costs
-    # nothing per call. Making the regex distinguish module-level try/except ImportError
-    # from function-inline imports risks missing real violations, so this is bumped.
-    # +1 (same MISFIRE shape) for telemetry.py's `try: import psutil except ImportError`
-    # optional-dependency guard -- a module-level import the regex flags only because the
-    # try body is indented; the resource sampler degrades gracefully when psutil is absent.
-    # Down from 3: two of the flagged imports were browser-use's, and went with it.
-    rc.check_inline_imports(_DIR, snapshot(1))
+    rc.check_inline_imports(_DIR, snapshot(0))
 
 
 def test_prevent_relative_imports() -> None:
@@ -170,3 +158,6 @@ def test_prevent_asyncio_import() -> None:
 def test_prevent_dataclasses_import() -> None:
     rc.check_dataclasses_import(_DIR, snapshot(0))
 
+
+def test_no_type_errors() -> None:
+    check_no_type_errors(_DIR)

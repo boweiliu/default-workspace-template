@@ -1,6 +1,6 @@
 ---
 name: update-self
-description: Safely pull updates from the upstream template repo (default target is the release the running Mind app was built against). Use when you want to incorporate upstream skills, script fixes, or config improvements. For pushing local improvements back upstream, use the `submit-upstream-changes` skill instead.
+description: Safely pull updates from the upstream template repo (default target is the release the running Imbue Studio app was built against). Use when you want to incorporate upstream skills, script fixes, or config improvements. For pushing local improvements back upstream, use the `submit-upstream-changes` skill instead.
 metadata:
   author: imbue
 ---
@@ -26,7 +26,7 @@ still wait for the user: an `--override` past the version ceiling (asked at
 launch, while they are present) and an update that cannot keep something they
 built (the Step 4 hold).
 
-The default target is **the release the Mind app driving this workspace was
+The default target is **the release the Imbue Studio app driving this workspace was
 built against**, and only that one: the template ships the code that app talks
 to, and no other pairing was verified. See `references/version-ceiling.md`. Once the target is resolved,
 the pass **re-points itself at the target version's own copy of this skill**
@@ -37,18 +37,21 @@ Address that path by literal each time (each bash invocation is a fresh shell).
 
 ## 1. Preconditions
 
-**Back up first.** Capture a restore point of the whole workspace; it is the
-last-resort recovery path if the apply's own rollback and `recover` both fail:
+**Check the backup first.** The backup service's periodic restore point of the
+whole workspace is the last-resort recovery path if the apply's own rollback
+and `recover` both fail. Confirm there is a recent one; this reads the
+service's log and waits for nothing:
 
 ```bash
-uv run host-backup-now
+uv run host-backup-now --check
 ```
 
-Exit 0 means `restic_backup_succeeded`; 3 (not configured), 1 (failed) and 2
-(outcome not observable) mean there is **no** confirmed restore point. **None
-of them blocks the pass**: note which it was, carry it into the results message
-as a caveat, and continue -- git still holds every version of the tree. Do not
-stop to ask for a go-ahead.
+Exit 0 means a recent `restic_backup_succeeded`; 3 (not configured), 1 (no
+recent success: the service is down or its ticks fail) and 2 (not observable)
+mean there is **no** confirmed restore point. **None of them blocks the
+pass**: note which it was, carry it into the results message as a caveat, and
+continue -- git still holds every version of the tree. Do not stop to ask for
+a go-ahead.
 
 **Take the "updating workspace" lease.** One update flow at a time (worker
 name, branch and runtime dir are fixed, and two applies must never interleave).
@@ -71,7 +74,7 @@ UPDATE_LEASE_ID=$(tk create "updating workspace" -t chore \
 
 then `tk start "$UPDATE_LEASE_ID"`.
 
-**Record the run for the Mind app** -- as soon as the lease is yours, so the
+**Record the run for the Imbue Studio app** -- as soon as the lease is yours, so the
 app can see a run is under way:
 
 ```bash
@@ -107,7 +110,7 @@ with open('system/config/parent.toml', 'rb') as f:
 if [ -f "$(git rev-parse --git-common-dir)/shallow" ]; then
     git fetch --unshallow upstream
 fi
-git fetch upstream --tags
+git fetch upstream --tags --force
 
 python3 .agents/skills/update-self/scripts/update_self.py resolve-target --local-tags \
     > /tmp/update-self-target.json || exit 1
@@ -118,9 +121,10 @@ REF=$(python3 -c 'import json; print(json.load(open("/tmp/update-self-target.jso
 `--local-tags` reads the tags the fetch just landed. To honor a user override,
 append `--override main` or `--override minds-v0.3.6`. The `|| exit 1` leaves a
 refusal's `error:` line as the last thing printed. The output carries `ref`,
-`kind`, `ceiling` and `exceeds_ceiling`; `main` resolves to `upstream/main`.
+`kind`, `ceiling` and `exceeds_ceiling`; an upstream branch name such as `main`
+resolves to `upstream/main`.
 Tell the user which version you are updating to, and never mention a release
-above `ceiling` that they did not ask for by name: the Mind app announces its
+above `ceiling` that they did not ask for by name: the Imbue Studio app announces its
 own updates.
 
 **If the command exits non-zero, stop.** Its single `error:` line says why no
@@ -140,13 +144,15 @@ record the verdict it calls for -- never resolve a ref by hand:
 **`"exceeds_ceiling": true`** means the user's `--override` names a version
 this app cannot vouch for. Do not dispatch on it silently: tell them what it
 risks and get an explicit go-ahead, unless the message that started this pass
-already carries that confirmation (the Mind app's "Update to a specific
+already carries that confirmation (the Imbue Studio app's "Update to a specific
 version" prompt says so). If they decline, record `run-status verdict REFUSED
 --detail "<the version they asked for, and that they chose not to attempt
 it>"` and end the pass. Details in `references/version-ceiling.md`.
 
 To preview what the release changes, diff from the merge base (`git diff
---name-status "$(git merge-base HEAD "$REF")" "$REF"`), never from `HEAD`.
+--name-status "$(git merge-base HEAD "$REF")" "$REF"`), never from `HEAD`. A
+workspace that predates the template's history rewrite has no merge base until
+Step 3a bridges it, so its preview waits until then.
 
 ### 2a. Hand off to the target's own update-self flow
 
@@ -154,12 +160,16 @@ Stage the skill as it exists at `$REF` (from the fetched objects; no network,
 no working-tree mutation) and learn whether it differs from your local copy:
 
 ```bash
-DIFFERS=$(python3 .agents/skills/update-self/scripts/update_self.py bootstrap-skill --ref "$REF" \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["differs"])')
+python3 .agents/skills/update-self/scripts/update_self.py bootstrap-skill --ref "$REF" \
+    > /tmp/update-self-bootstrap.json || exit 1
+DIFFERS=$(python3 -c 'import json; print(json.load(open("/tmp/update-self-bootstrap.json"))["differs"])')
 echo "differs=$DIFFERS"
 ```
 
-`bootstrap-skill` always leaves a runnable flow at the staging path (the
+**If it exits non-zero, stop.** Its `error:` line says `$REF` names no commit
+here; handle it as a Step 2 error.
+
+Otherwise `bootstrap-skill` has left a runnable flow at the staging path (the
 target's copy, or the local copy when the ref predates the skill), so the
 worker runs from there regardless. `differs` decides only which prose *you*
 follow next:
@@ -201,17 +211,31 @@ matches the target.
 capped ref; if they take it, set `$REF` to it and re-run §2a the same way. If
 they decline every option, record `run-status verdict REFUSED --detail "..."`.
 
-### 3b. Launch
-
-Surface your own chat window first (the Mind app sends the user into this
-workspace when it starts an update, and this conversation is where they should
-land). The command detaches a helper that retries until a client is there; it
-is best-effort, and a failure is not a reason to stop:
+**Then bridge an old workspace to the target's history.** The template's
+history was rewritten once, so a workspace created before that shares no commit
+with `$REF` and the worker's merge would have no base. This grafts the
+workspace's fork point onto its rewritten twin in `$REF` for the rest of this
+pass; the workspace's own history is not touched, and for every other workspace
+it changes nothing. Fetch the tags again first, forced: an older copy of Step 2
+cannot move a tag this workspace already holds, and the bridge must be built
+against the commit the worker will merge:
 
 ```bash
+git fetch upstream --tags --force
 python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scripts/update_self.py \
-    surface-chat-tab --chat-id "${MINDS_CHAT_ID:-$MNGR_AGENT_ID}"
+    bridge-history --ref "$REF" || exit 1
 ```
+
+Either `"bridged"` value needs nothing from the user. If it exits non-zero, it
+built no bridge: record `run-status verdict STUCK --detail "<the error line, in
+plain terms>"`, surface it, and stop. From here on, a pass that ends for any
+reason drops the bridge first (Step 6's opening command); a retry rebuilds it.
+
+### 3b. Launch
+
+Do not open a window for your own chat: when the Imbue Studio app starts an
+update, the chat app already shows this conversation in the user's pinned chat
+window.
 
 Open a tracking ticket (note the id it prints), then `tk start <ticket-id>` as
 its own tool call:
@@ -311,8 +335,12 @@ git branch -m mngr/update-self "$ARCHIVE" && echo "$ARCHIVE"
 ```
 
 Launch with the plain `worker` template, record the hand-off (from here until
-the worker reports this chat is idle, and naming the worker lets the Mind app
-read the worker's liveness instead of "waiting for you"), then background-poll:
+the worker reports, this chat has ended its turn but is busy on the poll below,
+so the Imbue Studio app reads it as updating rather than "waiting for you";
+naming the worker lets the app read the worker's liveness as well), then
+background-poll through `run_in_background.py`, which delivers `await`'s result
+to this chat as a message that starts your next turn, whatever your harness. Run
+the staged skill's copy of it: this workspace's own tree may predate the script.
 
 ```bash
 uv run .agents/skills/launch-task/scripts/create_worker.py launch \
@@ -326,15 +354,16 @@ python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scrip
 ```
 
 ```bash
-# Run with Bash run_in_background: true
-uv run .agents/skills/launch-task/scripts/create_worker.py await \
+python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scripts/run_in_background.py \
+    --description "Wait for the update's background agent" -- \
+    uv run .agents/skills/launch-task/scripts/create_worker.py await \
     --name update-self --task-file data/.tasks/update-self/task.md --timeout 90m
 ```
 
-Once the poll is armed, **end your turn**; its completion wakes you with the
-report. Never wait on the worker any other way -- no `sleep`, no polling its
-reports directory or its pane -- see "Never sleep on a worker" in
-`.agents/shared/references/lead-proxy.md`.
+Once the poll is armed, **end your turn**; its message wakes you with the
+report. Re-arm with the same command. Never wait on the worker any other way
+-- no `sleep`, no polling its reports directory or its pane -- see "Never sleep
+on a worker" in `.agents/shared/references/lead-proxy.md`.
 
 ## 4. Proxy the `question` gate
 
@@ -357,15 +386,16 @@ report, re-arm the poll.
    question about whether its impact analysis runs, whether a validation item
    runs, or whether and at what scope the review gates run. Answer it by the
    rule it names as written; where the rule is silent, the fallback is more
-   coverage, never less. Escalate only if it contains a real question of user
-   intent.
+   coverage, never less. A `select-tests` output is not silence: what it
+   printed for a commit is that commit's whole gate. Escalate only if it
+   contains a real question of user intent.
 3. **A customization hold** (its §4b verdict): something the user built that
    the update **cannot keep**, after the worker genuinely tried to re-fit it.
    This is the one gate that reaches the user; see below. A cosmetic shift
    (the widget moved but still works) is not a hold: it applies unattended
    and is named in the results message with an offer to restore.
 
-For the hold, record it first, so the app can say what the machine is waiting
+For the hold, record it first, so the app can say what the workspace is waiting
 on (the detail line is shown in the app's modal, so write it for the user):
 
 ```bash
@@ -393,14 +423,15 @@ carry on into §5 and get their verdict there.
 ## 5. Terminal status
 
 - **`stuck`** or a dead-worker timeout -> surface per
-  `.agents/skills/launch-task/references/worker-failure.md`. Nothing is merged
+  `.agents/skills/launch-task/references/worker-failure.md` (if the user
+  then overrides, see "Resuming after `stuck`" below). Nothing is merged
   or applied. Compose it as a plain-language lead ("I couldn't complete this
   update cleanly; your workspace is untouched") followed by a clearly-marked
   technical block with the specifics **verbatim** (target ref, failing step,
   the error text, a pointer to `data/.tasks/update-self/reports/`) -- this is
   the one message where detail is preserved, because it gets pasted into bug
   reports. Record `run-status verdict STUCK --detail "<one plain line on what
-  failed>"`.
+  failed>"`, and drop the history bridge as Step 6 opens.
 - **`done`** -> the audit below.
 
 ### 5a. Audit the report
@@ -408,11 +439,13 @@ carry on into §5 and get their verdict there.
 The worker contract (the staged copy's `references/update-self-worker.md`,
 §4a, §4b, §4c and §6) makes the impact analysis, the validation scope and the
 review gates rule-driven and the report evidence-bearing. It must show which
-branch of the 4a and 4b rules applied (the footprint evidence, and each
-validation item's condition and whether it held), and either show the
-clean-pull skip's three conditions held (`has_merge_work: false`, no impacted
-user-created code, no worker-authored in-branch edits beyond a retry's
-rollback revert, shown by an empty diff against the landed merge) or carry
+branch of the 4a and 4b rules applied (the footprint evidence --
+`has_local_footprint`, and per creation the scope files' verdicts when it is
+true -- and each validation item's condition and whether it held), and either
+show the clean-pull skip's three conditions held (`has_merge_work: false`, no
+impacted user-created code, no worker-authored in-branch edits beyond Step 1's
+rollback reverts as git made them or with a `both added` file taken at the
+target's version, shown by an empty diff against the landed merge) or carry
 the gate run's own evidence (fix commits kept or reverted, or a clean run,
 plus architecture-gate verdicts); a side-picked conflict must carry the
 discarded-side accounting. A report missing any of this -- including one that
@@ -420,8 +453,8 @@ openly discloses skipping a gate outside the rule -- goes back to the worker
 via the Step 4 cycle (say what is missing, consume the report into
 `data/.tasks/update-self/reports/consumed/`, re-arm). Do not run the apply
 over the gap. A deviation stands only when the worker is gone and the gap
-cannot be closed from here, and then the results message states it plainly
-as a caveat.
+cannot be closed from here, and then the results message states it plainly as
+a caveat.
 
 There is no approval gate: the audit, not the user, authorizes the apply. The
 `done` report is your raw material, not the user's message; the results
@@ -429,22 +462,35 @@ message is composed *after* the apply, per `references/results-message.md`.
 
 ### 5b. Apply the update (one atomic motion)
 
-**Rebuild-only findings do not block the apply**; they become leading caveats
-of the results message (a global-dependency bump coupled to a user-created
-dependent: name it, check it, offer rollback or a workspace recreate; a
+**Rebuild-only findings do not block the apply**, and neither does a
+user-created dependent the worker could not verify; they become leading
+caveats of the results message (a global-dependency bump coupled to a
+user-created dependent: name it, check it after the apply, offer rollback or a
+workspace recreate; a
 container build/launch parameter a running container cannot adopt: say it
 stays inert until a recreate). A genuinely breaking case takes the migration
 path below instead.
 
 **When the update touches a critical app (`system/apps/system_interface/`,
-`system/apps/chat/`, `system/apps/terminal/`), `system/apps/getting_started/frontend/`,
-`system/libs/workspace_ui/`, or
-`system/package.json` / `system/package-lock.json` at all** (the trees the
-critical bundles are built from, the same set the careful flow's freshness
-check names), also take the `editing critical apps` lease through the apply, as
-`update-app/references/critical-app.md` does: check `tk ready` for a foreign one
-(surface instead of proceeding), then `tk create "editing critical apps" -t
-chore` and `tk start` it, each as its own command. Release it afterwards.
+`system/apps/chat/`, `system/apps/terminal/`, `system/apps/terminal_pty/`),
+`system/apps/getting_started/frontend/`, `system/apps/files/frontend/`,
+`system/libs/workspace_ui/`, `system/libs/workspace_layout/`, or
+`system/package.json` / `system/package-lock.json` at all** (every critical
+app's tree, plus the Getting Started and Files frontends, the shared library,
+and the npm files, whose change rebuilds every frontend bundle, and the layout
+wire contract the critical apps run), also take the `editing
+critical app <name>` lease for each critical app it touches through the apply,
+as `update-app/references/critical-app.md` does (`<name>` is the app's
+`app.toml` name, so `system/apps/terminal_pty/` is `terminal-pty`; the Getting
+Started and Files frontends, `workspace_ui`, and the npm files count as both
+`system_interface` and `chat`; `workspace_layout` counts as `system_interface`,
+`chat`, and `terminal`). Take them all or none, as that reference says:
+check each one in `tk ready` (`grep -E -- "- editing critical app <name>$"`,
+anchored so `terminal` does not match `terminal-pty`'s lease), take them in
+name order (`tk create "editing
+critical app <name>" -t chore`, then `tk start` it, each as its own command),
+and if any is held by another agent, release the ones you took and surface it
+instead of proceeding. Release them afterwards.
 
 The apply run from here keeps its own run record and raises no "recently
 updated" notice: `--keep-rollback-point` is the careful flow's, not this one's.
@@ -459,9 +505,9 @@ python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scrip
 ```
 
 When the report names the worker's **built frontend bundles** (the shell's
-`static/`, the chat app's, and the Getting Started app's), append
+`static/`, the chat app's, the Getting Started app's, and the Files app's), append
 `--worker-bundle system_interface=<path> --worker-bundle chat=<path>
---worker-bundle getting_started=<path>` so the exact builds the worker validated
+--worker-bundle getting_started=<path> --worker-bundle files=<path>` so the exact builds the worker validated
 are installed instead of a live build; the apply installs them only as a set (one
 `npm run build` emits them all), and builds live when any is missing or stale.
 
@@ -494,9 +540,9 @@ Exit codes:
   with the kept pre-apply copies under `data/.state/update-apply/snapshots/`.
 - **`1` -- precondition; nothing changed** (dirty tree, `HEAD` moved under the
   pass, another apply in flight, this merge already landed and rolled back, or
-  a re-merge of a rolled-back target that does not revert the rollback commit
-  first). Re-dispatch a fresh worker pass off the current `HEAD`; the refusal
-  names the commit to revert.
+  a merge that does not first revert an earlier update's rollback commit).
+  Re-dispatch a fresh worker pass off the current `HEAD`; the refusal names the
+  commits to revert.
 
 What each outcome means for the user, the `provision-incomplete` and
 `emergency.json` records, an interrupted apply (re-run the same command; it
@@ -515,19 +561,57 @@ resumes), and how to honor a rollback request are in
   image-level hunk needs a manual workspace rebuild -- say so.
 - **Rebuild-only flags** -- surface as needing a workspace recreate; never
   imply they are live.
+- **User apps without `stop_when_no_windows`** -- the shell stops an app
+  whose manifest declares `stop_when_no_windows = true` a minute after its
+  last window closes and starts it again on the next request (the build-app
+  skill says which apps should carry it). A manifest without the field reads
+  as `false`, so an app built before the field existed keeps running for the
+  life of the workspace, as it always did. Do not add the field
+  mechanically. For each `system/apps/*/app.toml` that is the user's and
+  lacks it, read the app: if it only answers requests, add
+  `stop_when_no_windows = true` and restart its program so the registration
+  carries it; if it does work between requests (a background thread, a
+  poller or scheduled refresh, a subscription to an outside service, a job
+  that outlives the window, an API another agent drives with no window),
+  add `stop_when_no_windows = false` with a comment saying why, so the next
+  pass does not ask again. Name each decision in the results message.
 
 ### 5d. Escalate the built-in defects this pass found
 
 Before composing the results message, collect every finding the worker labelled
 a `submit-upstream-changes` candidate, plus any other defect in built-in code
-you hit this pass (a failing built-in test, a step of this flow that broke and
-had to be worked around). Escalate them together as AGENTS.md's "Updates"
+you hit this pass (a failing built-in test, a built-in test the worker's
+Validation names as flaky, a step of this flow that broke and had to be worked
+around). Escalate them together as AGENTS.md's "Updates"
 section describes -- one report via
 `.agents/shared/references/report-built-in-issues.md`, or
 `submit-upstream-changes` for a template fix -- or name each in the results
-message with the submission offered.
+message with the submission offered. A flaky test of a creation the workspace
+built is not built-in: file a regular ticket for it (`tk create`).
 
 Then compose the results message per `references/results-message.md`.
+
+## Resuming after `stuck`
+
+When the user overrides a `stuck` verdict, resume the same pass with the same
+worker as `.agents/shared/references/lead-proxy.md` ("Resuming after the user
+overrides a failure") says. This flow's preconditions, re-taken before the
+`reply`, each `tk` call as its own command:
+
+1. The `updating workspace` lease, exactly as Step 1 takes it.
+2. The run record, and the target the task file carries:
+
+   ```bash
+   python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scripts/update_self.py \
+       run-status start
+   REF=$(sed -n 's/^target_ref: //p' data/.tasks/update-self/task.md)
+   ```
+
+3. The history bridge, with Step 3a's two commands (the forced tag fetch,
+   then `bridge-history --ref "$REF"`).
+
+After the `reply`, `run-status delegate update-self` before the `await` poll,
+as Step 3b does.
 
 ## Migration-required updates
 
@@ -543,12 +627,20 @@ exists, offered in the same breath).
 
 ## 6. Teardown
 
+Drop the history bridge, whatever the outcome (a no-op when Step 3a built none;
+a retry rebuilds it):
+
+```bash
+python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scripts/update_self.py \
+    bridge-history --drop
+```
+
 If a stray preview of a critical app is registered (an older pass may have left
 one; the careful flow refuses its next pass on that app while one is), tear it
 down with the preview script and close its window:
 
 ```bash
-python3 system/scripts/layout.py close <name>-preview
+uv run --no-sync workspace-layout close <name>-preview
 uv run python3 .agents/skills/update-app/scripts/preview_app.py down --app <name>
 ```
 
@@ -586,7 +678,7 @@ mngr stop update-self
 ```
 
 Release the leases and close the ticket last, each as its own tool call: `tk
-close` the `editing service system_interface` lease if 5b took one, then the
+close` each `editing critical app <name>` lease 5b took, then the
 `updating workspace` lease (`tk close "$UPDATE_LEASE_ID" "Update pass
 finished."`), then `tk close <ticket-id> "Updated to <ref> -- worker branch
 merged and applied."`, adding the `archive/update-self-<timestamp>` name when

@@ -60,12 +60,12 @@ REFUSED --detail "<what failed, one plain line>"`.
 
 Because the rollback is a forward revert, the merge stays in history while its
 content does not, and re-running the apply of that same merge is refused. A
-retry means a fresh worker pass off the current `HEAD`, and that pass must
-revert the rollback commit before it merges (the worker reference says how):
-git counts the reverted content as already merged, so a plain re-merge of the
-same target lands only what the target gained since the failed attempt. The
-apply refuses such a merge ref (exit 1, nothing changed), naming the rollback
-commit to revert.
+retry means a fresh worker pass off the current `HEAD`, and that pass -- like any
+later pass, to this release or a newer one -- must revert the rollback commit
+before it merges (the worker reference says how): git counts the reverted
+content as already merged, so a plain merge lands only what the target changed
+since. The apply refuses a merge ref that leaves the rollback in place (exit 1,
+nothing changed), naming the commits to revert.
 
 ## Exit 3 -- emergency
 
@@ -136,7 +136,8 @@ python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scrip
 restart and health-probe motion the update got. Two residues to mention when
 they matter: the apt snapshot advanced by `env-converge upgrade` stays
 advanced, and the version-history entry stays (the revert is its own history).
-The full-rewind fallback is the Step 1 backup, when one was captured.
+The full-rewind fallback is the backup service's restore point, when Step 1
+confirmed a recent one.
 
 ## Migration-required updates
 

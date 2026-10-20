@@ -38,6 +38,8 @@ export const MODEL_SUBMENU_MAX_HEIGHT =
 export const TRIGGER =
   "flex h-[30px] items-center gap-1 rounded-lg px-2 type-helper whitespace-nowrap " +
   "text-faint transition-colors hover:bg-fill-hover hover:text-secondary cursor-pointer";
+/** The trigger's shape with nothing to open: a chat with no agent yet names its account. */
+export const PROVISIONAL_CHIP = "flex h-[30px] items-center rounded-lg px-2 type-helper whitespace-nowrap text-faint";
 /** The separators between the chip's parts, a step quieter than the values. */
 export const TRIGGER_DOT = "text-faint/60";
 
@@ -92,6 +94,28 @@ export const SLIDER =
   "[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-surface " +
   "[&::-webkit-slider-thumb]:shadow-[0_0_0_1px_rgba(0,0,0,0.15),0_1px_2px_rgba(0,0,0,0.25)]";
 
+// The phone layout
+/** The button at the composer's left that opens the card in the phone layout: as tall as the
+ *  composer's one-line box, and lit while its card is up. */
+export const SETTINGS_BUTTON =
+  "flex h-11 w-10 shrink-0 items-center justify-center rounded-xl text-secondary transition-colors " +
+  "hover:bg-fill-hover hover:text-primary aria-expanded:bg-fill-hover aria-expanded:text-primary cursor-pointer";
+/** The effort segments' row: the label over the segments, since the levels side by side need
+ *  the card's whole width. */
+export const EFFORT_SEGMENTS_ROW = "flex flex-col items-stretch gap-2 px-3 pt-1 pb-2";
+/** A segmented control's well, on which the chosen segment sits raised. Its padding and gap are
+ *  each size's own, below. */
+const SEGMENTS_WELL = "flex rounded-lg border border-default bg-surface-secondary";
+const SEGMENT_SHAPE =
+  `flex min-w-0 items-center justify-center rounded-md ${MENU_ROW_FOCUS} ` +
+  "disabled:cursor-not-allowed disabled:opacity-50";
+const SEGMENT_OFF = "text-secondary hover:bg-fill-hover cursor-pointer";
+const SEGMENT_ON = "bg-surface font-semibold text-primary shadow-raised";
+export const EFFORT_SEGMENTS = `${SEGMENTS_WELL} gap-1 p-[3px]`;
+const EFFORT_SEGMENT_SHAPE = `${SEGMENT_SHAPE} h-[34px] flex-1`;
+export const EFFORT_SEGMENT = `${EFFORT_SEGMENT_SHAPE} ${SEGMENT_OFF}`;
+export const EFFORT_SEGMENT_ON = `${EFFORT_SEGMENT_SHAPE} ${SEGMENT_ON}`;
+
 // The switch
 /** The switch comes in two sizes, and a size is a track plus its throw, handed out together:
  *  a track scaled on its own leaves the knob's `translate-x-[...]` throw sized for the old
@@ -107,16 +131,11 @@ const SWITCH_SIZES = {
 
 export type SwitchSize = keyof typeof SWITCH_SIZES;
 
-/** The track. Colour is the caller's -- `SWITCH_ON` / `SWITCH_OFF` below.
- *
- *  `isInert` is for a switch ALREADY at the only position it can hold, which is settled rather
- *  than unavailable: it keeps its full colour and only loses the pointer. The `disabled:` fade
- *  is for the other thing -- a switch that cannot be used yet because what it toggles has not
- *  loaded. The cursor is a parameter because a caller cannot override one from outside. */
-export function switchClass(size: SwitchSize, isInert = false): string {
+/** The track. Colour is the caller's -- `SWITCH_ON` / `SWITCH_OFF` below. */
+export function switchClass(size: SwitchSize): string {
   return (
     `relative inline-flex ${SWITCH_SIZES[size].track} shrink-0 items-center rounded-full transition-colors ` +
-    `${isInert ? "cursor-default" : "cursor-pointer"} ` +
+    "cursor-pointer " +
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent " +
     "disabled:cursor-not-allowed disabled:opacity-50"
   );
@@ -221,9 +240,17 @@ export const FAST_LIMIT_FIELD = "inline-flex w-[72px] shrink-0";
 export const FAST_LIMIT_INPUT_EXTRA =
   "fast-limit-input h-6 px-2 py-0 text-right text-(length:--font-size-row) " +
   "[&::-webkit-inner-spin-button]:opacity-100 [&::-webkit-inner-spin-button]:ml-1.5";
-/** The default row: a label and the switch that makes this mode the one new chats start in. Laid
- *  out like the limit row above it, so the two settings under the modes read as a pair. */
-export const FAST_DEFAULT_ROW = `fast-mode-default ${ROW_STATIC}`;
+/** "New chats start with" and the choices it can name, at the foot of the fast-mode and
+ *  auto-compact submenus. Laid out like the limit row, so the settings under the choices read as
+ *  a set; `whitespace-nowrap` because the label and the segments are one line. */
+export const DEFAULT_ROW = `${ROW_STATIC} whitespace-nowrap`;
+/** The default row's segments: the segmented control at a size that ends a row the height of the
+ *  others, since a 24px segment in a 2px-padded, bordered well is 30px of the row's 32. A fixed
+ *  width per segment, so the chosen one's heavier weight does not shift its neighbours. */
+export const DEFAULT_SEGMENTS = `${SEGMENTS_WELL} ml-auto shrink-0 gap-0.5 p-[2px]`;
+const DEFAULT_SEGMENT_SHAPE = `${SEGMENT_SHAPE} h-6 w-10 text-(length:--font-size-helper)`;
+export const DEFAULT_SEGMENT = `${DEFAULT_SEGMENT_SHAPE} ${SEGMENT_OFF}`;
+export const DEFAULT_SEGMENT_ON = `${DEFAULT_SEGMENT_SHAPE} ${SEGMENT_ON}`;
 
 /** The sign-out control: a SIBLING of the row button (buttons cannot nest), floated over the
  *  row's reserved right padding. It takes the row's LAST lane, the one the tick occupies at

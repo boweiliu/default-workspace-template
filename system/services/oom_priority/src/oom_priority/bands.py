@@ -1,9 +1,14 @@
 """Memory-shedding priority bands and the helper that writes them.
 
 Each process is assigned to one band by writing its ``oom_score_adj`` once at
-startup. earlyoom reads ``/proc/<pid>/oom_score`` (the kernel badness, which
-already folds in ``oom_score_adj``) to pick its victim, so a higher band makes a
-process more likely to be shed first.
+startup. The workspace runs the imbue-ai fork of earlyoom, which picks its
+victim by the kernel's badness computed from each process's ``oom_score_adj``
+and memory -- ``VmRSS + VmSwap + VmPTE + oom_score_adj * (MemTotal + SwapTotal)
+/ 1000``, with the smaps Anonymous total in place of VmRSS under gVisor --
+rather than reading ``/proc/<pid>/oom_score``, which gVisor serves as 0 for
+every process. So a higher band makes a process more likely to be shed
+first, under gVisor and runc alike: one band point is worth MemTotal/1000 of
+memory.
 
 Bands are positive-only. A negative ``oom_score_adj`` (true "never kill") would
 require ``CAP_SYS_RESOURCE``, which the container's default capability set does
@@ -185,8 +190,9 @@ def chat_agent_oom_score_adj(
 # hurts: the two authority paths into the workspace (owner-exec, then the
 # terminal) come first, then the UI and the chat app, then the sharing stack,
 # then the runtime-state sync (github-sync, opt-in) and the host backup, then
-# the job scheduler and the app-watcher, then the browser stack (its X display,
-# then the coordinator), and last the file viewer.
+# the job scheduler, then the browser stack (its X display, then the
+# coordinator), then the Files app, and last the two single-page apps
+# (Getting Started, then Memory & disk).
 # ``user`` is the single band every *user-created* service shares;
 # it sits above every built-in service so a user's own service is shed before any
 # built-in one, while staying below USER_AGENT.
@@ -202,9 +208,10 @@ def chat_agent_oom_score_adj(
 # and are additionally shielded by earlyoom ``--avoid``.
 #
 # This is a best-effort steer, not a hard guarantee. earlyoom picks the highest
-# ``/proc/*/oom_score``, which folds each process's live memory usage in on top
-# of ``oom_score_adj``, so a large enough memory gap between two services can
-# still reorder adjacent bands. The order only decides which service goes when
+# badness, which adds each process's live memory usage on top of its
+# ``oom_score_adj`` (one band point is worth MemTotal/1000 of memory), so a
+# large enough memory gap between two services can still reorder adjacent
+# bands. The order only decides which service goes when
 # earlyoom is forced to shed inside the protected pool -- i.e. once everything
 # more expendable (browsers, agent subprocesses, agents, user services) is gone.
 USER_SERVICE: Final[int] = 200
@@ -248,7 +255,6 @@ SERVICE_BANDS: Final[dict[str, int]] = {
     # command is the stock ``/usr/sbin/cron`` binary, not a workspace entry
     # point), so this band reaches it via the backstop listener instead.
     "cron": 55,
-    "app-watcher": 60,
     # The shared X display Chromium renders into. Losing it breaks the browser
     # subsystem, so it is *less* expendable than the coordinator below -- whose
     # death Chromium survives -- but more so than the workspace's own services:
@@ -256,20 +262,23 @@ SERVICE_BANDS: Final[dict[str, int]] = {
     # (910-1000) is long gone and this display is holding nothing.
     "xvfb": 65,
     # The browser coordinator: the daemon that launches and drives Chromium, not
-    # Chromium itself. The most expendable built-in service, but a *service*
+    # Chromium itself. An expendable built-in service, but a *service*
     # nonetheless -- it holds little memory, the Chromium processes it manages
     # outlive its death, and supervisord restarts it straight back into the same
     # session, so shedding it frees almost nothing. It therefore must stay well
     # below SHARED_BROWSER, where those Chromium processes live: a coordinator
     # ranked above them would be picked first every time and free nothing.
     "browser": 70,
-    # The file viewer: dufs, the tiny static file server the program runs
-    # directly. It holds little memory and supervisord restarts it if shed.
+    # The Files app: a small Flask server over the workspace's files. It
+    # holds little memory and supervisord restarts it if shed.
     "files": 75,
     # The Getting Started page: one static page and a cached catalog. A shed costs
-    # one reload of a window that shows nothing of the user's, so this is the most
-    # expendable built-in service of all.
+    # one reload of a window that shows nothing of the user's.
     "getting-started": 80,
+    # The Memory & disk page: one polling page that writes nothing to disk, so a
+    # shed costs a reload and the memory graph's last 10 minutes. The most
+    # expendable built-in service of all.
+    "system-monitor": 85,
     "user": USER_SERVICE,
     # The shell of a workspace terminal window (and everything run in it), tagged by the
     # terminal app's session command. Not a supervisord program: the pane is a child of the
@@ -345,6 +354,9 @@ def shared_browser_oom_score_adj(self_assigned: int) -> int:
 _NON_SERVICE_PROGRAM_BANDS: Final[dict[str, int]] = {
     "earlyoom": PROTECTED,
     "oom-tag-backstop": PROTECTED,
+    # Feeds earlyoom the container's cgroup headroom under runc; without it
+    # earlyoom cannot see the workspace's cap at all.
+    "publish_cgroup_meminfo": PROTECTED,
     "env-converge": PROTECTED,
     # A one-shot (autorestart=false) that registers the VM-resident owner-exec
     # service origin and exits; shedding it mid-run would leave the registration
@@ -353,7 +365,9 @@ _NON_SERVICE_PROGRAM_BANDS: Final[dict[str, int]] = {
 }
 
 
-def supervisord_program_band(program_name: str, priority_by_program: Mapping[str, str]) -> int:
+def supervisord_program_band(
+    program_name: str, priority_by_program: Mapping[str, str]
+) -> int:
     """The band a supervisord program is expected to occupy.
 
     ``priority_by_program`` is the app registry's view (``app_registry``): the

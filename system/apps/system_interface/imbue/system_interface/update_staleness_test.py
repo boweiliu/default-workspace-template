@@ -77,7 +77,7 @@ _IRRELEVANT_PATHS = (
         ("system/libs/bootstrap/src/bootstrap/manager.py", False),
         # The frontend: its bundle is rebuilt on disk without a restart.
         ("system/apps/system_interface/frontend/src/views/App.ts", False),
-        # Things minds commit constantly and are never staler for.
+        # Things agents commit constantly and are never staler for.
         ("docs/VERSION_HISTORY.md", False),
         (".agents/skills/update-self/SKILL.md", False),
         ("data-notes.md", False),
@@ -186,7 +186,7 @@ def test_tracker_reuses_the_moved_tree_verdict_while_head_is_unchanged(git_work_
 
 def test_tracker_ignores_moves_that_leave_this_server_current(git_work_dir: Path) -> None:
     # The workspace repo moves constantly for reasons the running server is
-    # fully current for: minds commit their ordinary work here, the apply's
+    # fully current for: agents commit their ordinary work here, the apply's
     # own version-history commit lands after the restart, and a frontend-only
     # apply rebuilds the served bundle without restarting. None of those may
     # show the banner -- a near-permanent false banner would erode the trust
@@ -466,6 +466,7 @@ def test_the_three_definitions_of_the_apply_state_paths_agree() -> None:
 _BANNER_SOURCE_REL = "system/apps/system_interface/frontend/src/views/UpdateStalenessBanner.ts"
 
 
+@pytest.mark.frontend
 def test_the_banner_has_a_message_for_every_variant_and_no_others() -> None:
     """The variant strings are written twice, once per language.
 

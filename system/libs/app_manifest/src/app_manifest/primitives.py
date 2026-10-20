@@ -1,5 +1,5 @@
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Final, Self
 from urllib.parse import quote
@@ -9,7 +9,7 @@ from imbue.imbue_common.pure import pure
 from pydantic import GetCoreSchemaHandler
 from pydantic_core import CoreSchema, core_schema
 
-from app_manifest.errors import InvalidManifestValueError
+from app_manifest.errors import InvalidManifestValueError, PageTemplateFieldError
 
 # The app-name rule is the registration script's rule (system/scripts/forward_port.py,
 # ``validate_service_name``): the name becomes the leading label of the app's origin
@@ -18,17 +18,19 @@ APP_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9_]+(?:-[a-z0-9_]
 MAX_APP_NAME_LENGTH: Final[int] = 32
 # ``localhost`` and ``auth`` are origin labels. The rest are the first label of every
 # standalone supervisord program with a hyphen in its name (``share-gateway``,
-# ``app-watcher``, ``owner-exec``, ``vm-exec-register``, ``host-backup``,
-# ``env-converge``, ``agent-observer``): an app named after one would claim that
-# program as its ``<name>-<role>`` sidecar. ``system/test_app_manifests.py`` keeps this
-# set in step with ``system/supervisord.conf``. ``github`` is the one it cannot see:
-# ``github-sync`` is only written once GitHub sync is enabled.
+# ``owner-exec``, ``vm-exec-register``, ``host-backup``, ``env-converge``,
+# ``agent-observer``; ``app`` stays reserved from the retired ``app-watcher``): an app
+# named after one would claim that program as its ``<name>-<role>`` sidecar.
+# ``system/test_app_manifests.py`` keeps this set in step with
+# ``system/supervisord.conf``. ``github`` is the one it cannot see: ``github-sync`` is
+# only written once GitHub sync is enabled.
 RESERVED_APP_NAMES: Final[frozenset[str]] = frozenset(
     {"localhost", "auth", "share", "app", "owner", "vm", "host", "env", "github", "agent"}
 )
 RESERVED_APP_NAME_PREFIXES: Final[tuple[str, ...]] = ("host-", "agent-")
 
 MAX_DISPLAY_NAME_LENGTH: Final[int] = 64
+MAX_APP_DESCRIPTION_LENGTH: Final[int] = 200
 
 LAUNCH_PATH_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 
@@ -48,6 +50,13 @@ ICON_SUFFIX: Final[str] = ".svg"
 
 # A name in a preview table: a port name or a copy key, referenced by placeholder.
 PREVIEW_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+# The <file> of data/.secrets/<file>.env, as the chat app's secret card writes it, and a
+# POSIX shell identifier for each variable the file sets (what `source` accepts).
+SECRET_FILE_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+ENV_VAR_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 # The workspace's naming scheme, as the chat app applies it to chats and the terminal to its
 # sessions: a user types a human-readable title, and the true name every path, session, and key
 # is built from is a deterministic canonical form of it. Everything that is neither a safe-name
@@ -134,6 +143,44 @@ class DisplayName(str):
         )
 
 
+class SecretFileName(str):
+    """The <file> of a data/.secrets/<file>.env an app runs under: a lowercase slug."""
+
+    def __new__(cls, value: str) -> Self:
+        if not SECRET_FILE_NAME_PATTERN.fullmatch(value):
+            raise InvalidManifestValueError(
+                f"invalid secret file {value!r}: names match ^[a-z0-9][a-z0-9-]{{0,63}}$ (the <file> of data/.secrets/<file>.env)"
+            )
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
+class EnvVarName(str):
+    """An environment variable a secret file sets: a POSIX shell identifier."""
+
+    def __new__(cls, value: str) -> Self:
+        if not ENV_VAR_NAME_PATTERN.fullmatch(value):
+            raise InvalidManifestValueError(
+                f"invalid variable name {value!r}: names are letters, digits and underscores, not starting with a digit"
+            )
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
 class LaunchPathId(str):
     """The id of a launch path an app declares: lowercase, starts alphanumeric, at most 32 characters."""
 
@@ -167,6 +214,36 @@ def _describe_launch_path_problem(value: str) -> str | None:
     return None
 
 
+@pure
+def _describe_one_line_problem(value: str, field_name: str, max_length: int) -> str | None:
+    """Why ``value`` cannot be one non-empty line of at most ``max_length`` characters, or None when it can."""
+    if not value.strip():
+        return f"{field_name} must not be empty"
+    if "\n" in value or "\r" in value:
+        return f"invalid {field_name} {value!r}: a {field_name} is a single line"
+    if len(value) > max_length:
+        return f"{field_name} must be at most {max_length} characters, got {len(value)}"
+    return None
+
+
+class AppDescription(str):
+    """One line saying what an app is for, in the person's terms: non-empty, at most 200 characters."""
+
+    def __new__(cls, value: str) -> Self:
+        problem = _describe_one_line_problem(value, "description", MAX_APP_DESCRIPTION_LENGTH)
+        if problem is not None:
+            raise InvalidManifestValueError(problem)
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
 class LaunchPathValue(str):
     """A path under an app's origin that a window opens at: rooted, no query string, nothing to escape."""
 
@@ -183,6 +260,121 @@ class LaunchPathValue(str):
         return core_schema.no_info_after_validator_function(
             cls, core_schema.str_schema()
         )
+
+
+# A message type an app may handle (desktop-interface contracts.md section 2): a lowercase prefix, a colon, and a
+# lowercase kebab-case name (``minds:focus-chat``, ``open:file``). The type says what the message means, not who
+# sends it. ``shell:`` is the app contract's own prefix, whose messages the shell answers itself.
+MESSAGE_TYPE_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z][a-z0-9]*:[a-z0-9]+(?:-[a-z0-9]+)*$")
+MAX_MESSAGE_TYPE_LENGTH: Final[int] = 64
+APP_CONTRACT_MESSAGE_PREFIX: Final[str] = "shell:"
+
+
+class MessageType(str):
+    """The type of a message an app handles: ``<prefix>:<kebab-name>``, at most 64 characters, never ``shell:``."""
+
+    def __new__(cls, value: str) -> Self:
+        if not MESSAGE_TYPE_PATTERN.fullmatch(value) or len(value) > MAX_MESSAGE_TYPE_LENGTH:
+            raise InvalidManifestValueError(
+                f"invalid message type {value!r}: a message type is a lowercase prefix, ':', and a lowercase "
+                f"kebab-case name, at most {MAX_MESSAGE_TYPE_LENGTH} characters"
+            )
+        if value.startswith(APP_CONTRACT_MESSAGE_PREFIX):
+            raise InvalidManifestValueError(
+                f"invalid message type {value!r}: '{APP_CONTRACT_MESSAGE_PREFIX}' is the app contract's own prefix"
+            )
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
+# A page template (a ``show`` message handler's page and each of its ``showing`` pages; desktop-interface
+# contracts.md section 2): a path under the app's origin with ``{field}`` placeholders the shell fills from the
+# message's fields, optionally ending in a fixed query string. A field's value is itself a rooted path (a file's),
+# so a template may start with a placeholder rather than a ``/``.
+PAGE_TEMPLATE_PLACEHOLDER_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
+_PAGE_TEMPLATE_QUERY_SAFE_CHARACTERS: Final[str] = "/?-._~!$&'()*+,;=:@"
+# What a field's value keeps as it is when the shell percent-encodes it, one path segment at a time: the
+# characters ``encodeURIComponent`` leaves alone, so a page the shell builds is spelled as a page's own links spell
+# it, and the one a window already shows is recognized.
+_PAGE_TEMPLATE_FIELD_SAFE_CHARACTERS: Final[str] = "!'()*"
+
+
+@pure
+def _describe_page_template_problem(value: str) -> str | None:
+    """Return why ``value`` cannot be a page template, or None when it can."""
+    if len(value) > MAX_LAUNCH_PATH_LENGTH:
+        return f"invalid page template {value!r}: at most {MAX_LAUNCH_PATH_LENGTH} characters"
+    if "#" in value:
+        return f"invalid page template {value!r}: no fragment"
+    path_part, _, query = value.partition("?")
+    if "{" in query or "}" in query or quote(query, safe=_PAGE_TEMPLATE_QUERY_SAFE_CHARACTERS) != query:
+        return f"invalid page template {value!r}: the query string is fixed, with nothing a URL would escape"
+    literal = PAGE_TEMPLATE_PLACEHOLDER_PATTERN.sub("", path_part)
+    if "{" in literal or "}" in literal:
+        return f"invalid page template {value!r}: a placeholder is '{{' a field name '}}', such as '{{path}}'"
+    if quote(literal, safe=_LAUNCH_PATH_SAFE_CHARACTERS) != literal:
+        return f"invalid page template {value!r}: nothing a URL would escape outside the placeholders"
+    if PAGE_TEMPLATE_PLACEHOLDER_PATTERN.match(path_part) is None and (
+        not path_part.startswith("/") or path_part.startswith("//")
+    ):
+        return f"invalid page template {value!r}: a page template starts with a single '/' or a placeholder"
+    return None
+
+
+class PageTemplate(str):
+    """A page of an app built from a message: a path with ``{field}`` placeholders and an optional fixed query."""
+
+    def __new__(cls, value: str) -> Self:
+        problem = _describe_page_template_problem(value)
+        if problem is not None:
+            raise InvalidManifestValueError(problem)
+        return super().__new__(cls, value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            cls, core_schema.str_schema()
+        )
+
+
+@pure
+def _percent_encoded_field_value(value: str) -> str:
+    return "/".join(quote(segment, safe=_PAGE_TEMPLATE_FIELD_SAFE_CHARACTERS) for segment in value.split("/"))
+
+
+@pure
+def render_page_template(template: PageTemplate, fields: Mapping[str, Any]) -> str:
+    """The page ``template`` names for a message's ``fields``: each placeholder replaced by its field's string value,
+    percent-encoded one path segment at a time. A value ending in ``/`` that the template follows with ``/`` joins it
+    as one slash, so ``{path}/`` of the root ``/`` is ``/``.
+
+    Raises PageTemplateFieldError when a field is missing or not a string, or when the result is not a rooted path.
+    """
+    path_part, separator, query = str(template).partition("?")
+
+    def _field_value(match: re.Match[str]) -> str:
+        name = match.group(1)
+        value = fields.get(name)
+        if not isinstance(value, str):
+            raise PageTemplateFieldError(f"the message's {name!r} field is missing or not a string")
+        encoded = _percent_encoded_field_value(value)
+        if encoded.endswith("/") and path_part.startswith("/", match.end()):
+            return encoded[:-1]
+        return encoded
+
+    page = PAGE_TEMPLATE_PLACEHOLDER_PATTERN.sub(_field_value, path_part) + separator + query
+    if not page.startswith("/") or page.startswith("//"):
+        raise PageTemplateFieldError(f"the page {page!r} built from {str(template)!r} is not a rooted path")
+    return page
 
 
 class PriorityName(str):
@@ -391,16 +583,9 @@ class ReferenceNote(str):
     """One line saying why a referenced artifact belongs to an app and which surface it uses."""
 
     def __new__(cls, value: str) -> Self:
-        if not value.strip():
-            raise InvalidManifestValueError("a reference note must not be empty")
-        if "\n" in value or "\r" in value:
-            raise InvalidManifestValueError(
-                f"invalid reference note {value!r}: a note is a single line"
-            )
-        if len(value) > _MAX_REFERENCE_NOTE_LENGTH:
-            raise InvalidManifestValueError(
-                f"a reference note must be at most {_MAX_REFERENCE_NOTE_LENGTH} characters, got {len(value)}"
-            )
+        problem = _describe_one_line_problem(value, "reference note", _MAX_REFERENCE_NOTE_LENGTH)
+        if problem is not None:
+            raise InvalidManifestValueError(problem)
         return super().__new__(cls, value)
 
     @classmethod

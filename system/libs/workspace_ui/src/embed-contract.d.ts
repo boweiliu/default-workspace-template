@@ -1,6 +1,6 @@
 /**
- * Type surface for the vendored minds embed contract module (see the vite
- * alias in vite.config.ts). The implementation is plain JS shipped by minds
+ * Type surface for the vendored Imbue Studio embed contract module (see the vite
+ * alias in vite.config.ts). The implementation is plain JS shipped by Imbue Studio
  * (mngr's `apps/minds/imbue/minds/desktop_client/static/embed_contract.js`);
  * this declaration mirrors its exports -- update both together.
  */
@@ -23,6 +23,23 @@ declare module "@minds/embed-contract" {
   export const FOCUS_CHAT: "minds:focus-chat";
   // The readiness announcement (contract v5). Probed like the two above.
   export const WORKSPACE_READY: "minds:workspace-ready";
+  // The pull-out window set (contract v6). Probed like the ones above.
+  export const POP_OUT_WINDOW: "minds:pop-out-window";
+  export const WINDOW_DRAG_STARTED: "minds:window-drag-started";
+  export const WINDOW_DRAG_ENDED: "minds:window-drag-ended";
+  export const DETACHED_WINDOWS: "minds:detached-windows";
+  export const EMBEDDER_CAPABILITIES: "minds:embedder-capabilities";
+  export const REATTACH_WINDOW: "minds:reattach-window";
+  export const TEAR_OUT: "minds:tear-out";
+  // The provider sign-in set (contract v7). Probed like the ones above.
+  export const PROVIDER_SIGN_IN: "minds:provider-sign-in";
+  export const PROVIDER_SIGN_IN_ACK: "minds:provider-sign-in-ack";
+  export const PROVIDER_SIGN_IN_END: "minds:provider-sign-in-end";
+  // The link a popup was turned into, and an external one the workspace hands back (contract v8). Probed like the
+  // ones above.
+  export const OPEN_LINK: "minds:open-link";
+  export const OPEN_EXTERNAL: "minds:open-external";
+  export const MAX_OPEN_LINK_URL_LENGTH: number;
 
   export const REQUEST_ID_PATTERN: RegExp;
   export const AGENT_ID_PATTERN: RegExp;

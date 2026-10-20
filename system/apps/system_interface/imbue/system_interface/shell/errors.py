@@ -22,8 +22,16 @@ class LayoutOpError(ShellError, ValueError):
     """An op's arguments cannot be applied to the arrangement."""
 
 
+class NoRequesterWindowError(LayoutOpError):
+    """``self`` or ``pinned`` names a window of the requester's, and the op carries no requester that has one."""
+
+
 class UnknownAppError(ShellError, LookupError):
     """No registered app has the given name."""
+
+
+class NoMessageHandlerError(ShellError, LookupError):
+    """No registered app handles the relayed message's type (answered 404)."""
 
 
 class AppLifecycleRefusedError(ShellError, ValueError):
@@ -32,6 +40,10 @@ class AppLifecycleRefusedError(ShellError, ValueError):
 
 class SupervisorProgramActionError(ShellError, RuntimeError):
     """Supervisord refused, or could not be reached for, a stop or start."""
+
+
+class ShareGrantsError(ShellError, ValueError):
+    """The share grants document is one the gateway would refuse (it then admits nobody)."""
 
 
 class DesktopNotFoundError(ShellError, LookupError):
@@ -72,6 +84,19 @@ class WindowNotFoundError(ShellError, LookupError):
         super().__init__(f"Window '{window}' not found")
 
 
+class WindowPoppedOutError(ShellError, ValueError):
+    """An op would change where a window the target client has popped out into its own window sits, and the op did
+    not carry ``force`` (answered 423): the pop-out is the user's arrangement."""
+
+    def __init__(self, op: str, window: str) -> None:
+        self.op = op
+        self.window = window
+        super().__init__(
+            f"Window {window} is popped out into its own window, so {op!r} would bring it back onto the desktop; "
+            "pass force to do so anyway"
+        )
+
+
 class PinnedWindowError(ShellError, ValueError):
     """A pinned window cannot be closed (answered 409); minimizing is how it leaves the screen."""
 
@@ -98,3 +123,11 @@ class UpdateNoticeRefusedError(ShellError, ValueError):
 
 class UpdateNoticeCommandError(ShellError, RuntimeError):
     """The update-self script behind a notice verb could not be run, or failed."""
+
+
+class PortParkingError(ShellError, OSError):
+    """A stopped app's port could not be parked."""
+
+
+class PortInUseError(PortParkingError):
+    """Something already listens on the port the shell meant to park (the app itself, most likely)."""

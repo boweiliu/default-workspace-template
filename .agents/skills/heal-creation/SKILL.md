@@ -64,8 +64,10 @@ fields (per `.agents/shared/references/worker-reporting.md`), `scope_file`
 (where the worker writes the creation's computed footprint at the start of its
 run -- you name the path, the worker creates the file), and `diff_base` (your
 `HEAD` at dispatch: the fix does not exist yet, so the worker's own commits are
-the whole diff). Both are for a skill or an app with an `app.toml`; omit them
-for a service or a pre-manifest app, which have no footprint. The body describes the failure and anchors the worker's search
+the whole diff). `scope_file` is for a skill or an app with an `app.toml`;
+omit it for a service or a pre-manifest app, which have no footprint.
+`diff_base` goes on every task: the worker's test gate selects its suites from
+what changed since it. The body describes the failure and anchors the worker's search
 with verbatim quotes (the user's request, the failing command or error, any tool
 output that exposed the misbehavior). Without anchors the worker scans the wrong
 region of your transcript.
@@ -134,7 +136,7 @@ uv run .agents/skills/launch-task/scripts/create_worker.py launch \
 ```
 
 Then background-poll (`create_worker.py await --name heal-$TARGET --task-file ...
---timeout 90m`, `run_in_background: true`) and follow
+--timeout 90m`, started through `system/scripts/run_in_background.py`) and follow
 `.agents/shared/references/lead-proxy.md`.
 Flow-specific substitutions:
 
@@ -159,8 +161,8 @@ last hardened merge.
 
 Then merge `mngr/heal-$TARGET`, destroy the worker per `lead-proxy.md`
 (`create_worker.py destroy --name heal-$TARGET`), and go live by type: a **skill** needs
-nothing beyond the merge; an **app** wants a window refresh (`python3
-system/scripts/layout.py refresh --app <app-name>`); a background **service** has no
+nothing beyond the merge; an **app** wants a window refresh (`uv run --no-sync
+workspace-layout refresh --app <app-name>`); a background **service** has no
 window -- restart it (`supervisorctl restart <name>`) instead. Then close the
 ticket:
 

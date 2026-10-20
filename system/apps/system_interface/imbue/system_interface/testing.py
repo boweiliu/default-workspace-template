@@ -18,7 +18,8 @@ import time
 import urllib.error
 import urllib.request
 import xmlrpc.client
-from collections.abc import Iterator
+from collections.abc import Generator
+from collections.abc import Mapping
 from contextlib import closing
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,7 +28,7 @@ from xmlrpc.server import SimpleXMLRPCDispatcher
 from xmlrpc.server import SimpleXMLRPCRequestHandler
 
 import simple_websocket
-from app_manifest.registry import registry_path
+from app_manifest.registry_location import registry_path
 from flask import Flask
 from pydantic import Field
 
@@ -39,9 +40,12 @@ from imbue.system_interface.presence import PresenceStore
 from imbue.system_interface.presence import build_presence_sweep
 from imbue.system_interface.profiles import PROFILES_DIRECTORY_NAME
 from imbue.system_interface.profiles import ProfileResolver
+from imbue.system_interface.shell.app_lifecycle import IDLE_SWEEP_INTERVAL_SECONDS
+from imbue.system_interface.shell.app_lifecycle import NO_WINDOWS_GRACE_SECONDS
 from imbue.system_interface.shell.inventory import AppInventory
 from imbue.system_interface.shell.launches import LaunchPoster
 from imbue.system_interface.shell.state import build_shell_state
+from imbue.system_interface.workspace_name import workspace_name_source
 from imbue.system_interface.ws_broadcaster import WebSocketBroadcaster
 from imbue.system_interface.wsgi import make_threaded_server
 
@@ -180,8 +184,14 @@ def build_test_state(
     static_directory: Path | None = None,
     presence_directory: Path | None = None,
     agent_events_path: Path | None = None,
+    background_tasks_root: Path | None = None,
     profiles: ProfileResolver | None = None,
+    wallpaper_files_directory: Path | None = None,
     launch_poster: LaunchPoster | None = None,
+    is_lifecycle_enabled: bool = False,
+    no_windows_grace_seconds: float = NO_WINDOWS_GRACE_SECONDS,
+    idle_sweep_interval_seconds: float = IDLE_SWEEP_INTERVAL_SECONDS,
+    workspace_environ: Mapping[str, str] | None = None,
 ) -> SystemInterfaceState:
     """Build a `SystemInterfaceState` for tests, injecting fakes where provided.
 
@@ -193,13 +203,18 @@ def build_test_state(
     where the update notice reads its record and finds the update-self script (a fresh temp
     directory by default, so no test reads the real workspace's). ``static_directory`` replaces the
     package's built bundle directory (the frontend bundle and the bundled wallpapers) with one the
-    test fills itself. The avatar's catalog lives under the state directory, and its mood is read
-    from ``agent_events_path`` (a file under the state directory by default, absent until a test
-    writes it).
+    test fills itself, and ``wallpaper_files_directory`` the directory the workspace's own wallpaper
+    files are read from (one under the state directory by default). The avatar's catalog lives under
+    the state directory, and its mood is read from ``agent_events_path`` (a file under the state
+    directory by default, absent until a test writes it) and the background task markers under
+    ``background_tasks_root`` (a directory under the state directory by default, so no test reads the real chats').
     ``presence_directory`` is where the presence files go (a fresh temp directory by default), and ``profiles``
     the resolver that names and pictures each account (one that can reach no connector by default, so no test
     fetches anything unless it says so). ``launch_poster`` answers the POST launches the shell would otherwise make
-    over loopback.
+    over loopback. ``is_lifecycle_enabled`` makes the lifecycle manager own the apps: its sweep runs once the shell
+    is started, and a POST launch wakes a stopped app (off by default, so no test parks a port or starts a
+    program by accident), with the grace period and idle sweep interval given. ``workspace_environ`` is the
+    environment the workspace's name is read from (none by default, so no test reads the machine's mngr records).
     """
     state_directory = shell_state_directory if shell_state_directory is not None else _fresh_shell_state_directory()
     resolved_presence_directory = (
@@ -221,14 +236,22 @@ def build_test_state(
         registry_path=registry_path(),
         broadcaster=resolved_broadcaster,
         inventory=inventory,
-        wallpaper_files_directory=state_directory / "wallpapers",
+        wallpaper_files_directory=wallpaper_files_directory
+        if wallpaper_files_directory is not None
+        else state_directory / "wallpapers",
         avatar_catalog_directory=state_directory / "avatars",
         agent_events_path=agent_events_path
         if agent_events_path is not None
         else state_directory / "agent-events.jsonl",
+        background_tasks_root=background_tasks_root
+        if background_tasks_root is not None
+        else state_directory / "background-tasks",
         repo_root=repo_root if repo_root is not None else _fresh_shell_state_directory(),
         profiles=resolved_profiles,
         launch_poster=launch_poster,
+        is_lifecycle_enabled=is_lifecycle_enabled,
+        no_windows_grace_seconds=no_windows_grace_seconds,
+        idle_sweep_interval_seconds=idle_sweep_interval_seconds,
     )
     resolved_static_directory = static_directory if static_directory is not None else DEFAULT_STATIC_DIRECTORY
     return SystemInterfaceState(
@@ -239,14 +262,15 @@ def build_test_state(
         presence=presence,
         presence_sweep=build_presence_sweep(presence, resolved_profiles, resolved_broadcaster),
         profiles=resolved_profiles,
+        workspace_name=workspace_name_source(
+            resolved_config.system_interface_workspace_name,
+            workspace_environ if workspace_environ is not None else {},
+        ),
     )
 
 
-# The agent-driven desktop pipeline (``test_layout_pipeline.py``): the shell's fixed loopback port, the two
-# stand-in apps its registry holds (one declaring launch paths), and the one connected client most of its
-# tests target, on the default desktop.
-PIPELINE_PORT: Final[int] = 18766
-PIPELINE_BASE_URL: Final[str] = f"http://127.0.0.1:{PIPELINE_PORT}"
+# The agent-driven desktop pipeline (``test_layout_pipeline.py``): the two stand-in apps its registry holds
+# (one declaring launch paths), and the one connected client most of its tests target, on the default desktop.
 PIPELINE_SEEDED_APP_NAME: Final[str] = "chat"
 PIPELINE_STUB_APP_NAME: Final[str] = "docs"
 PIPELINE_CLIENT_ID: Final[str] = "client-1"
@@ -275,6 +299,25 @@ def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+def can_bind_loopback_port(port: int) -> bool:
+    """Whether nothing listens on the loopback port, probed by a bind rather than a connect: a connect to a port
+    the shell parks is itself the wake."""
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+        return True
+
+
+def send_raw_get_over_socket(port: int) -> bytes:
+    """One GET to the loopback port over a bare socket, read until the server closes: what a parked port answers."""
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as connection:
+        connection.sendall(b"GET /some/page HTTP/1.1\r\nHost: docs.localhost\r\n\r\n")
+        return b"".join(iter(lambda: connection.recv(65536), b""))
 
 
 def is_server_answering(base_url: str) -> bool:
@@ -317,7 +360,7 @@ class ServedApp:
 
 
 @contextmanager
-def serve_app(app: Flask) -> Iterator[ServedApp]:
+def serve_app(app: Flask) -> Generator[ServedApp, None, None]:
     """Serve ``app`` on an ephemeral loopback port via a real threaded Werkzeug server.
 
     Used by the WebSocket tests, which the Flask test client cannot drive

@@ -18,11 +18,11 @@ function render(overrides: Partial<WindowAttrs> = {}): HTMLElement {
     state: "NORMAL",
     stackIndex: 1,
     isFocused: true,
-    isCompact: false,
     isTouch: false,
     isMenuOpen: false,
+    sizeMenuTrigger: {},
     isShielded: false,
-    onStartApp: null,
+    isStopped: false,
     onRaise: vi.fn(),
     onControl: vi.fn(),
     onToggleMaximize: vi.fn(),
@@ -56,7 +56,7 @@ describe("Window", () => {
     expect(element.querySelector('[data-window-control="minimize"]')).not.toBeNull();
   });
 
-  it("keeps the resize handles outside the clipped frame, so they can overhang the border", () => {
+  it("keeps the resize handles outside the clipped frame, so they can overhang its edge", () => {
     const element = render();
     const frame = element.querySelector("[data-window-frame]") as HTMLElement;
     expect(frame.classList.contains("overflow-hidden")).toBe(true);
@@ -93,35 +93,28 @@ describe("Window", () => {
     const controls = [...element.querySelectorAll("[data-window-control]")].map((control) =>
       control.getAttribute("data-window-control"),
     );
-    expect(controls).toEqual(["menu", "minimize", "maximize", "close"]);
+    expect(controls).toEqual(["refresh", "menu", "minimize", "maximize", "close"]);
     (element.querySelector('[data-window-control="close"]') as HTMLElement).click();
     expect(onControl).toHaveBeenCalledWith("close", expect.anything());
   });
 
-  it("shows Restore when maximized, and hides the maximize controls and resize edges in compact mode", () => {
+  it("shows Restore when maximized, and no resize edges on a touch screen", () => {
     const maximized = render({ state: "MAXIMIZED" });
     expect(maximized.querySelector('[data-window-control="restore"]')).not.toBeNull();
-    unmountViews();
-    const compact = render({ isCompact: true, state: "MAXIMIZED" });
-    expect(compact.querySelector('[data-window-control="restore"]')).toBeNull();
-    expect(compact.querySelector('[data-window-control="maximize"]')).toBeNull();
-    expect(compact.querySelectorAll("[data-resize-edge]")).toHaveLength(0);
     unmountViews();
     expect(render({ isTouch: true }).querySelectorAll("[data-resize-edge]")).toHaveLength(0);
   });
 
-  it("shows a placeholder for a stopped app, with Start where the workspace can start it", () => {
-    const onStartApp = vi.fn();
-    const element = render({ app: appRecord("docs", { is_running: false }), onStartApp });
+  it("shows a placeholder, and no page, for an app the caller says is stopped", () => {
+    const element = render({ app: appRecord("docs", { is_running: false, program: "" }), isStopped: true });
     const placeholder = element.querySelector("[data-stopped-app]") as HTMLElement;
     expect(placeholder.textContent).toContain("Docs");
-    (placeholder.querySelector("button") as HTMLElement).click();
-    expect(onStartApp).toHaveBeenCalled();
+    expect(placeholder.textContent).toContain("not running (managed outside the workspace)");
+    expect(placeholder.querySelector("button")).toBeNull();
     unmountViews();
+    // A stopped app the shell wakes on a request keeps its page: the parker answers it.
     expect(
-      render({ app: appRecord("docs", { is_running: false }), onStartApp: null }).querySelector(
-        "[data-stopped-app] button",
-      ),
+      render({ app: appRecord("docs", { is_running: false }), isStopped: false }).querySelector("[data-stopped-app]"),
     ).toBeNull();
   });
 

@@ -1,6 +1,6 @@
 """Share gateway runner: the supervisord entrypoint that manages the whole share stack.
 
-Watches ``data/.secrets/share.env`` (the share materials the minds app injects)
+Watches ``data/.secrets/share.env`` (the share materials Imbue Studio injects)
 plus ``data/.state/apps.toml`` (the service registry). While materials are
 present it keeps the stack up: TLS key/CSR/cert via the connector, the
 rendered Caddyfile, caddy, the gateway Flask server caddy's forward_auth
@@ -16,29 +16,52 @@ secret file also records which relay token it was minted under, so a secret
 that survived an unshare and re-share the runner was down for is replaced at
 start rather than reused (every share carries a new relay token).
 
+A failed bring-up (the connector unreachable, certificate issuance refused) is
+retried on a fixed backoff schedule rather than every tick, and a refusal the
+connector marks as permanent halts retries until the materials change; each
+outcome is reported in ``data/.state/share_gateway/status.json`` (see
+``retry_state``).
+
 Same watch idiom as the other material-gated services: inotify when available,
 10-second mtime polling as the fallback.
 """
 
+import os
 import signal
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from pathlib import Path
 
 import httpx
+from inotify_simple import INotify
+from inotify_simple import flags as inotify_flags
 from werkzeug.serving import BaseWSGIServer
 from werkzeug.serving import make_server
 
 from share_gateway import materials as materials_module
+from share_gateway.agent_access import LastSeenStore
+from share_gateway.agent_access import default_agent_access_paths
+from share_gateway.agent_access import reconcile as reconcile_agent_access
+from share_gateway.agent_audit import events_dir_from_environ
+from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR
+from share_gateway.agent_grants import AgentGrantsError
+from share_gateway.agent_grants import utc_now as agent_access_now
+from share_gateway.agent_orientation import SKILLS_INDEX_CACHE_PATH
+from share_gateway.agent_routes import AgentAccessContext
+from share_gateway.agent_routes import register_agent_routes
+from share_gateway.agent_workspace import HOST_KEY_PUBLIC_PATH
+from share_gateway.agent_workspace import read_workspace_coordinates
 from share_gateway.assignment import RelayAssignment
 from share_gateway.assignment import load_assignment
-from share_gateway.log import log as _log
-from share_gateway.caddyfile import build_label_to_name
+from share_gateway.caddyfile import APPS_TOML_PATH
+from share_gateway.caddyfile import RegisteredApp
+from share_gateway.caddyfile import build_grantable_service_names
 from share_gateway.caddyfile import read_registered_apps
 from share_gateway.caddyfile import render_caddyfile
 from share_gateway.certs import CertProvisioningError
@@ -46,50 +69,60 @@ from share_gateway.certs import ensure_share_certificate
 from share_gateway.frpc_config import render_frpc_toml
 from share_gateway.handoff import JwksCache
 from share_gateway.handoff import SingleUseJtiRegistry
+from share_gateway.identity import AgentIdentity
+from share_gateway.log import log as _log
 from share_gateway.materials import ShareMaterials
 from share_gateway.materials import discard_signing_secret
 from share_gateway.materials import load_or_create_auth_label
 from share_gateway.materials import load_or_create_signing_secret
 from share_gateway.materials import read_share_materials
+from share_gateway.materials import record_share_domain
+from share_gateway.retry_state import ProvisioningRetryState
+from share_gateway.retry_state import STATUS_HALTED
+from share_gateway.retry_state import STATUS_RETRYING
+from share_gateway.retry_state import STATUS_UP
+from share_gateway.retry_state import ShareStackStartError
+from share_gateway.retry_state import remove_gateway_status
+from share_gateway.retry_state import utc_now
+from share_gateway.retry_state import write_gateway_status
 from share_gateway.server import PendingLoginRegistry
 from share_gateway.server import build_gateway_app
 
 POLL_INTERVAL_SECONDS = 10
-APPS_TOML_PATH = Path("data/.state/apps.toml")
 _CADDY_ADMIN_URL = "http://localhost:2019"
 _RENEWAL_CHECK_INTERVAL = timedelta(hours=24)
 
 
 def _try_setup_inotify(paths: list[Path]) -> object | None:
-    """Watch the parent directories of every gating file; None when inotify is unavailable."""
-    try:
-        import inotifyx  # type: ignore[import-untyped]
+    """Watch the parent directories of every gating file; None when inotify is unavailable.
 
-        fd = inotifyx.init()
+    Uses inotify_simple (pure Python, Linux only).
+    """
+    try:
+        inotify = INotify()
         for parent in {path.parent for path in paths}:
             parent.mkdir(parents=True, exist_ok=True)
-            inotifyx.add_watch(
-                fd,
+            inotify.add_watch(
                 str(parent),
-                inotifyx.IN_MODIFY
-                | inotifyx.IN_CREATE
-                | inotifyx.IN_MOVED_TO
-                | inotifyx.IN_DELETE
-                | inotifyx.IN_MOVED_FROM,
+                inotify_flags.MODIFY
+                | inotify_flags.CREATE
+                | inotify_flags.MOVED_TO
+                | inotify_flags.DELETE
+                | inotify_flags.MOVED_FROM,
             )
-        return fd
-    except (ImportError, OSError):
+        return inotify
+    except OSError:
         return None
 
 
-def _wait_for_change_inotify(fd: object, timeout_seconds: float) -> bool:
-    try:
-        import inotifyx  # type: ignore[import-untyped]
-
-        events = inotifyx.get_events(fd, timeout_seconds)
-        return len(events) > 0
-    except (ImportError, OSError):
+def _wait_for_change_inotify(inotify: object, timeout_seconds: float) -> bool:
+    if not isinstance(inotify, INotify):
         return False
+    try:
+        events = inotify.read(timeout=int(timeout_seconds * 1000))
+    except OSError:
+        return False
+    return len(events) > 0
 
 
 def _stop_child(process: subprocess.Popen[bytes] | None, name: str) -> None:
@@ -220,8 +253,12 @@ def _converge_frpc_processes(stack: ShareStack) -> None:
         _start_frpc_for_relay(stack, added_relay_id)
 
 
-def _start_stack(materials: ShareMaterials) -> ShareStack | None:
-    """Provision (cert + relay assignment) and start (gateway thread, caddy, per-relay frpc) one share's stack."""
+def _start_stack(materials: ShareMaterials) -> ShareStack:
+    """Provision (cert + relay assignment) and start (gateway thread, caddy, per-relay frpc) one share's stack.
+
+    Raises :class:`ShareStackStartError` when the connector-dependent steps
+    fail; the caller schedules the retry.
+    """
     try:
         ensure_share_certificate(
             key_path=materials_module.TLS_KEY_FILE,
@@ -231,17 +268,22 @@ def _start_stack(materials: ShareMaterials) -> ShareStack | None:
             relay_token=materials.relay_token,
         )
     except CertProvisioningError as exc:
-        _log(f"certificate provisioning failed (will retry on next change/poll): {exc}")
-        return None
+        raise ShareStackStartError(
+            f"certificate provisioning failed: {exc}",
+            is_retryable=exc.is_retryable,
+            retry_after_seconds=exc.retry_after_seconds,
+        ) from exc
 
     assignment = load_assignment(materials.connector_url, materials.relay_token, materials_module.ASSIGNMENT_CACHE_PATH)
     if assignment is None:
-        _log("no relay assignment available yet (will retry on next change/poll)")
-        return None
+        raise ShareStackStartError(
+            "no relay assignment available yet", is_retryable=True, retry_after_seconds=None
+        )
 
     auth_label = load_or_create_auth_label(materials_module.AUTH_LABEL_FILE)
     stack = ShareStack(materials, auth_label, assignment)
     signing_secret = load_or_create_signing_secret(materials_module.SIGNING_SECRET_FILE, materials.relay_token)
+    agent_access = _build_agent_access_context(materials.workspace_domain)
     app = build_gateway_app(
         materials=materials,
         grants_path=materials_module.GRANTS_FILE,
@@ -250,7 +292,17 @@ def _start_stack(materials: ShareMaterials) -> ShareStack | None:
         jti_registry=SingleUseJtiRegistry(),
         pending_logins=PendingLoginRegistry(),
         auth_label=auth_label,
-        get_label_to_name=lambda: build_label_to_name(read_registered_apps(APPS_TOML_PATH)),
+        get_registered_apps=lambda: read_registered_apps(APPS_TOML_PATH),
+        admit_agent=build_agent_admitter(agent_access, lambda: read_registered_apps(APPS_TOML_PATH)),
+    )
+    register_agent_routes(
+        app,
+        context=agent_access,
+        workspace_domain=materials.workspace_domain,
+        auth_label=auth_label,
+        signing_secret=signing_secret,
+        share_grants_path=materials_module.GRANTS_FILE,
+        get_registered_apps=lambda: read_registered_apps(APPS_TOML_PATH),
     )
     stack.gateway_server = make_server("127.0.0.1", materials_module.GATEWAY_PORT, app, threaded=True)
     threading.Thread(target=stack.gateway_server.serve_forever, name="share-gateway-http", daemon=True).start()
@@ -266,6 +318,41 @@ def _start_stack(materials: ShareMaterials) -> ShareStack | None:
     _log(
         f"Share stack up for {materials.workspace_domain} "
         f"(tunnels: {', '.join(sorted(stack.assignment.endpoint_by_relay_id)) or 'none'})"
+    )
+    return stack
+
+
+def _try_start_stack(materials: ShareMaterials, retry_state: ProvisioningRetryState) -> ShareStack | None:
+    """One bring-up attempt: on failure, schedule the retry and report it in the status file."""
+    try:
+        stack = _start_stack(materials)
+    except ShareStackStartError as exc:
+        delay = retry_state.record_failure(exc, time.monotonic())
+        if delay is None:
+            _log(f"{exc}; not retrying until the share materials change")
+            state = STATUS_HALTED
+        else:
+            _log(f"{exc}; retrying in {delay}s (attempt {retry_state.failed_attempt_count})")
+            state = STATUS_RETRYING
+        write_gateway_status(
+            materials_module.GATEWAY_STATUS_FILE,
+            state=state,
+            workspace_domain=materials.workspace_domain,
+            failed_attempt_count=retry_state.failed_attempt_count,
+            last_error=str(exc),
+            next_retry_in_seconds=delay,
+            now=utc_now(),
+        )
+        return None
+    retry_state.reset()
+    write_gateway_status(
+        materials_module.GATEWAY_STATUS_FILE,
+        state=STATUS_UP,
+        workspace_domain=materials.workspace_domain,
+        failed_attempt_count=0,
+        last_error="",
+        next_retry_in_seconds=None,
+        now=utc_now(),
     )
     return stack
 
@@ -356,12 +443,65 @@ def _tick_running_stack(stack: ShareStack) -> ShareStack | None:
     return stack
 
 
+def _build_agent_access_context(workspace_domain: str) -> AgentAccessContext:
+    paths = default_agent_access_paths(events_dir_from_environ(os.environ))
+    coordinates = read_workspace_coordinates(
+        os.environ, HOST_KEY_PUBLIC_PATH, fallback_display_name=workspace_domain.split(".", 1)[0]
+    )
+    return AgentAccessContext(
+        paths=paths,
+        coordinates=coordinates,
+        repo_root=Path.cwd(),
+        environ=os.environ,
+        last_seen=LastSeenStore(AGENT_ACCESS_STATE_DIR / "last_seen.json"),
+        skills_cache_path=SKILLS_INDEX_CACHE_PATH,
+        now=agent_access_now,
+    )
+
+
+def build_agent_admitter(
+    context: AgentAccessContext, get_registered_apps: Callable[[], list[RegisteredApp]]
+) -> Callable[[str, str | None], AgentIdentity | None]:
+    """The gateway's bearer check: the token's grant must exist, be unexpired, and admit the named service."""
+
+    def admit(token: str, service_name: str | None) -> AgentIdentity | None:
+        try:
+            grant = context.grant_for_token(token)
+        except AgentGrantsError as exc:
+            _log(f"Agent access is misconfigured; refusing every bearer request: {exc}")
+            return None
+        if grant is None:
+            return None
+        grantable = sorted(build_grantable_service_names(get_registered_apps()))
+        if not grant.admits_service(service_name, grantable):
+            return None
+        context.last_seen.touch(grant.agent_id, context.now(), time.monotonic())
+        return AgentIdentity(agent_id=grant.agent_id, agent_name=grant.name, granter=grant.granter)
+
+    return admit
+
+
+def _reconcile_agent_access_at_start() -> None:
+    """Prune expired grants and invites and re-assert the authorized_keys lines from the grants file."""
+    paths = default_agent_access_paths(events_dir_from_environ(os.environ))
+    try:
+        if reconcile_agent_access(paths, agent_access_now()):
+            _log("Reconciled the visiting-agent grants and their authorized_keys lines")
+    except (AgentGrantsError, OSError) as exc:
+        _log(f"Could not reconcile the visiting-agent grants: {exc}")
+
+
 def main() -> None:
     _log(f"Watching {materials_module.MATERIALS_FILE} for share materials")
     materials_module.SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    _reconcile_agent_access_at_start()
 
     inotify_fd = _try_setup_inotify([materials_module.MATERIALS_FILE, APPS_TOML_PATH])
     stack: ShareStack | None = None
+    retry_state = ProvisioningRetryState()
+    # The materials the retry schedule applies to: a changed share.env (a
+    # re-share, a rotated token) is a fresh start and forgets earlier failures.
+    retried_materials: ShareMaterials | None = None
 
     def _handle_signal(signum: int, frame: object) -> None:
         _stop_stack(stack)
@@ -373,25 +513,41 @@ def main() -> None:
     while True:
         materials = read_share_materials(materials_module.MATERIALS_FILE)
 
+        if materials is not None and materials != retried_materials:
+            retry_state.reset()
+            retried_materials = materials
+            # Only the shell's share links depend on the record, so the share comes up without it.
+            try:
+                record_share_domain(materials_module.SHARE_DOMAIN_FILE, materials.workspace_domain)
+            except OSError as exc:
+                _log(f"Could not record the share domain in {materials_module.SHARE_DOMAIN_FILE}: {exc}")
+
         if materials is None and stack is not None:
             _log("Share materials removed; tearing the stack down")
             _stop_stack(stack)
             discard_signing_secret(materials_module.SIGNING_SECRET_FILE)
             _log("Discarded the session signing secret; every existing session is now invalid")
             stack = None
-        elif materials is not None and stack is None:
-            stack = _start_stack(materials)
-        elif materials is not None and stack is not None and materials != stack.materials:
+            remove_gateway_status(materials_module.GATEWAY_STATUS_FILE)
+        elif materials is None:
+            # Unshared and idle: an unshare that happened while the stack was
+            # still failing to come up leaves no stale status behind, and a
+            # secret the last unshare left behind (the runner was not up to
+            # see the materials go) must not sign the next share, or every
+            # cookie it signed would open that one too.
+            remove_gateway_status(materials_module.GATEWAY_STATUS_FILE)
+            retried_materials = None
+            if discard_signing_secret(materials_module.SIGNING_SECRET_FILE):
+                _log("Discarded a session signing secret left by an earlier share; its sessions are now invalid")
+        elif stack is None:
+            if retry_state.is_attempt_due(time.monotonic()):
+                stack = _try_start_stack(materials, retry_state)
+        elif materials != stack.materials:
             _log("Share materials changed; restarting the stack")
             _stop_stack(stack)
-            stack = _start_stack(materials)
-        elif stack is not None:
+            stack = _try_start_stack(materials, retry_state)
+        else:
             stack = _tick_running_stack(stack)
-        elif discard_signing_secret(materials_module.SIGNING_SECRET_FILE):
-            # Idle with no share: a secret the last unshare left behind (the
-            # runner was not up to see the materials go) must not sign the
-            # next share, or every cookie it signed would open that one too.
-            _log("Discarded a session signing secret left by an earlier share; its sessions are now invalid")
 
         if inotify_fd is not None:
             _wait_for_change_inotify(inotify_fd, POLL_INTERVAL_SECONDS)

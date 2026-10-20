@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "app-manifest",
+    "app-schema",
     "click>=8.1",
     "flask>=3.0",
     "httpx>=0.27",
@@ -14,16 +15,20 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.13.1",
     "werkzeug>=3.0",
+    "workspace-layout",
 ]
 
 [dependency-groups]
 dev = [
+    "app-schema[testing]",
     "pytest>=9.0",
     "pytest-cov>=7.0.0",
     "pytest-timeout>=2.3.0",
     "coverage",
     "inline-snapshot>=0.13",
     "ruff~=0.12.8",
+    # Used by test_no_type_errors in the ratchets, pinned to the version the shell and chat use.
+    "ty==0.0.85",
 ]
 
 [project.scripts]
@@ -45,7 +50,9 @@ packages = ["src/getting_started"]
 timeout_func_only = true
 markers = [
     "acceptance: marks tests as requiring network access, Modal credentials, etc. These are required to pass in CI",
-    "release: marks tests as being required for release (but not for merging PRs)",
+    "browser: marks tests that drive a browser",
+    "frontend: marks tests that read an app's frontend source",
+    "real_claude: marks tests that run the real claude binary",
     "flaky: marks tests as known-flaky (retried by offload with a separate retry count)",
 ]
 junit_family = "xunit1"
@@ -103,4 +110,9 @@ known-first-party = [
     "getting_started",
     "imbue",
     "app_manifest",
+    "app_schema",
+    "workspace_layout",
 ]
+
+# Makes this directory ty's project; without a [tool.ty] table ty keeps searching upward.
+[tool.ty]

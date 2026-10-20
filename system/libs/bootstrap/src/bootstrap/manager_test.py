@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,10 @@ from mngr_cli_contract.contract import assert_mngr_argv_valid
 from bootstrap.manager import (
     _DRI_WAKE_TIMEOUT_SECONDS,
     _UPDATE_RECOVER_TIMEOUT_SECONDS,
+    BOOTSTRAP_COMPLETED_EVENT,
+    BOOTSTRAP_EVENTS_RELATIVE_PATH,
+    BOOTSTRAP_STEP_COMPLETED_EVENT,
+    BOOTSTRAP_STEP_STARTED_EVENT,
     UPDATE_APPLY_MARKER,
     UPDATE_APPLY_SCRIPT,
     UPDATE_RECOVER_CRON_NAME,
@@ -31,6 +36,7 @@ from bootstrap.manager import (
     _read_host_name,
     _read_update_marker_dri_agent,
     _recover_interrupted_update,
+    _set_container_timezone,
     _wake_update_dri_agent,
     _write_update_recovery_cron_entry,
     main,
@@ -391,7 +397,10 @@ def test_update_recovery_cron_entry_can_run_from_cron(tmp_path: Path) -> None:
     # Composed from the one constant that says where the script lives, so the
     # path cannot drift from the boot-time recovery's own invocation.
     assert str(UPDATE_APPLY_SCRIPT) in entry
-    assert "flock -n" in entry
+    # A tmpfs /run starts empty, so the lock has to sit directly in it.
+    flock_match = re.search(r"flock -n (\S+)", entry)
+    assert flock_match is not None
+    assert Path(flock_match.group(1)).parent == Path("/run")
 
 
 def test_update_recovery_cron_entry_tolerates_an_unwritable_target(
@@ -509,6 +518,86 @@ def test_apply_container_timezone_tolerates_oserror(tmp_path: Path) -> None:
         localtime_path=missing_dir / "localtime",
         timezone_path=missing_dir / "timezone",
     )
+
+
+# _set_container_timezone
+
+
+def _set_timezone_in(tmp_path: Path, fetched_tz_name: str) -> tuple[Path, Path]:
+    """Run _set_container_timezone against tmp paths; return (localtime, cache).
+
+    Repeat calls on one ``tmp_path`` share the cache, like successive boots.
+    """
+    zoneinfo = tmp_path / "zoneinfo"
+    if not zoneinfo.exists():
+        _make_zoneinfo_tree(tmp_path)
+    etc = tmp_path / "etc"
+    etc.mkdir(exist_ok=True)
+    cache = tmp_path / "data" / ".state" / "user_timezone"
+    _set_container_timezone(
+        fetched_tz_name,
+        cache_path=cache,
+        zoneinfo_dir=zoneinfo,
+        localtime_path=etc / "localtime",
+        timezone_path=etc / "timezone",
+    )
+    return etc / "localtime", cache
+
+
+def test_set_container_timezone_falls_back_to_the_last_applied_zone(
+    tmp_path: Path,
+) -> None:
+    # A boot whose fetch succeeded, then a boot on a fresh rootfs (recreated
+    # container) whose fetch failed: the second must still land on the user's
+    # zone rather than the image's UTC.
+    localtime, cache = _set_timezone_in(tmp_path, "America/New_York")
+    assert cache.read_text() == "America/New_York\n"
+    localtime.unlink()
+
+    _set_timezone_in(tmp_path, "")
+
+    assert Path(os.readlink(localtime)).name == "New_York"
+
+
+def test_set_container_timezone_leaves_the_image_zone_with_nothing_to_apply(
+    tmp_path: Path,
+) -> None:
+    localtime, cache = _set_timezone_in(tmp_path, "")
+    assert not localtime.exists()
+    assert not cache.exists()
+
+
+def test_set_container_timezone_falls_back_when_the_fetched_zone_cannot_be_applied(
+    tmp_path: Path,
+) -> None:
+    localtime, cache = _set_timezone_in(tmp_path, "America/New_York")
+    localtime.unlink()
+
+    _set_timezone_in(tmp_path, "Mars/Olympus_Mons")
+
+    assert cache.read_text() == "America/New_York\n"
+    assert Path(os.readlink(localtime)).name == "New_York"
+
+
+def test_set_container_timezone_tolerates_a_non_utf8_cache(tmp_path: Path) -> None:
+    cache = tmp_path / "data" / ".state" / "user_timezone"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"\xff\xfe")
+
+    localtime, _ = _set_timezone_in(tmp_path, "")
+
+    assert not localtime.exists()
+
+
+def test_set_container_timezone_applies_the_fetched_zone_when_the_cache_is_unwritable(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "data" / ".state" / "user_timezone"
+    cache.mkdir(parents=True)
+
+    localtime, _ = _set_timezone_in(tmp_path, "America/New_York")
+
+    assert Path(os.readlink(localtime)).name == "New_York"
 
 
 # _fetch_user_timezone
@@ -751,6 +840,11 @@ def test_a_partial_restore_at_boot_is_an_error_that_still_wakes_the_dri_agent(
     assert any("could not put the pre-apply state back" in line for line in errors)
 
 
+def _agent_state_dir(tmp_path: Path) -> Path:
+    """Where a boot prepared by ``_prepare_boot`` records its step events."""
+    return tmp_path / "agent-state"
+
+
 def _prepare_boot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _StubSubprocess:
     """A ``main()`` run that touches nothing real: an ephemeral cwd holding an apply
     marker for agent-omega, a subprocess stub that models the rollback clearing it, and
@@ -758,9 +852,12 @@ def _prepare_boot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _StubSubpr
     since each test watches it differently."""
     # chdir into tmp_path so the marker and signal files land somewhere
     # ephemeral; MNGR_AGENT_WORK_DIR is unset so the git-identity and
-    # main-branch steps short-circuit.
+    # main-branch steps short-circuit; MNGR_AGENT_STATE_DIR points into tmp_path
+    # so the boot's step events never land in the state dir of the agent
+    # running this suite.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MNGR_AGENT_WORK_DIR", raising=False)
+    monkeypatch.setenv("MNGR_AGENT_STATE_DIR", str(_agent_state_dir(tmp_path)))
     _write_apply_marker("agent-omega")
     stub = _StubSubprocess()
     stub.on_command = _clear_marker_on_recover
@@ -793,6 +890,71 @@ def test_main_rolls_back_before_the_venv_sync_and_wakes_the_agent_after_it(
     sync_index = stub.calls.index(["uv", "sync", "--all-packages", "--frozen"])
     wake_index = stub.calls.index(["mngr", "start", "agent-omega"])
     assert recover_index < sync_index < wake_index
+
+
+def test_main_announces_each_boot_step_to_the_agent_events_in_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The desktop that created the workspace tails these events to show the boot's
+    # progress, so every step reports a start and a completion, in the order the
+    # boot runs them, and the hand-off to supervisord is the last event.
+    _prepare_boot(monkeypatch, tmp_path)
+    monkeypatch.setattr("bootstrap.manager._exec_supervisord", lambda: None)
+
+    main()
+
+    lines = (_agent_state_dir(tmp_path) / BOOTSTRAP_EVENTS_RELATIVE_PATH).read_text().splitlines()
+    events = [json.loads(line) for line in lines]
+    assert all(event["source"] == "bootstrap" for event in events)
+    assert all(
+        re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{9}Z", event["timestamp"])
+        for event in events
+    )
+    assert len({event["event_id"] for event in events}) == len(events)
+    started = [
+        event["step"]
+        for event in events
+        if event["type"] == BOOTSTRAP_STEP_STARTED_EVENT
+    ]
+    completed = [
+        event["step"]
+        for event in events
+        if event["type"] == BOOTSTRAP_STEP_COMPLETED_EVENT
+    ]
+    assert started == [
+        "migrate_claude_state",
+        "configure_git",
+        "recover_update",
+        "initialize_main_branch",
+        "sync_venv",
+        "set_timezone",
+        "converge_environment",
+        "install_cron",
+    ]
+    assert completed == started
+    assert all(
+        "duration_seconds" in event
+        for event in events
+        if event["type"] == BOOTSTRAP_STEP_COMPLETED_EVENT
+    )
+    assert events[-1]["type"] == BOOTSTRAP_COMPLETED_EVENT
+    assert [event["type"] for event in events[:2]] == [
+        BOOTSTRAP_STEP_STARTED_EVENT,
+        BOOTSTRAP_STEP_COMPLETED_EVENT,
+    ]
+
+
+def test_main_boots_without_an_agent_state_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A bare dev run has no agent state dir: the boot runs exactly as before and records nothing.
+    _prepare_boot(monkeypatch, tmp_path)
+    monkeypatch.setattr("bootstrap.manager._exec_supervisord", lambda: None)
+    monkeypatch.delenv("MNGR_AGENT_STATE_DIR", raising=False)
+
+    main()
+
+    assert not list(tmp_path.rglob("events.jsonl"))
 
 
 def test_recover_names_nobody_when_the_marker_recorded_no_agent(

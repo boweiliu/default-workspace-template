@@ -13,10 +13,15 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from app_schema.testing import assert_api_schema_describes_app
+from app_manifest.testing import assert_document_policy_admits_page
 from flask import Flask
 from flask.testing import FlaskClient
+from workspace_layout.primitives import ClientId
 
 from imbue.system_interface.app_context import state_of
+from imbue.system_interface.avatar.primitives import DesignId
+from imbue.system_interface.avatar.testing import png_size
 from imbue.system_interface.config import Config
 from imbue.system_interface.documents import FRONTEND_BUILT_HEADER
 from imbue.system_interface.presence import PRESENCE_CONNECTED_WINDOW
@@ -29,12 +34,14 @@ from imbue.system_interface.server import _handle_client_state_message
 from imbue.system_interface.server import create_application
 from imbue.system_interface.server import render_frontend_not_built_page
 from imbue.system_interface.shell.identity import RequestIdentity
+from imbue.system_interface.shell.testing import TEST_PAGE_ID
 from imbue.system_interface.shell.testing import drain_messages
 from imbue.system_interface.shell.testing import identity_headers
 from imbue.system_interface.testing import build_test_state
 from imbue.system_interface.testing import close_ws
 from imbue.system_interface.testing import open_ws
 from imbue.system_interface.testing import serve_app
+from imbue.system_interface.ws_broadcaster import ConnectionRegistration
 from imbue.system_interface.ws_broadcaster import WebSocketBroadcaster
 
 # Generous: the first receive occasionally exceeded the previous 5.0s cap on a
@@ -59,6 +66,17 @@ def client(app: Flask) -> FlaskClient:
     return app.test_client()
 
 
+def _moving_report(client_id: str, desktop_id: str) -> dict[str, Any]:
+    """A window's ``client_state`` message moving its client, as the page sends it."""
+    return {
+        "type": "client_state",
+        "client_id": client_id,
+        "active_desktop": desktop_id,
+        "page_id": TEST_PAGE_ID,
+        "revision": 0,
+    }
+
+
 def test_index_returns_html_when_static_exists(client: FlaskClient, tmp_path: Path) -> None:
     """When the static dir has index.html, the server serves it."""
     static_dir = tmp_path / "static"
@@ -74,6 +92,126 @@ def test_index_returns_html_when_static_exists(client: FlaskClient, tmp_path: Pa
     # Both the app and the placeholder are HTTP 200 HTML, so the header is
     # the only thing that distinguishes them to a health check.
     assert response.headers[FRONTEND_BUILT_HEADER] == "true"
+
+
+_AGENT_ID = "agent-0123456789abcdef0123456789abcdef"
+
+
+def _named_workspace_app(tmp_path: Path, index_html: str, display_name: str) -> Flask:
+    """A shell over a built page and a mngr host directory whose services agent is labelled ``display_name``."""
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text(index_html)
+    agent_record = tmp_path / "host" / "agents" / _AGENT_ID / "data.json"
+    agent_record.parent.mkdir(parents=True)
+    agent_record.write_text(json.dumps({"labels": {"workspace_display_name": display_name}}))
+    state = build_test_state(
+        static_directory=static_dir,
+        workspace_environ={"MNGR_HOST_DIR": str(tmp_path / "host"), "MNGR_AGENT_ID": _AGENT_ID},
+    )
+    return create_application(state)
+
+
+# The shape the frontend build's page has, with the tags the build itself carries.
+_BUILT_INDEX = (
+    "<!doctype html><html><head>"
+    '<meta charset="UTF-8" />'
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0" />'
+    "<title>System Interface</title>"
+    "</head><body></body></html>"
+)
+
+
+def test_the_page_carries_the_workspaces_name_and_what_a_phone_saves_to_its_home_screen(tmp_path: Path) -> None:
+    app = _named_workspace_app(tmp_path, _BUILT_INDEX, 'Tom & Jerry\'s <"Lab">')
+    client = app.test_client()
+
+    page = client.get("/").text
+    prefixed = client.get("/", base_url="http://localhost/shell").text
+
+    escaped = html.escape('Tom & Jerry\'s <"Lab">', quote=True)
+    assert '<title>Tom &amp; Jerry\'s &lt;"Lab"&gt;</title>' in page
+    assert page.count("<title>") == 1
+    assert f'<meta name="apple-mobile-web-app-title" content="{escaped}">' in page
+    assert '<meta name="theme-color" content="#fafaf8">' in page
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">' in page
+    assert page.count('name="viewport"') == 1
+    assert '<link rel="apple-touch-icon" href="/apple-touch-icon.png">' in page
+    assert '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">' in page
+    assert '<link rel="apple-touch-icon" href="/shell/apple-touch-icon.png">' in prefixed
+    assert '<link rel="manifest" href="/shell/manifest.webmanifest" crossorigin="use-credentials">' in prefixed
+    assert client.get("/api/inventory").get_json()["workspace_name"] == 'Tom & Jerry\'s <"Lab">'
+
+
+def test_tags_the_build_already_carries_are_replaced_rather_than_repeated(tmp_path: Path) -> None:
+    built = (
+        "<html><head>"
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+        '<meta name="theme-color" content="#000000">'
+        '<link rel="manifest" href="/stale.webmanifest">'
+        "</head><body></body></html>"
+    )
+    page = _named_workspace_app(tmp_path, built, "Lab").test_client().get("/").text
+
+    assert page.count('name="viewport"') == 1
+    assert "width=device-width, initial-scale=1, viewport-fit=cover" in page
+    assert page.count('name="theme-color"') == 1 and "#000000" not in page
+    assert page.count('rel="manifest"') == 1 and "stale" not in page
+    assert page.count("<title>") == 1 and "<title>Lab</title>" in page
+
+
+def test_the_touch_icon_and_the_manifest_follow_the_selected_avatar_and_the_workspaces_name(tmp_path: Path) -> None:
+    app = _named_workspace_app(tmp_path, _BUILT_INDEX, "Research Lab")
+    client = app.test_client()
+    shell = state_of(app).shell
+
+    default_icon = client.get("/apple-touch-icon.png")
+    assert default_icon.status_code == 200 and default_icon.mimetype == "image/png"
+    assert png_size(default_icon.data) == (180, 180)
+    assert default_icon.data == client.get("/api/avatars/imbue-character/icon.png?size=180").data
+    shell.avatar_selection.write(DesignId("jelly-cat"))
+    assert client.get("/apple-touch-icon.png").data == client.get("/api/avatars/jelly-cat/icon.png").data
+    # A selection naming a design the catalog no longer holds shows the default, as the avatar does.
+    shell.avatar_selection.write(DesignId("gone"))
+    assert client.get("/apple-touch-icon.png").data == default_icon.data
+
+    shell.avatar_selection.write(DesignId("jelly-cat"))
+    response = client.get("/manifest.webmanifest", base_url="http://localhost/shell")
+    assert response.status_code == 200 and response.mimetype == "application/manifest+json"
+    assert json.loads(response.data) == {
+        "name": "Research Lab",
+        "short_name": "Research Lab",
+        "start_url": "/shell/",
+        "scope": "/shell/",
+        "display": "standalone",
+        "background_color": "#fafaf8",
+        "theme_color": "#fafaf8",
+        "icons": [
+            {
+                "src": f"/shell/api/avatars/jelly-cat/icon.png?size={size}",
+                "sizes": f"{size}x{size}",
+                "type": "image/png",
+            }
+            for size in (180, 192, 512)
+        ],
+    }
+    assert json.loads(client.get("/manifest.webmanifest").data)["start_url"] == "/"
+
+
+@pytest.mark.parametrize("basename", ["app_contract.js", "context_menu.js"])
+def test_the_shell_serves_its_browser_side_modules_for_the_stub_pages(tmp_path: Path, basename: str) -> None:
+    static_dir = tmp_path / "static"
+    (static_dir / "_static").mkdir(parents=True)
+    state = build_test_state()
+    state.static_directory = static_dir
+    test_client = create_application(state).test_client()
+    assert test_client.get(f"/_static/{basename}").status_code == 404
+    (static_dir / "_static" / basename).write_text("export const built = true;\n")
+    response = test_client.get(f"/_static/{basename}")
+    assert response.status_code == 200
+    assert response.mimetype == "text/javascript"
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+    assert b"built" in response.data
 
 
 def test_a_preview_shells_page_says_so_and_carries_no_staleness_banner(tmp_path: Path) -> None:
@@ -127,6 +265,32 @@ def test_an_unknown_path_falls_through_to_the_shell_document(tmp_path: Path) -> 
     assert response.status_code == 200
     assert "text/html" in response.content_type
     assert "the shell" in response.text
+
+
+def test_the_built_page_and_the_placeholder_are_served_under_the_document_policy(tmp_path: Path) -> None:
+    """The desktop (a built document with no inline script) and the placeholder (one inline script) both carry a
+    policy a browser would run them under; the shell's frames of other apps and its socket stay admitted."""
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    state = build_test_state()
+    state.static_directory = static_dir
+    test_client = create_application(state).test_client()
+
+    placeholder = test_client.get("/")
+    (static_dir / "index.html").write_text(
+        '<html><head><script src="/assets/index.js"></script></head><body></body></html>'
+    )
+    desktop = test_client.get("/")
+
+    assert placeholder.headers[FRONTEND_BUILT_HEADER] == "false"
+    assert desktop.headers[FRONTEND_BUILT_HEADER] == "true"
+    for page in (placeholder, desktop):
+        assert_document_policy_admits_page(page)
+        policy = page.headers["Content-Security-Policy"]
+        assert "frame-src http: https:" in policy
+        assert "connect-src" not in policy
+        assert "frame-ancestors" not in policy
+    assert "Content-Security-Policy" not in test_client.get("/api/health").headers
 
 
 def test_index_marks_the_not_built_placeholder_as_not_the_app(tmp_path: Path) -> None:
@@ -588,11 +752,13 @@ def test_a_client_state_report_survives_an_unwritable_state_file(app: Flask) -> 
     (shell.activity.events_path).mkdir(parents=True)
     client_queue = shell.broadcaster.register()
     try:
-        report = {"type": "client_state", "client_id": "c1", "active_desktop": "home"}
+        report = _moving_report("c1", "home")
         assert _handle_client_state_message(json.dumps(report), client_queue, shell, is_first_report=True) is True
         switched = {**report, "active_desktop": "alpha", "previous_desktop": "home"}
         assert _handle_client_state_message(json.dumps(switched), client_queue, shell, is_first_report=False) is True
-        assert shell.broadcaster.get_client_info(client_queue) == {"client_id": "c1", "active_desktop": "alpha"}
+        assert shell.broadcaster.get_client_info(client_queue) == ConnectionRegistration(
+            client_id="c1", active_desktop="alpha", is_pop_out=False
+        )
     finally:
         shell.broadcaster.unregister(client_queue)
 
@@ -603,52 +769,90 @@ def test_client_state_reports_register_the_client_and_log_only_real_desktop_swit
     shell = state_of(app).shell
     client_queue = shell.broadcaster.register()
     try:
-        first = json.dumps({"type": "client_state", "client_id": "c1", "active_desktop": "home"})
+        first = json.dumps(_moving_report("c1", "home"))
         assert _handle_client_state_message(first, client_queue, shell, is_first_report=True) is True
-        assert shell.broadcaster.get_client_info(client_queue) == {"client_id": "c1", "active_desktop": "home"}
+        assert shell.broadcaster.get_client_info(client_queue) == ConnectionRegistration(
+            client_id="c1", active_desktop="home", is_pop_out=False
+        )
         recorded = shell.clients.get_client("c1")
         assert recorded is not None
         assert recorded.active_desktop == "home"
         assert shell.activity.read_events() == []
 
-        switched = json.dumps(
-            {"type": "client_state", "client_id": "c1", "active_desktop": "home", "previous_desktop": "research"}
-        )
+        switched = json.dumps({**_moving_report("c1", "home"), "previous_desktop": "research"})
         assert _handle_client_state_message(switched, client_queue, shell, is_first_report=False) is True
-        unchanged = json.dumps(
-            {"type": "client_state", "client_id": "c1", "active_desktop": "home", "previous_desktop": "home"}
-        )
+        unchanged = json.dumps({**_moving_report("c1", "home"), "previous_desktop": "home"})
         assert _handle_client_state_message(unchanged, client_queue, shell, is_first_report=False) is True
         events = shell.activity.read_events()
         assert [(event["type"], event["from_desktop_id"], event["to_desktop_id"]) for event in events] == [
             ("desktop_switch", "research", "home")
         ]
 
-        for malformed in ("{", json.dumps({"type": "other"}), json.dumps({"type": "client_state", "client_id": "c1"})):
+        unordered = {key: value for key, value in _moving_report("c1", "home").items() if key != "revision"}
+        for malformed in (
+            "{",
+            json.dumps({"type": "other"}),
+            json.dumps({"type": "client_state", "client_id": "c1"}),
+            json.dumps(unordered),
+            json.dumps({**unordered, "is_following": True, "revision": 0}),
+        ):
             assert _handle_client_state_message(malformed, client_queue, shell, is_first_report=False) is False
-        assert shell.broadcaster.get_client_info(client_queue) == {"client_id": "c1", "active_desktop": "home"}
+        assert shell.broadcaster.get_client_info(client_queue) == ConnectionRegistration(
+            client_id="c1", active_desktop="home", is_pop_out=False
+        )
     finally:
         shell.broadcaster.unregister(client_queue)
 
 
+def test_a_pop_out_report_registers_its_connection_and_touches_neither_the_record_nor_the_log(app: Flask) -> None:
+    """A pop-out's report makes its connection reachable by ops aimed at its client, and leaves the client's record,
+    active desktop, and desktop switches to its main window."""
+    shell = state_of(app).shell
+    main_queue = shell.broadcaster.register()
+    pop_out_queue = shell.broadcaster.register()
+    try:
+        main_report = json.dumps(_moving_report("c1", "home"))
+        assert _handle_client_state_message(main_report, main_queue, shell, is_first_report=True) is True
+        pop_out_report = json.dumps({"type": "client_state", "client_id": "c1", "is_pop_out": True})
+        assert _handle_client_state_message(pop_out_report, pop_out_queue, shell, is_first_report=True) is True
+        assert _handle_client_state_message(pop_out_report, pop_out_queue, shell, is_first_report=False) is True
+
+        assert shell.broadcaster.get_client_info(pop_out_queue) == ConnectionRegistration(
+            client_id="c1", active_desktop="", is_pop_out=True
+        )
+        recorded = shell.clients.get_client("c1")
+        assert recorded is not None and recorded.active_desktop == "home"
+        assert shell.activity.read_events() == []
+
+        # A pop-out report carrying a desktop is not a pop-out's.
+        with_desktop = json.dumps(
+            {"type": "client_state", "client_id": "c1", "is_pop_out": True, "active_desktop": "x"}
+        )
+        assert _handle_client_state_message(with_desktop, pop_out_queue, shell, is_first_report=False) is False
+    finally:
+        shell.broadcaster.unregister(main_queue)
+        shell.broadcaster.unregister(pop_out_queue)
+
+
+@pytest.mark.frontend
 def test_not_built_page_coordinate_regex_matches_the_canonical_one() -> None:
     """The placeholder derives a service origin, so it carries a copy of the rule.
 
-    The shared library's ``origin.ts`` is canonical. The placeholder cannot import
+    The shared library's ``app_contract.ts`` is canonical. The placeholder cannot import
     it -- it runs in the browser, in the one state where the bundle it lives in is
     missing -- so it holds its own copy, and this pins that copy to the source of
     truth. Without it the rule can be corrected in one place and silently rot in the
     page that only renders when everything else is broken.
     """
-    origin_ts = Path(__file__).parents[4] / "libs" / "workspace_ui" / "src" / "origin.ts"
-    canonical = re.search(r"WORKSPACE_COORDINATE_LABEL = (/.+/i);", origin_ts.read_text())
-    assert canonical is not None, f"the canonical regex is no longer declared in {origin_ts}"
+    app_contract_ts = Path(__file__).parents[4] / "libs" / "workspace_ui" / "src" / "app_contract.ts"
+    canonical = re.search(r"WORKSPACE_COORDINATE_LABEL = (/.+/i);", app_contract_ts.read_text())
+    assert canonical is not None, f"the canonical regex is no longer declared in {app_contract_ts}"
 
     page = render_frontend_not_built_page("terminal-x7k9q2w1")
     in_page = re.findall(r"(/\^\(\?:.+?/i)\.test\(", page)
     assert in_page == [canonical.group(1)], (
-        f"the placeholder's coordinate regex has drifted from {origin_ts}: "
-        f"page has {in_page}, origin.ts has {canonical.group(1)!r}"
+        f"the placeholder's coordinate regex has drifted from {app_contract_ts}: "
+        f"page has {in_page}, app_contract.ts has {canonical.group(1)!r}"
     )
 
 
@@ -685,26 +889,185 @@ def test_a_report_of_a_deleted_desktop_lands_the_client_on_the_first_one_and_say
     shell.list_desktops()
     client_queue = shell.broadcaster.register()
     try:
-        first = json.dumps({"type": "client_state", "client_id": "c1", "active_desktop": "home"})
+        first = json.dumps(_moving_report("c1", "home"))
         assert _handle_client_state_message(first, client_queue, shell, is_first_report=True) is True
         assert [message["type"] for message in drain_messages(client_queue)] == ["active_desktop_changed"]
 
-        stale = json.dumps(
-            {"type": "client_state", "client_id": "c1", "active_desktop": "gone", "previous_desktop": "home"}
-        )
+        stale = json.dumps({**_moving_report("c1", "gone"), "previous_desktop": "home"})
         assert _handle_client_state_message(stale, client_queue, shell, is_first_report=False) is True
         landed = shell.clients.get_client("c1")
         assert landed is not None and landed.active_desktop == "home"
         events = shell.activity.read_events()
         assert [(event["type"], event["to_desktop_id"]) for event in events] == [("desktop_switch", "gone")]
-        # The redirected window is told where it landed, once; a report of that desktop then changes nothing.
+        # The redirected window is told where it landed, once, at a revision newer than the one it already heard (the
+        # stored desktop did not move); a report of that desktop then changes nothing.
         assert [
-            message["desktop_id"]
+            (message["desktop_id"], message["revision"])
             for message in drain_messages(client_queue)
             if message["type"] == "active_desktop_changed"
-        ] == ["home"]
-        settled = json.dumps({"type": "client_state", "client_id": "c1", "active_desktop": "home"})
+        ] == [("home", 2)]
+        settled = json.dumps(_moving_report("c1", "home"))
         assert _handle_client_state_message(settled, client_queue, shell, is_first_report=False) is True
         assert drain_messages(client_queue) == []
     finally:
         shell.broadcaster.unregister(client_queue)
+
+
+def test_a_move_is_echoed_with_its_report_and_revision_and_a_following_report_moves_nothing(app: Flask) -> None:
+    """A window's move is broadcast naming the report that made it and the revision it was written at. A window
+    that followed a push reports the desktop it followed, which a later move may have replaced: that report
+    registers its connection there and stamps the client as seen, and neither moves the client back nor broadcasts."""
+    shell = state_of(app).shell
+    shell.inventory.reload_registry()
+    shell.list_desktops()
+    work = shell.create_desktop("Work", "#123456", 1)
+    client_queue = shell.broadcaster.register()
+    try:
+        first = json.dumps(_moving_report("c1", "home"))
+        assert _handle_client_state_message(first, client_queue, shell, is_first_report=True) is True
+        drain_messages(client_queue)
+        move_body = {
+            "type": "client_state",
+            "client_id": "c1",
+            "active_desktop": str(work.id),
+            "previous_desktop": "home",
+            "report_id": "report-0123456789abcdef",
+            "page_id": TEST_PAGE_ID,
+            "revision": 0,
+        }
+        unminted = json.dumps({**move_body, "report_id": "not-a-report-id"})
+        assert _handle_client_state_message(unminted, client_queue, shell, is_first_report=False) is False
+        assert drain_messages(client_queue) == []
+        move = json.dumps(move_body)
+        assert _handle_client_state_message(move, client_queue, shell, is_first_report=False) is True
+        assert drain_messages(client_queue) == [
+            {
+                "type": "active_desktop_changed",
+                "client_id": "c1",
+                "desktop_id": str(work.id),
+                "revision": 2,
+                "report_id": "report-0123456789abcdef",
+            }
+        ]
+
+        switches_logged = len(shell.activity.read_events())
+        long_ago = utc_now() - timedelta(days=30)
+        shell.clients.set_active_desktop(ClientId("c1"), work.id, long_ago)
+        following = json.dumps(
+            {
+                "type": "client_state",
+                "client_id": "c1",
+                "active_desktop": "home",
+                "previous_desktop": str(work.id),
+                "is_following": True,
+                "page_id": TEST_PAGE_ID,
+            }
+        )
+        assert _handle_client_state_message(following, client_queue, shell, is_first_report=False) is True
+        recorded = shell.clients.get_client("c1")
+        assert recorded is not None and (recorded.active_desktop, recorded.desktop_revision) == (work.id, 2)
+        assert recorded.last_seen > long_ago
+        assert len(shell.activity.read_events()) == switches_logged
+        assert drain_messages(client_queue) == []
+        assert [info.active_desktop for info in shell.broadcaster.get_connected_client_infos()] == ["home"]
+
+        # A client the shell has no record of (pruned or reset under an open page) still registers its connection.
+        unrecorded = json.dumps(
+            {
+                "type": "client_state",
+                "client_id": "c2",
+                "active_desktop": "home",
+                "is_following": True,
+                "page_id": TEST_PAGE_ID,
+            }
+        )
+        assert _handle_client_state_message(unrecorded, client_queue, shell, is_first_report=False) is True
+        registered = shell.broadcaster.get_client_info(client_queue)
+        assert registered is not None and (registered.client_id, registered.active_desktop) == ("c2", "home")
+        assert shell.clients.get_client("c2") is None
+        assert drain_messages(client_queue) == []
+    finally:
+        shell.broadcaster.unregister(client_queue)
+
+
+def test_a_move_reported_before_its_page_heard_an_ops_move_is_not_recorded_and_its_window_is_told_the_op(
+    app: Flask,
+) -> None:
+    """An op moves the client while a page's report, made at the revision before the op's, is still on its way: the
+    report is not recorded, broadcast, or logged as a switch, so the op's move stands, and the reporting window alone is
+    told the op's move again, which it follows. A report made at the op's revision moves the client as usual."""
+    shell = state_of(app).shell
+    shell.inventory.reload_registry()
+    shell.list_desktops()
+    work = shell.create_desktop("Work", "#123456", 1)
+    client_queue = shell.broadcaster.register()
+    other_queue = shell.broadcaster.register()
+    shell.broadcaster.set_client_info(other_queue, "c1", "home")
+    try:
+        landing = {**_moving_report("c1", "home"), "report_id": "report-0000000000000001"}
+        assert _handle_client_state_message(json.dumps(landing), client_queue, shell, is_first_report=True) is True
+        assert shell.set_client_active_desktop(ClientId("c1"), work.id) is True
+        drain_messages(client_queue)
+        drain_messages(other_queue)
+        switches_logged = len(shell.activity.read_events())
+
+        made_before_the_op = {
+            **landing,
+            "active_desktop": "home",
+            "previous_desktop": str(work.id),
+            "report_id": "report-0000000000000002",
+            "revision": 1,
+        }
+        assert (
+            _handle_client_state_message(json.dumps(made_before_the_op), client_queue, shell, is_first_report=False)
+            is True
+        )
+        recorded = shell.clients.get_client("c1")
+        assert recorded is not None and (recorded.active_desktop, recorded.desktop_revision) == (work.id, 2)
+        assert drain_messages(client_queue) == [
+            {
+                "type": "active_desktop_changed",
+                "client_id": "c1",
+                "desktop_id": str(work.id),
+                "revision": 2,
+                "report_id": None,
+            }
+        ]
+        assert drain_messages(other_queue) == []
+        assert len(shell.activity.read_events()) == switches_logged
+
+        # One naming a desktop since deleted is not landed on the first desktop and announced either.
+        deleted_before_the_op = {
+            **made_before_the_op,
+            "active_desktop": "gone",
+            "report_id": "report-00000000000000a2",
+        }
+        assert (
+            _handle_client_state_message(json.dumps(deleted_before_the_op), client_queue, shell, is_first_report=False)
+            is True
+        )
+        recorded = shell.clients.get_client("c1")
+        assert recorded is not None and (recorded.active_desktop, recorded.desktop_revision) == (work.id, 2)
+        assert [(message["desktop_id"], message["report_id"]) for message in drain_messages(client_queue)] == [
+            (str(work.id), None)
+        ]
+        assert drain_messages(other_queue) == []
+
+        made_after_the_op = {**made_before_the_op, "report_id": "report-0000000000000003", "revision": 2}
+        assert (
+            _handle_client_state_message(json.dumps(made_after_the_op), client_queue, shell, is_first_report=False)
+            is True
+        )
+        assert [
+            (message["desktop_id"], message["revision"], message["report_id"])
+            for message in drain_messages(client_queue)
+            if message["type"] == "active_desktop_changed"
+        ] == [("home", 3, "report-0000000000000003")]
+        assert len(shell.activity.read_events()) == switches_logged + 1
+    finally:
+        shell.broadcaster.unregister(client_queue)
+        shell.broadcaster.unregister(other_queue)
+
+
+def test_the_shell_describes_its_api_the_way_its_manifest_says(client: FlaskClient) -> None:
+    assert_api_schema_describes_app(client, Path(__file__).resolve().parents[2] / "app.toml")

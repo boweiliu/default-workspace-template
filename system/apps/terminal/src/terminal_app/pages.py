@@ -17,15 +17,25 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
+from app_manifest.content_security_policy import attach_document_policy
 from app_manifest.primitives import AppName
 from app_manifest.registry import APP_CONTRACT_ROUTE, read_origin_label
-from app_manifest.shell_windows import window_query_value
-from flask import Blueprint, Response, jsonify, request, send_file
+from app_schema.api_schema import (
+    DEFAULT_API_SCHEMA_PATH,
+    RouteModels,
+    RouteTable,
+    SchemalessRoute,
+    flask_rule_to_openapi_path,
+    register_api_schema_route,
+)
+from app_schema.routes import error_response, model_response, parse_request_body
+from flask import Blueprint, Response, request, send_file
 from flask.typing import ResponseReturnValue
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.pure import pure
 from loguru import logger
-from pydantic import Field
+from pydantic import ConfigDict, Field, field_validator
+from workspace_layout.windows import WindowClosedHint, window_query_value
 
 from terminal_app.errors import (
     InvalidTerminalValueError,
@@ -46,14 +56,12 @@ from terminal_app.sessions import TmuxSessionSource
 BLUEPRINT_NAME: Final[str] = "terminal_pages"
 NEW_PATH: Final[str] = "/new"
 HEALTH_PATH: Final[str] = "/api/health"
+APP_DISPLAY_NAME: Final[str] = "Terminal"
+APP_DESCRIPTION: Final[str] = "Web terminals inside the workspace, one per window."
 # Where the shell posts a closed window of the terminal (the manifest's ``window_closed_path``): a sweep runs at once.
 WINDOW_CLOSED_PATH: Final[str] = "/api/window-closed"
 HTTP_NO_CONTENT: Final[int] = 204
 SESSION_API_PATH: Final[str] = "/api/sessions/<name>"
-
-# The one parameter the ``new`` launch path takes (system/apps/terminal/app.toml); the shell posts it in a JSON
-# object beside its own envelope fields, which are ignored here.
-WORKDIR_PARAM: Final[str] = "workdir"
 
 HTTP_BAD_REQUEST: Final[int] = 400
 HTTP_NOT_FOUND: Final[int] = 404
@@ -77,15 +85,31 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>__TITLE__</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #000; color: #ddd; font-family: system-ui, sans-serif; }
-  iframe { display: block; width: 100%; height: 100%; border: 0; }
-  #empty { display: flex; height: 100%; align-items: center; justify-content: center; font-size: 14px; color: #888; }
+  html { height: 100%; }
+  body { display: flex; flex-direction: column; height: 100%; height: 100dvh; margin: 0; background: #000; color: #ddd; font-family: system-ui, sans-serif; }
+  iframe { display: block; flex: 1 1 0; min-height: 0; width: 100%; border: 0; }
+  #empty { display: flex; flex: 1 1 0; align-items: center; justify-content: center; font-size: 14px; color: #888; }
+  /* The phone's key strip: the keys a soft keyboard lacks, under the terminal and so above the keyboard. */
+  #keys { display: none; flex: none; gap: 6px; padding: 6px; background: #111; border-top: 1px solid #262626; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  #keys button { flex: 1 1 0; min-width: 0; height: 36px; padding: 0; border: 1px solid #333; border-radius: 6px; background: #1c1c1c; color: #ddd; font: 13px system-ui, sans-serif; }
+  #keys button[aria-pressed="true"] { background: #ddd; border-color: #ddd; color: #000; }
+  /* A finger on a phone-sized page, by the shell's phone rule: a mouse-driven desktop window that small never gets it. */
+  @media (pointer: coarse) and (max-width: 500px) and (max-height: 1000px), (pointer: coarse) and (max-height: 500px) and (max-width: 1000px) { #keys { display: flex; } }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <iframe id="pty" title="Terminal" hidden sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="clipboard-read; clipboard-write"></iframe>
 <div id="empty" hidden></div>
+<div id="keys" role="toolbar" aria-label="Terminal keys" hidden>
+  <button type="button" data-key="Escape">Esc</button>
+  <button type="button" data-key="Tab">Tab</button>
+  <button type="button" data-ctrl aria-pressed="false">Ctrl</button>
+  <button type="button" data-key="ArrowLeft" aria-label="Left">&larr;</button>
+  <button type="button" data-key="ArrowUp" aria-label="Up">&uarr;</button>
+  <button type="button" data-key="ArrowDown" aria-label="Down">&darr;</button>
+  <button type="button" data-key="ArrowRight" aria-label="Right">&rarr;</button>
+</div>
 <script type="application/json" id="__CONFIG_ID__">__CONFIG__</script>
 <script type="module">
   // The page is plain HTML served by the terminal app: the contract module comes from this
@@ -97,6 +121,8 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
   const RETRY_MS = 2000;
   const frame = document.getElementById("pty");
   const empty = document.getElementById("empty");
+  const keys = document.getElementById("keys");
+  const ctrlKey = keys.querySelector("[data-ctrl]");
   let current = config.session;
   let connection = null;
 
@@ -118,8 +144,41 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
 
   function showEmpty(message) {
     frame.hidden = true;
+    keys.hidden = true;
     empty.textContent = message;
     empty.hidden = false;
+  }
+
+  // ttyd fits its grid once at mount, with the DOM renderer's whole-pixel cell width, then
+  // switches to its WebGL renderer, whose narrower cell leaves that column count short of the
+  // pane; it only refits on a resize, and only listens for one once its socket is open. A
+  // one-pixel nudge of the frame after it loads is such a resize; the second covers a slow
+  // socket.
+  const NUDGE_DELAYS_MS = [500, 2000];
+  let nudgeTimers = [];
+  function nudgeFrameSize() {
+    frame.style.marginBottom = "1px";
+    // Lay the shrunk frame out now: restored before the next layout, the frame never changes size.
+    void frame.offsetHeight;
+    requestAnimationFrame(() => { frame.style.marginBottom = ""; });
+  }
+  function scheduleRefitNudges() {
+    nudgeTimers.forEach(clearTimeout);
+    nudgeTimers = NUDGE_DELAYS_MS.map((delay) => setTimeout(nudgeFrameSize, delay));
+  }
+  frame.addEventListener("load", scheduleRefitNudges);
+
+  // A soft keyboard opening or closing resizes the visual viewport; once it settles, nudge the
+  // frame so ttyd refits its grid to whatever the page now gives it.
+  const VIEWPORT_SETTLE_MS = 150;
+  let viewportNudgeTimer = null;
+  window.visualViewport?.addEventListener("resize", () => {
+    clearTimeout(viewportNudgeTimer);
+    viewportNudgeTimer = setTimeout(nudgeFrameSize, VIEWPORT_SETTLE_MS);
+  });
+
+  function pointFrameAt(src) {
+    if (frame.src !== src) frame.src = src;
   }
 
   function show(page) {
@@ -131,10 +190,10 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
     } else {
       empty.hidden = true;
       frame.hidden = false;
+      keys.hidden = false;
       // A navigate to the session already framed re-points at the same target: assigning the
       // same src again would reload the frame and drop the live ttyd connection.
-      const src = originFor(page.pty_label) + page.pty_path;
-      if (frame.src !== src) frame.src = src;
+      pointFrameAt(originFor(page.pty_label) + page.pty_path);
     }
     connection?.location(pathFor(page.name), page.title);
   }
@@ -178,15 +237,51 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
     void refresh(session);
   }
 
-  function focusPty() {
-    frame.contentWindow?.postMessage({ type: "ttyd-focus" }, "*");
+  function postToPty(message) {
+    frame.contentWindow?.postMessage(message, "*");
   }
 
-  // The shell grants focus to the frame it created, which is this page: pass it on to ttyd.
+  function focusPty() {
+    postToPty({ type: "ttyd-focus" });
+  }
+
+  // The strip's keys go to the script dwt adds to ttyd's page (terminal_app/pty_page.py). Ctrl
+  // is one-shot: it rides on the next strip key, or the pty page applies it to the next key
+  // typed and posts back that it was used.
+  let isCtrlArmed = false;
+  function setCtrlArmed(armed) {
+    isCtrlArmed = armed;
+    ctrlKey.setAttribute("aria-pressed", String(armed));
+  }
+  function pressKey(button) {
+    if (button === ctrlKey) {
+      setCtrlArmed(!isCtrlArmed);
+      postToPty({ type: "terminal:ctrl", armed: isCtrlArmed });
+    } else {
+      postToPty({ type: "terminal:key", key: button.dataset.key, ctrl: isCtrlArmed });
+      setCtrlArmed(false);
+    }
+  }
+  // A key acts on press and never takes focus, so the terminal keeps it and the soft keyboard
+  // stays up; a press anywhere else on the strip just hands focus back to the terminal.
+  for (const type of ["touchstart", "mousedown"]) {
+    keys.addEventListener(type, (event) => event.preventDefault(), { passive: false });
+  }
+  keys.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (event.button !== 0) return;
+    const button = event.target.closest("button");
+    if (button !== null) pressKey(button);
+    focusPty();
+  });
+  frame.addEventListener("load", () => setCtrlArmed(false));
+
   window.addEventListener("message", (event) => {
-    if (event.source !== window.parent) return;
     const data = event.data;
-    if (data !== null && typeof data === "object" && data.type === "ttyd-focus") focusPty();
+    if (data === null || typeof data !== "object") return;
+    // The shell grants focus to the frame it created, which is this page: pass it on to ttyd.
+    if (event.source === window.parent && data.type === "ttyd-focus") focusPty();
+    if (event.source === frame.contentWindow && data.type === "terminal:ctrl") setCtrlArmed(data.armed === true);
   });
   window.addEventListener("focus", () => connection?.focused());
 
@@ -200,7 +295,7 @@ _PAGE_TEMPLATE: Final[str] = """<!doctype html>
     import("__CONTRACT_PATH__")
       .then(({ connectToShell }) => {
         connection = connectToShell({
-          capabilities: { navigation: true },
+          capabilities: { navigation: true, closeChord: false },
           onNavigate: navigate,
           onShown: focusPty,
         });
@@ -232,20 +327,52 @@ class PageConfig(FrozenModel):
     page: SessionPage | None = Field(description="The session's page, when there is a session")
 
 
+class NewTerminalRequest(FrozenModel):
+    """What a ``new`` launch posts: the one parameter the launch path declares (system/apps/terminal/app.toml)."""
+
+    # The shell posts its envelope fields (client_id, desktop_id, window_path) beside the param; they are ignored here.
+    model_config = ConfigDict(extra="ignore")
+
+    workdir: Workdir | None = Field(
+        default=None, description="The directory the terminal's shell starts in; absent or \"\" for the default"
+    )
+
+    @field_validator("workdir", mode="before")
+    @classmethod
+    def _empty_means_default(cls, value: object) -> object:
+        return None if value == "" else value
+
+
+class NewTerminalResponse(FrozenModel):
+    """What a ``new`` launch answers: where the new terminal's page is."""
+
+    path: str = Field(description="The path of the new terminal's page on this origin, which a window shows")
+
+
+class HealthResponse(FrozenModel):
+    """What the health probe answers."""
+
+    status: str = Field(description="Always 'ok'")
+
+
+# What every route exchanges, which the app's API document publishes and every parse and answer is checked against.
+ROUTE_TABLE: RouteTable = {
+    ("GET", "/"): SchemalessRoute(reason="the page framing one terminal"),
+    ("POST", NEW_PATH): RouteModels(request_model=NewTerminalRequest, response_model=NewTerminalResponse),
+    ("GET", flask_rule_to_openapi_path(SESSION_API_PATH)): RouteModels(response_model=SessionPage),
+    ("GET", HEALTH_PATH): RouteModels(response_model=HealthResponse),
+    ("POST", WINDOW_CLOSED_PATH): RouteModels(request_model=WindowClosedHint, success_status=HTTP_NO_CONTENT),
+    ("GET", APP_CONTRACT_ROUTE): SchemalessRoute(reason="the app contract module, a JavaScript file"),
+}
+
+
 @pure
-@pure
-def closed_window_terminal(hint_body: object) -> TmuxSessionName | None:
+def closed_window_terminal(hint: WindowClosedHint) -> TmuxSessionName | None:
     """The terminal a closed window showed, from the ``path`` of the shell's hint.
 
-    None for a path with no session (the root, or one naming something that is not a session name), or a body of
-    another shape than the shell posts.
+    None for a path with no session (the root, or one naming something that is not a session name).
     """
-    if not isinstance(hint_body, dict):
-        return None
-    path = hint_body.get("path")
-    if not isinstance(path, str):
-        return None
-    raw_name = window_query_value(path, SESSION_QUERY_KEY)
+    raw_name = window_query_value(hint.path, SESSION_QUERY_KEY)
     if raw_name is None:
         return None
     try:
@@ -275,26 +402,6 @@ def render_page(config: PageConfig) -> str:
     return _PLACEHOLDER.sub(lambda match: values[match.group(1)], _PAGE_TEMPLATE)
 
 
-def _workdir(raw: object) -> Workdir | None:
-    """The ``workdir`` a ``new`` request's body names, or None for the default (absent or ""); a bad one is a 400."""
-    if raw is None or raw == "":
-        return None
-    if not isinstance(raw, str):
-        raise InvalidTerminalValueError(f"invalid {WORKDIR_PARAM!r}: must be a string")
-    try:
-        return Workdir(raw)
-    except InvalidTerminalValueError as e:
-        raise InvalidTerminalValueError(f"invalid {WORKDIR_PARAM!r}: {e}") from e
-
-
-def _launch_body() -> dict[str, object]:
-    """The JSON object a ``new`` launch posts; anything else is a 400."""
-    body = request.get_json(force=True, silent=True)
-    if not isinstance(body, dict):
-        raise InvalidTerminalValueError("the launch body must be a JSON object")
-    return body
-
-
 def build_pages_blueprint(
     source: TmuxSessionSource,
     registry_path: Path,
@@ -307,6 +414,14 @@ def build_pages_blueprint(
     the page refreshes from, the health probe, and
     the app contract module at ``contract_path`` (the shell's build output, served from this origin)."""
     blueprint = Blueprint(BLUEPRINT_NAME, __name__)
+    register_api_schema_route(
+        blueprint,
+        DEFAULT_API_SCHEMA_PATH,
+        title=APP_DISPLAY_NAME,
+        description=APP_DESCRIPTION,
+        route_table=ROUTE_TABLE,
+    )
+    attach_document_policy(blueprint)
 
     def session_page(name: TmuxSessionName) -> SessionPage:
         listed = next((terminal for terminal in source.list_terminals() if terminal.name == name), None)
@@ -320,6 +435,7 @@ def build_pages_blueprint(
 
     @blueprint.get("/")
     def wrapper_page() -> ResponseReturnValue:
+        """The page framing one terminal (``?session=<name>``), or the bare page when no session is named."""
         raw_session = request.args.get(SESSION_QUERY_KEY, "")
         session = _session_name(raw_session) if raw_session != "" else None
         config = PageConfig(session=session, page=session_page(session) if session is not None else None)
@@ -329,46 +445,50 @@ def build_pages_blueprint(
 
     @blueprint.post(NEW_PATH)
     def new_terminal() -> ResponseReturnValue:
-        created = source.create_terminal(_workdir(_launch_body().get(WORKDIR_PARAM)))
-        return jsonify({"path": session_page_path(created.name)})
+        """Open a new terminal (its tmux session, in ``workdir`` when given) and answer the path of its page."""
+        created = source.create_terminal(parse_request_body(NewTerminalRequest).workdir)
+        return model_response(NewTerminalResponse(path=session_page_path(created.name)))
 
     @blueprint.get(SESSION_API_PATH)
     def session_json(name: str) -> ResponseReturnValue:
-        return jsonify(session_page(_session_name(name)).model_dump(mode="json"))
+        """One terminal as its page frames it: its title and where on the pty origin it attaches."""
+        return model_response(session_page(_session_name(name)))
 
     @blueprint.get(HEALTH_PATH)
     def health() -> ResponseReturnValue:
-        return jsonify({"status": "ok"})
+        """Whether the app is up."""
+        return model_response(HealthResponse(status="ok"))
 
     @blueprint.post(WINDOW_CLOSED_PATH)
     def window_closed() -> ResponseReturnValue:
+        """The shell says a terminal window closed; the terminals no window shows any more are swept now."""
         # The body says which window closed, which is proof a window showed its terminal; what is shown now
         # is still read from the shell.
-        on_window_closed(closed_window_terminal(request.get_json(silent=True)))
+        on_window_closed(closed_window_terminal(parse_request_body(WindowClosedHint)))
         return "", HTTP_NO_CONTENT
 
     @blueprint.get(APP_CONTRACT_ROUTE)
     def app_contract() -> ResponseReturnValue:
+        """The app contract module: how the page talks to the shell framing it."""
         if not contract_path.is_file():
-            return (
-                jsonify({"detail": f"the workspace shell's frontend is not built: {contract_path} is missing"}),
-                HTTP_NOT_FOUND,
+            return error_response(
+                f"the workspace shell's frontend is not built: {contract_path} is missing", HTTP_NOT_FOUND
             )
         # Flask resolves a relative path against the app's own directory, not the cwd the path names.
         return send_file(contract_path.absolute(), mimetype="text/javascript")
 
     @blueprint.errorhandler(UnknownSessionPageError)
     def answer_unknown_session(error: UnknownSessionPageError) -> ResponseReturnValue:
-        return jsonify({"detail": str(error)}), HTTP_NOT_FOUND
+        return error_response(str(error), HTTP_NOT_FOUND)
 
     @blueprint.errorhandler(InvalidTerminalValueError)
     def answer_invalid_value(error: InvalidTerminalValueError) -> ResponseReturnValue:
-        return jsonify({"detail": str(error)}), HTTP_BAD_REQUEST
+        return error_response(str(error), HTTP_BAD_REQUEST)
 
     @blueprint.errorhandler(TerminalAppError)
     def answer_terminal_error(error: TerminalAppError) -> ResponseReturnValue:
         # The app's own failures (tmux refusing, the store unreadable) answer a detail body rather than Flask's bare 500.
         logger.opt(exception=error).error("Failed to serve a terminal page request")
-        return jsonify({"detail": str(error)}), HTTP_INTERNAL_ERROR
+        return error_response(str(error), HTTP_INTERNAL_ERROR)
 
     return blueprint

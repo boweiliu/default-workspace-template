@@ -17,10 +17,10 @@ vi.mock("../models/Response", async (importOriginal) => ({
 import m from "mithril";
 import type { ToolCall, ToolResultEvent } from "../models/Response";
 import { setBlockExpanded } from "./expansion-state";
-import { ToolChipGroup, formatToolInput, type ChipCall } from "./ToolChipGroup";
+import { ToolChipGroup, formatToolInput, type ChipCall, type ChipEntry, type StatusChip } from "./ToolChipGroup";
 
 function chip(call: ToolCall, eventId = "a-1"): ChipCall {
-  return { call, eventId };
+  return { kind: "tool", call, eventId };
 }
 
 function result(over: Partial<ToolResultEvent> & Pick<ToolResultEvent, "tool_call_id">): ToolResultEvent {
@@ -38,7 +38,7 @@ function result(over: Partial<ToolResultEvent> & Pick<ToolResultEvent, "tool_cal
 
 let root: HTMLElement;
 
-function mount(chips: ChipCall[], results: ToolResultEvent[] = []): void {
+function mount(chips: ChipEntry[], results: ToolResultEvent[] = []): void {
   const toolResults = new Map(results.map((r) => [r.tool_call_id, r]));
   m.render(root, m(ToolChipGroup, { chips, toolResults, chatId: "agent-x" }));
 }
@@ -56,7 +56,7 @@ function detailText(): string {
 }
 
 /** Click a chip and re-render, as a redraw would. */
-function click(index: number, chips: ChipCall[], results: ToolResultEvent[] = []): void {
+function click(index: number, chips: ChipEntry[], results: ToolResultEvent[] = []): void {
   chipButtons()[index].click();
   mount(chips, results);
 }
@@ -191,10 +191,36 @@ describe("the tool chip row", () => {
     setBlockExpanded("chip:c-kept", false);
   });
 
-  it("marks a failed call on the chip itself, before anything is opened", () => {
+  // Asserted on the class rather than a computed style: Tailwind v4 emits
+  // nothing for a utility that does not resolve, and jsdom has no layout.
+  it("gives up its own margin at the edges of the message it sits in", () => {
+    mount([chip(read)]);
+    const group = root.querySelector(".tool-chip-group")!;
+    expect(group.className).toContain("first:mt-0");
+    expect(group.className).toContain("last:mb-0");
+  });
+
+  // The two are uneven on purpose: the line above introduces the run, the one
+  // below is the agent moving on to what it found. Evening them up (to a `my-`)
+  // is the tempting tidy-up, and it reads as the result being part of the work.
+  it("sits closer to the line that introduces it than to what follows", () => {
+    mount([chip(read)]);
+    const group = root.querySelector(".tool-chip-group")!;
+    expect(group.className).toContain("mt-1.5");
+    expect(group.className).toContain("mb-5");
+  });
+
+  // Deliberately unmarked -- the agent explains a failure in prose below it, so
+  // the chip reads like any other.
+  it("leaves a failed call looking like every other chip", () => {
+    // The expansion store outlives a test, and an open chip has a tone of its
+    // own; closing both is what leaves the failure as the only difference.
+    setBlockExpanded("chip:c1", false);
+    setBlockExpanded("chip:c2", false);
     mount([chip(read), chip(exec)], [result({ tool_call_id: "c2", is_error: true })]);
     expect(chipButtons()[0].className).toContain("text-faint");
-    expect(chipButtons()[1].className).toContain("text-danger");
+    expect(chipButtons()[1].className).toContain("text-faint");
+    expect(chipButtons()[1].className).not.toContain("text-danger");
   });
 });
 
@@ -204,6 +230,7 @@ describe("the open chip's detail panel", () => {
 
   beforeEach(() => {
     setBlockExpanded("chip:pc-1", true);
+    setBlockExpanded("chip-output:pc-1", false);
   });
 
   it("shows loading notes and requests both payloads while nothing is cached", () => {
@@ -228,6 +255,93 @@ describe("the open chip's detail panel", () => {
     expect(detailText()).toContain("the whole output");
   });
 
+  /** Stub the detail fetch so the output pane loads `output` and the input is absent. */
+  function loadOutput(output: string): void {
+    mockDetailState.mockImplementation((_chatId: string, eventId: string) =>
+      eventId === "a-pc-1"
+        ? { state: "loaded", detail: { inputs_by_tool_call_id: {}, output: null, thinking: null } }
+        : { state: "loaded", detail: { inputs_by_tool_call_id: {}, output, thinking: null } },
+    );
+  }
+
+  function toggle(): HTMLButtonElement | null {
+    return root.querySelector<HTMLButtonElement>(".tool-call-output-toggle");
+  }
+
+  // The chip that opened the panel can be a screenful above it once the output is
+  // long, so the header repeats what the call was and carries the way out.
+  it("heads the panel with the call's own phrase and a close control", () => {
+    loadOutput("out");
+    mount([chip({ ...call, action_note: "Check disk usage" }, "a-pc-1")], [done]);
+    const header = root.querySelector(".tool-chip-detail-header")!;
+    expect(header.textContent).toContain("Check disk usage");
+    expect(header.querySelector(".tool-chip-detail-close")).not.toBeNull();
+  });
+
+  it("closes the chip from the header's close control", () => {
+    loadOutput("out");
+    mount([chip(call, "a-pc-1")], [done]);
+    root.querySelector<HTMLButtonElement>(".tool-chip-detail-close")!.click();
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(root.querySelector(".tool-chip-detail")).toBeNull();
+  });
+
+  it("shows a short output whole, with nothing to ask about", () => {
+    loadOutput(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n"));
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(detailText()).toContain("line 20");
+    expect(toggle()).toBeNull();
+  });
+
+  // A trailing newline must not make a 20-line output look like 21 and get clamped.
+  it("does not count the empty line a trailing newline leaves behind", () => {
+    loadOutput(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(toggle()).toBeNull();
+  });
+
+  it("clamps a long output and offers the whole of it by line count", () => {
+    loadOutput(Array.from({ length: 64 }, (_, i) => `line ${i + 1}`).join("\n"));
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(detailText()).toContain("line 20");
+    expect(detailText()).not.toContain("line 21");
+    expect(toggle()!.textContent).toBe("View all 64 lines");
+  });
+
+  it("opens the clamp up, and offers the way back", () => {
+    loadOutput(Array.from({ length: 64 }, (_, i) => `line ${i + 1}`).join("\n"));
+    mount([chip(call, "a-pc-1")], [done]);
+    toggle()!.click();
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(detailText()).toContain("line 64");
+    expect(toggle()!.textContent).toBe("Show less");
+  });
+
+  // The unfold is a second key in a store nothing sweeps, so it has to be cleared
+  // with the chip or a reopened panel dumps the whole log again.
+  it("forgets an unfolded output when the chip is closed", () => {
+    loadOutput(Array.from({ length: 64 }, (_, i) => `line ${i + 1}`).join("\n"));
+    mount([chip(call, "a-pc-1")], [done]);
+    toggle()!.click();
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(detailText()).toContain("line 64");
+
+    root.querySelector<HTMLButtonElement>(".tool-chip-detail-close")!.click();
+    setBlockExpanded("chip:pc-1", true);
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(detailText()).not.toContain("line 64");
+    expect(toggle()!.textContent).toBe("View all 64 lines");
+  });
+
+  // Minified JSON, base64, a captured request body: one logical line the pane
+  // wraps into hundreds of visual ones, which a line count alone never catches.
+  it("clamps a payload with no newlines in it at all", () => {
+    loadOutput("x".repeat(5000));
+    mount([chip(call, "a-pc-1")], [done]);
+    expect(toggle()!.textContent).toBe("Show the whole output");
+    expect(root.querySelector(".tool-call-output")!.textContent!.length).toBeLessThan(5000);
+  });
+
   it("shows the quiet placeholder when the payload is gone", () => {
     mockDetailState.mockReturnValue({ state: "unavailable" });
     mount([chip(call, "a-pc-1")], [done]);
@@ -246,6 +360,87 @@ describe("the open chip's detail panel", () => {
     expect(root.querySelector(".tool-call-error-snippet")?.textContent).toContain("FileNotFoundError: no such file");
     // Still loading the real output, and the snippet did not wait for it.
     expect(detailText()).toContain("Loading");
+  });
+});
+
+describe("a status chip in the row", () => {
+  const read: ToolCall = { tool_call_id: "sc-read", tool_name: "Read", input_chars: 20, header_label: "Tool: Read" };
+
+  function statusChip(id: string, output: string): StatusChip {
+    return {
+      kind: "status",
+      id,
+      label: `Status ${id}`,
+      icon: "package",
+      chipClass: "status-marker",
+      detailClass: "status-detail-marker",
+      sections: [
+        { kind: "content", render: () => m("div", { class: "status-intro" }, "Why it happened") },
+        { kind: "output", marker: "status-output", text: output },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    for (const key of ["chip:sc-read", "chip:sc-1", "chip:sc-2", "chip-output:sc-1"]) setBlockExpanded(key, false);
+  });
+
+  it("wears the tool chip's chrome, with its own marker, glyph and label", () => {
+    mount([chip(read), statusChip("sc-1", "out")]);
+    const button = chipButtons()[1];
+    expect(button.className).toContain("tool-chip");
+    expect(button.className).toContain("status-marker");
+    expect(button.title).toBe("Status sc-1");
+    expect(labels()[1]).toBe("Status sc-1");
+    // lucide `package`: the polyline that draws its lid.
+    expect(button.querySelector("svg polyline")?.getAttribute("points")).toBe("3.29 7 12 12 20.71 7");
+  });
+
+  it("opens one at a time with the tool chips around it", () => {
+    mockDetailState.mockReturnValue(undefined);
+    const chips: ChipEntry[] = [chip(read), statusChip("sc-1", "out"), statusChip("sc-2", "out")];
+    mount(chips);
+    click(0, chips);
+    click(1, chips);
+    expect(chipButtons().map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true", "false"]);
+    click(2, chips);
+    expect(chipButtons().map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
+    expect(root.querySelectorAll(".tool-chip-detail")).toHaveLength(1);
+  });
+
+  it("heads its panel with its own glyph and label, and lays its sections out with the dashed rule", () => {
+    setBlockExpanded("chip:sc-1", true);
+    mount([statusChip("sc-1", "the summary")]);
+    const panel = root.querySelector(".tool-chip-detail")!;
+    expect(panel.classList.contains("status-detail-marker")).toBe(true);
+    const header = panel.querySelector(".tool-chip-detail-header")!;
+    expect(header.querySelector(".tool-chip-detail-title")?.textContent).toBe("Status sc-1");
+    expect(header.querySelector("svg polyline")?.getAttribute("points")).toBe("3.29 7 12 12 20.71 7");
+    const [first, second, ...rest] = Array.from(panel.children).slice(1);
+    expect(first.classList.contains("status-intro")).toBe(true);
+    expect(second.className).toContain("border-dashed");
+    expect(second.querySelector(".status-output")?.textContent).toBe("the summary");
+    expect(rest).toEqual([]);
+    // Everything it shows is the page's own: nothing is fetched.
+    expect(mockRequestDetail).not.toHaveBeenCalled();
+  });
+
+  it("clamps a long output the way a tool's is, and forgets the unfold when closed", () => {
+    setBlockExpanded("chip:sc-1", true);
+    const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
+    const chips = [statusChip("sc-1", long)];
+    mount(chips);
+    expect(detailText()).not.toContain("line 21");
+    root.querySelector<HTMLButtonElement>(".tool-call-output-toggle")!.click();
+    mount(chips);
+    expect(detailText()).toContain("line 30");
+
+    root.querySelector<HTMLButtonElement>(".tool-chip-detail-close")!.click();
+    mount(chips);
+    expect(root.querySelector(".tool-chip-detail")).toBeNull();
+    setBlockExpanded("chip:sc-1", true);
+    mount(chips);
+    expect(detailText()).not.toContain("line 21");
   });
 });
 

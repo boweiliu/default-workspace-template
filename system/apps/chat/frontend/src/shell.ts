@@ -14,8 +14,9 @@ import type { CreatedChat } from "./models/Chats";
 import type { ModelIdentity } from "./models/ModelSettings";
 import { connectToShell } from "@imbue/workspace-ui/src/app_contract";
 import type { ShellConnection, ShellHandshake } from "@imbue/workspace-ui/src/app_contract";
-import { currentPresenceState, reportPresence, startPresenceReporting } from "./presence";
+import { currentPresenceState, reportFocusChange, reportPresence, startPresenceReporting } from "./presence";
 import type { ChatPageEmbedApi } from "./embedApi";
+import { setCompactFromRoot } from "./compactLayout";
 import { rootPathFor } from "./root/selection";
 import { prependToComposer } from "./views/MessageInput";
 
@@ -25,6 +26,12 @@ export function subagentViewPath(key: string): string {
 }
 
 let connection: ShellConnection | null = null;
+let lastHandshake: ShellHandshake | null = null;
+
+/** The shell's last handshake to this page (or the root's, handed down), null before one. */
+export function getShellHandshake(): ShellHandshake | null {
+  return lastHandshake;
+}
 // Whether the shell says this page is on screen: true until told otherwise on a top-level
 // visit, and false from the moment a framed page connects, until the shell says shown.
 let isShown = true;
@@ -46,8 +53,8 @@ export function isFrameRendered(): boolean {
 export interface ChatShellOptions {
   /**
    * Whether this page reports its presence for `chatId`. A chat's own page does; a subagent
-   * view does not, because the chat app keeps one report per chat and client, and a second
-   * page of the same chat in the same client would overwrite the chat page's own.
+   * view does not: it is not the chat, so its being on screen says nothing about whether the
+   * user is reading the chat.
    */
   isPresenceReported: boolean;
   /** The path this page is served at, which it reports as its location (contracts.md section 7). */
@@ -56,15 +63,17 @@ export interface ChatShellOptions {
 
 /**
  * Connect the page for `chatId`: adopt the client identity the shell hands over, follow the
- * window's visibility for the panel and (when this page reports it) for presence, and forward
- * focus so the shell raises the window.
+ * window's visibility for the panel and (when this page reports it) for presence, forward
+ * focus so the shell raises the window, and (when this page reports presence) report the
+ * document's focus as it comes and goes, framed or visited directly.
  */
 export function connectChatToShell(chatId: string, options: ChatShellOptions): ShellConnection {
   const { isPresenceReported } = options;
   const onHandshake = (received: ShellHandshake): void => {
+    lastHandshake = received;
     adoptClientIdentity({ clientId: received.clientId, desktopId: received.desktopId });
     // Hidden until the shell says shown: a page can load into a background tab, and open
-    // (any client's unexpired report) is what a hidden report keeps.
+    // (any page's unexpired visible or hidden report) is what a hidden report keeps.
     if (isPresenceReported) startPresenceReporting(chatId, received.clientId, isShown ? "visible" : "hidden");
     m.redraw();
   };
@@ -81,19 +90,22 @@ export function connectChatToShell(chatId: string, options: ChatShellOptions): S
   connection = connectToShell({ onHandshake, onShown, onHidden });
   if (connection.isFramed) {
     // The chat root frames chat pages from this same origin and drives them by calling in
-    // rather than by messaging (it never sends the shell's messages); the shell's own frames
-    // ignore this, since a cross-origin parent cannot reach it.
+    // rather than by messaging (of the shell's messages, only the handshake comes down as one);
+    // the shell's own frames ignore this, since a cross-origin parent cannot reach it.
     const embedApi: ChatPageEmbedApi = {
-      handshake: onHandshake,
       shown: onShown,
       hidden: onHidden,
       prependDraft: (text) => prependToComposer(chatId, text),
+      setCompact: (isCompact) => {
+        setCompactFromRoot(isCompact);
+        m.redraw();
+      },
     };
     window.chatPageEmbed = embedApi;
   }
   if (!connection.isFramed) {
     // A direct visit has no shell to say when the page is showing; the document's own
-    // visibility is the closest fact, and there is no shell-handed client id to key on.
+    // visibility is the closest fact, and there is no shell-handed client id to report.
     if (isPresenceReported) {
       startPresenceReporting(chatId, "direct-visit", document.visibilityState === "visible" ? "visible" : "hidden");
       document.addEventListener("visibilitychange", () => {
@@ -107,6 +119,8 @@ export function connectChatToShell(chatId: string, options: ChatShellOptions): S
     window.addEventListener("pagehide", () => {
       if (currentPresenceState() !== "closed") reportPresence("closed");
     });
+    window.addEventListener("focus", reportFocusChange);
+    window.addEventListener("blur", reportFocusChange);
   }
   window.addEventListener("focus", () => connection?.focused());
   reportChatLocation(chatId, options.path);

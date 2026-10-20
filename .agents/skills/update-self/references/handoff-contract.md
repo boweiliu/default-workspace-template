@@ -10,7 +10,7 @@ target release's own copy (or the local one, when the ref predates the skill).
 
 - **Steps 1-2 always run from the local copy.** They are what decide `$REF`,
   so by construction they cannot come from the target. A future version's
-  Steps 1-2 must stay "capture a backup, the lease and clean-tree checks, then
+  Steps 1-2 must stay "check the backup, the lease and clean-tree checks, then
   resolve a ref into `$REF`".
 - **The target's flow is entered at Step 3**, and everything from there on --
   the worker dispatch, the report audit, and the apply (Step 5b runs the
@@ -46,6 +46,14 @@ target release's own copy (or the local one, when the ref predates the skill).
   provides** (`scripts/launcher_contract_test.py` pins that set to the oldest
   release the app updates from). Clearing the previous pass's worker uses
   plain `mngr list` / `mngr destroy` for this reason.
+- **The report poll runs the staged skill's own `scripts/run_in_background.py`**,
+  a byte-identical mirror of `system/scripts/run_in_background.py` (a test
+  holds the two equal), not the workspace's `system/scripts/` copy, which an
+  older tree lacks. It is standard-library only, wraps the floor launcher's
+  `await`, and looks up its messenger in the workspace's tree:
+  `system/scripts/message_chat.py` where there is one (minds-v0.6.1 on), else
+  `mngr message`. `scripts/staged_runner_test.py` holds what it asks of each
+  to the oldest release that has it.
 
 ## What the apply must tolerate
 

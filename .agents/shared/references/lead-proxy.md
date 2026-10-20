@@ -11,12 +11,16 @@ Merging the milestone" names plumbing nobody can see. Say what changed, or nothi
 
 ## Polling for the next report
 
-Start a background poll for the report file with `create_worker.py await`. It
-reads `finish_report_path` from the task file's frontmatter, blocks until that
-file appears, prints its contents, and exits 0; on timeout it exits non-zero
-(code 124). Run it with Bash's `run_in_background: true` so it returns the
-instant the report lands. `--name <WORKER_NAME>` is required (the same name you
-passed to `launch`) so the poll also watches the OOM shed ledger.
+Poll for the report file with `create_worker.py await`, started through
+`system/scripts/run_in_background.py`. `await` reads `finish_report_path` from
+the task file's frontmatter, blocks until that file appears, prints its
+contents, and exits 0; on timeout it exits non-zero (code 124).
+`run_in_background.py` returns at once and runs it detached; when `await`
+exits, its exit code and everything it printed arrive in your chat as a
+message, and that message starts your next turn. Use it whatever your harness:
+most harnesses' own background tools do not wake you, and this works on every
+one. `--name <WORKER_NAME>` is required (the same name you passed to
+`launch`) so the poll also watches the OOM shed ledger.
 
 `await` is a generic poll-until-file primitive; the gate cycle below is this
 flow's *use* of it. Non-interactive callers that launch a tightly-scoped agent
@@ -24,26 +28,29 @@ and wait for one finish report use the same `await` (or the synchronous
 `create_worker.py launch-sync` wrapper) with no gate handling.
 
 ```bash
-# Run with Bash run_in_background: true
-uv run .agents/skills/launch-task/scripts/create_worker.py await \
+python3 system/scripts/run_in_background.py --description "Wait for the background agent" -- \
+    uv run .agents/skills/launch-task/scripts/create_worker.py await \
     --name <WORKER_NAME> \
     --task-file <TASK_FILE>
 ```
 
 `--timeout` defaults to `30m`; pass e.g. `--timeout 60m` to re-arm with a longer
-wait. The tool output is the report contents: YAML frontmatter (`type`, `name`)
-plus a body. If await exits non-zero (timeout) without printing a report, do
-*not* immediately treat it as a terminal failure -- see "Diagnose worker
+wait. The message is a `<background-task-report>`: its `Exit code:` line is
+`await`'s, and its `<output>` is what `await` printed -- the report contents,
+YAML frontmatter (`type`, `name`) plus a body. The chat shows the user only its
+one-line summary. If await exits non-zero (timeout) without printing a report,
+do *not* immediately treat it as a terminal failure -- see "Diagnose worker
 liveness" below.
 
 ### Never sleep on a worker
 
-Once the poll is armed, **end your turn**: its completion wakes you with the
+Once the poll is armed, **end your turn**: its message wakes you with the
 report in seconds, while a `sleep N` is a guess at someone else's finishing time
 and every second between the report landing and the sleep expiring is dead time
-on the critical path. Ending your turn is safe -- a worker with a live
-sub-worker of its own never counts as idle, so the liveness check below will not
-mistake you for a wedged one.
+on the critical path. Ending your turn is safe -- while the poll runs, your
+chat is busy (the chat shows it waiting on a background task, not done), and a
+worker that is busy, or has a live sub-worker of its own, never counts as idle,
+so the liveness check below will not mistake you for a wedged one.
 
 **A worker's report is never polled.** Sleeping on a `find` over its reports
 directory, on `mngr list`, or on `tmux capture-pane` against its pane is the
@@ -51,14 +58,8 @@ same guess in a different command; an armed `await` plus ending the turn is the
 only sanctioned wait on a sibling.
 
 With several workers out, arm one poll per worker before ending the turn. Each
-completion wakes you separately, so you act on whichever reports first and merge
-it while the others are still running.
-
-Your own backgrounded commands are the one exception. Nothing else holds your
-turn open there, so a worker that ends its turn waiting on its own command is
-declared wedged after three idle polls -- about fifteen seconds. Wait on those
-with `sleep 60`, repeated until the output lands: it stays clear of that
-threshold and bounds the overshoot.
+poll's message wakes you separately, so you act on whichever reports first and
+merge it while the others are still running.
 
 `await` also returns **milestone** reports: any file under
 `<REPORTS_DIR>/milestones/` with no same-named entry in `<REPORTS_DIR>/consumed/`.
@@ -70,12 +71,15 @@ next poll.
 
 If await exits with code 75, the worker's own agent was **shed by the OOM
 daemon** to relieve memory pressure: it will not report until revived. This is
-not a worker bug -- revive it with `mngr start <WORKER_NAME> --restart` (a plain
-message or `mngr start` does not relaunch a shed agent), then nudge it to
-continue with `create_worker.py reply --task-file <TASK_FILE> -m continue`. You
-do not need to resend the task: it survives in the worker's conversation
-history, and a SessionStart hook already tells the revived worker it was paused,
-so it re-checks state before continuing.
+not a worker bug -- revive it by nudging it to continue with
+`create_worker.py reply --task-file <TASK_FILE> -m continue`, whose send
+relaunches a shed agent. You do not need to resend the task: it survives in
+the worker's conversation history, and a SessionStart hook already tells the
+revived worker it was paused, so it re-checks state before continuing. Before
+reviving it, and whenever a worker's `question` gate reports that a test
+command was shed, free memory with the user per
+`.agents/shared/references/freeing-memory.md`: a revival or rerun into the
+same pressure is shed again.
 
 ## Diagnose worker liveness before invoking failure flow
 
@@ -97,16 +101,24 @@ extended period, or output has been static.
 
 `await` makes the same call for you in the clearest case: exit code **76** means
 it watched the worker's agent end its turn on several consecutive polls with no
-report -- finished or wedged without reporting, worth surfacing immediately
-rather than waiting out the timeout. That check never fires while the worker has
-a live sub-worker of its own: an agent labelled `lead_agent=<worker>` in state
-RUNNING or WAITING with no pending shed counts as the worker being busy, so an
-intermediate lead waiting on its own child is never mistaken for a dead one.
+report and no longer busy -- finished or wedged without reporting, worth
+surfacing immediately rather than waiting out the timeout. That check never
+fires while the worker is waiting on something that will wake it:
+
+- **A live sub-worker of its own.** An agent labelled `lead_agent=<worker>` in
+  state RUNNING or WAITING with no pending shed counts as the worker being
+  busy, so an intermediate lead waiting on its own child is never mistaken for
+  a dead one.
+- **A background command of its own.** A command the worker started through
+  `run_in_background.py`, or a background task of Claude's own, marks the
+  worker's chat busy until its report reaches the worker, so a worker that
+  ended its turn to wait on its tests is not idle. A worker needs no `sleep` to
+  stay clear of the check.
 
 ## Do not interrupt more recent user work
 
 If the user gave you a more recent task since launching the worker, finish that
-task first. The report notification is informational -- act on it once the
+task first. The report's message is informational -- act on it once the
 user's current request is complete.
 
 ## Parsing the report
@@ -151,8 +163,7 @@ uv run .agents/skills/launch-task/scripts/create_worker.py reply \
 file's frontmatter (`worker_agent_id`) and sends through the chat app
 (`system/scripts/message_chat.py`, which falls back to `mngr message` on its
 own when the chat app cannot take the message); never message a worker by its
-mngr name. A task file from before the stamp (an in-flight worker launched by an
-older template) takes `--name <WORKER_NAME>` as the fallback address.
+mngr name.
 
 To escalate, ask the user, wait for the user's reply, then forward it the same
 way.
@@ -234,7 +245,19 @@ or supersede the pass per `.agents/shared/references/harden-contention.md`.
 
 On `type: status`:
 
-- `name: done` -- merge the worker's branch:
+- `name: done` -- read its `Undeclared couplings:` and `Flaky tests:` lines
+  from its body, or, when that body is only "Committed on branch" or
+  "Verified on branch", from the worker's last `final-creation` gate (under
+  `<REPORTS_DIR>/consumed/`), which carries them instead. If it lists
+  `Undeclared couplings:`, they are built-in defects (a built-in suite
+  observes a path nothing declares, so the test selector missed it): add them
+  to the pass's single report per
+  `.agents/shared/references/report-built-in-issues.md`. If it lists
+  `Flaky tests:`, the worker left them unfixed: a test of a built-in suite is
+  a built-in defect and goes in that same report; a test of a creation the
+  workspace built goes in a regular ticket (`tk create`), so it is fixed later
+  rather than lost with the report.
+  Then merge the worker's branch:
   ```bash
   git merge --no-ff <WORKER_BRANCH>
   ```
@@ -282,6 +305,24 @@ On `type: status`:
 In every status case the report is already in `<REPORTS_DIR>/consumed/` -- the
 `await` that printed it archived it there -- so the reports dir is clean for the
 next run with nothing for you to move.
+
+### Resuming after the user overrides a failure
+
+When the user answers a `stuck` report with a decision (apply it anyway, an
+answer to what blocked the worker), resume the same worker rather than
+finishing its task yourself. Re-take whatever preconditions the calling skill
+holds for a pass (a lease, a run record), then send it the decision:
+
+```bash
+uv run .agents/skills/launch-task/scripts/create_worker.py reply \
+    --task-file <TASK_FILE> -m "<the user's decision>"
+```
+
+The send brings the stopped worker back in its worktree with its conversation
+intact, and `reply` blanks the `archived_at` label the stop set, so a later
+crash of it is restarted like any other
+(`.agents/skills/launch-task/references/dead-worker-recovery.md`). Then re-arm
+the `await` poll and end your turn.
 
 ## When you are a worker yourself
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseClientArrival,
   WireShapeError,
+  isSamePlacement,
   isSameWindowPaths,
   parseAppRecord,
   parseAvatarCatalog,
@@ -11,6 +12,7 @@ import {
   parseDesktop,
   parseInventory,
   parseLayout,
+  parseMessageRelay,
   parsePresentUsers,
   parseWallpaperListings,
   shortcutKey,
@@ -82,6 +84,24 @@ describe("parseClientArrival", () => {
   });
 });
 
+describe("parseMessageRelay", () => {
+  it("reads a shown page's wait for a desktop window, a posted message as not waiting, and refuses the wrong shape", () => {
+    const relay = parseMessageRelay({
+      type: "open:file",
+      deliveries: [
+        { app: "logger", status: 200, detail: "", shown: null, has_no_desktop_window: null, window_id: null },
+        { app: "files", status: 200, detail: "", shown: "opened", has_no_desktop_window: true, window_id: "win-1" },
+      ],
+      detail: null,
+    });
+    expect(relay.deliveries).toEqual([
+      { app: "logger", has_no_desktop_window: false },
+      { app: "files", has_no_desktop_window: true },
+    ]);
+    expect(() => parseMessageRelay({ type: "open:file" })).toThrow(WireShapeError);
+  });
+});
+
 describe("parseLayout", () => {
   it("reads the placements back to front with their stamp", () => {
     const layout = parseLayout({
@@ -98,6 +118,17 @@ describe("parseLayout", () => {
     });
     expect(layout.updated_at).toBe("2026-09-19T14:12:40.001Z");
     expect(layout.placements[0].state).toBe("NORMAL");
+    // A placement without ``is_detached`` (a file from before the flag) reads as attached, and the flag is
+    // part of what tells two placements apart.
+    expect(layout.placements[0].is_detached).toBe(false);
+    const detached = parseLayout({
+      version: 1,
+      updated_at: null,
+      placements: [{ ...layout.placements[0], is_detached: true }],
+    }).placements[0];
+    expect(detached.is_detached).toBe(true);
+    expect(isSamePlacement(layout.placements[0], detached)).toBe(false);
+    expect(isSamePlacement(layout.placements[0], { ...detached, is_detached: false })).toBe(true);
     // A layout with no ``window_paths`` (the save route's echo) reads as one with none.
     expect(parseLayout({ version: 1, updated_at: null, placements: [] })).toEqual({
       updated_at: null,
@@ -156,7 +187,11 @@ describe("parseAppRecord", () => {
     expect(app.default_shortcut).toEqual({ launch: "new", mode: "new" });
     expect(app.launcher_rank).toBe(10);
     expect(app.critical).toBe(false);
+    expect(app.stop_when_no_windows).toBe(false);
     expect(app.pin).toBeNull();
+    expect(
+      parseAppRecord({ name: "docs", url: "http://127.0.0.1:1", stop_when_no_windows: true }).stop_when_no_windows,
+    ).toBe(true);
   });
 
   it("reads a POST launch path with its presets and draft param, and refuses a method or a preset off the wire's shape", () => {
@@ -259,7 +294,21 @@ describe("the small helpers", () => {
       last_seen: "now",
       is_connected: true,
       entries: {},
+      shown_history: [],
+      desktop_revision: 0,
     });
+    expect(
+      parseClientRecord({
+        id: "c1",
+        active_desktop: null,
+        last_seen: "now",
+        is_connected: true,
+        shown_history: ["win-1", "home"],
+      }).shown_history,
+    ).toEqual(["win-1", "home"]);
+    expect(() =>
+      parseClientRecord({ id: "c1", active_desktop: null, last_seen: "now", is_connected: true, shown_history: [3] }),
+    ).toThrow(WireShapeError);
     expect(
       parseClientRecord({
         id: "c1",

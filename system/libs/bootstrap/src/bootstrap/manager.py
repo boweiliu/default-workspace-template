@@ -19,7 +19,12 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.request
+import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -50,6 +55,12 @@ RUNTIME_CRON_DIR = STATE_DIR / "cron.d"
 # names; install only names it will accept and warn about the rest.
 _CRON_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# The last timezone the bootstrap applied. /etc/localtime lives on the container
+# rootfs and is lost when the container is recreated, and the fetch that sets it
+# needs the user's computer to be reachable at boot; a boot whose fetch fails
+# re-applies this instead of leaving the container on UTC.
+USER_TIMEZONE_CACHE = STATE_DIR / "user_timezone"
+
 # The in-flight update-apply marker and the script that rolls a stale one
 # back (see the update-self skill's apply/recover). The marker persists with
 # the container volume, so an apply the previous container run left mid-motion
@@ -61,6 +72,10 @@ UPDATE_APPLY_SCRIPT = Path(".agents/skills/update-self/scripts/update_self.py")
 # than this process's.
 WORKSPACE_ROOT_DIR = Path("/home/user/workspace")
 UPDATE_RECOVER_CRON_NAME = "update-apply-recover"
+# Directly under /run rather than in /var/lock: the image's /var/lock is a
+# symlink to /run/lock, and a container whose /run is a fresh tmpfs has no
+# /run/lock, so `flock` there fails and the guard never runs.
+_UPDATE_RECOVER_LOCK_PATH = Path("/run") / f"{UPDATE_RECOVER_CRON_NAME}.lock"
 # `recover`'s exit code for "the tree is rolled back, but the pre-apply state
 # could not be put back" (the script's own emergency code; it has recorded an
 # emergency.json beside the marker). Distinct from the exit 1 of a rollback
@@ -95,6 +110,19 @@ _STARTER_PROJECT_ID = "project-1"
 # Env var names used by the bootstrap's responsibilities.
 _AGENT_ID_ENV_VAR = "MNGR_AGENT_ID"
 _HOST_DIR_ENV_VAR = "MNGR_HOST_DIR"
+_AGENT_STATE_DIR_ENV_VAR = "MNGR_AGENT_STATE_DIR"
+
+# Where the bootstrap announces each step it runs, one JSON line per event under
+# the standard event envelope, so the desktop that created this workspace can
+# show how far the boot has come while it waits for the system interface. The
+# source name doubles as the folder name, as the envelope convention requires.
+BOOTSTRAP_EVENTS_SOURCE = "bootstrap"
+BOOTSTRAP_EVENTS_RELATIVE_PATH = (
+    Path("events") / BOOTSTRAP_EVENTS_SOURCE / "events.jsonl"
+)
+BOOTSTRAP_STEP_STARTED_EVENT = "bootstrap_step_started"
+BOOTSTRAP_STEP_COMPLETED_EVENT = "bootstrap_step_completed"
+BOOTSTRAP_COMPLETED_EVENT = "bootstrap_completed"
 
 # Global git config applied on every boot: rewrite git@ / ssh:// GitHub
 # remotes to https (there are no SSH credentials in the container). Note that
@@ -188,7 +216,7 @@ def _initialize_workspace_main_branch() -> None:
     with the desktop client's `_rsync_worktree_over_clone` content sitting
     as uncommitted changes on top of the shallow clone's tip.
 
-    We want every new minds workspace to start out on a single clean
+    We want every new Imbue Studio workspace to start out on a single clean
     `main` branch the user can git-log / push from without having to
     reason about the per-host mngr/* branch. So before the chat agent
     is created, we:
@@ -295,7 +323,7 @@ def _parse_timezone_response(body: bytes) -> str:
 
     A well-formed ``{"timezone": ""}`` is the desktop client's documented
     answer when the user's timezone cannot be determined -- a valid response,
-    returned as "" so callers fall back to UTC without treating it as a
+    returned as "" so callers fall back to the cached zone without treating it as a
     failure. Raises ValueError for a non-JSON or non-UTF-8 body and
     TimezoneFetchError for a well-formed body of the wrong shape.
     """
@@ -328,7 +356,7 @@ def _request_timezone(request: urllib.request.Request) -> str:
 
 
 def _fetch_user_timezone() -> str:
-    """Fetch the user's IANA timezone name from the minds desktop client.
+    """Fetch the user's IANA timezone name from the Imbue Studio desktop client.
 
     GETs /api/v1/timezone through the latchkey gateway's minds-api-proxy using
     the gateway env vars mngr injects into the agent environment. Timezone-at-
@@ -336,7 +364,7 @@ def _fetch_user_timezone() -> str:
     cron schedules run in the user's local time. Returns "" on any failure
     (missing env, refused connection, non-200, malformed body) -- and when the
     desktop client itself does not know the timezone -- so the caller can fall
-    back to UTC.
+    back to the cached zone.
     """
     gateway = os.environ.get("LATCHKEY_GATEWAY", "")
     password = os.environ.get("LATCHKEY_GATEWAY_PASSWORD", "")
@@ -357,15 +385,12 @@ def _fetch_user_timezone() -> str:
         timezone_name = _request_timezone(request)
     except (OSError, ValueError, TimezoneFetchError) as e:
         logger.warning(
-            "Could not fetch the user timezone from the gateway ({}); "
-            "container stays on UTC",
+            "Could not fetch the user timezone from the gateway ({})",
             e,
         )
         return ""
     if not timezone_name:
-        logger.debug(
-            "Desktop client does not know the user timezone; container stays on UTC"
-        )
+        logger.debug("Desktop client does not know the user timezone")
     return timezone_name
 
 
@@ -378,7 +403,7 @@ def _apply_container_timezone(
     """Point /etc/localtime and /etc/timezone at the named IANA zone.
 
     The name is validated by loading it with ``ZoneInfo`` -- the same check the
-    minds desktop client applies before serving the value -- which by spec
+    Imbue Studio desktop client applies before serving the value -- which by spec
     rejects absolute paths and ``..`` components (so a malicious response
     cannot traverse out of the zoneinfo dir) and proves the zone is real. The
     ``is_file`` check below still matters: ZoneInfo may resolve a zone from
@@ -408,6 +433,51 @@ def _apply_container_timezone(
         return False
     logger.info("Container timezone set to {}", tz_name)
     return True
+
+
+def _set_container_timezone(
+    fetched_tz_name: str,
+    cache_path: Path = USER_TIMEZONE_CACHE,
+    zoneinfo_dir: Path = Path("/usr/share/zoneinfo"),
+    localtime_path: Path = Path("/etc/localtime"),
+    timezone_path: Path = Path("/etc/timezone"),
+) -> None:
+    """Apply the fetched timezone, or the cached one when the fetched zone is
+    empty or cannot be applied.
+
+    A successfully applied fetched zone is written to ``cache_path`` for the
+    next boot. Best-effort throughout: a missing or unwritable cache is logged,
+    never raised.
+    """
+    if fetched_tz_name and _apply_container_timezone(
+        fetched_tz_name,
+        zoneinfo_dir=zoneinfo_dir,
+        localtime_path=localtime_path,
+        timezone_path=timezone_path,
+    ):
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(fetched_tz_name + "\n")
+        except OSError as e:
+            logger.warning("Could not cache the timezone at {}: {}", cache_path, e)
+        return
+    try:
+        cached_tz_name = cache_path.read_text().strip()
+    except FileNotFoundError:
+        cached_tz_name = ""
+    except (OSError, UnicodeDecodeError) as e:
+        logger.warning("Could not read the cached timezone at {}: {}", cache_path, e)
+        return
+    if not cached_tz_name:
+        logger.info("No timezone applied or cached; container keeps its current zone")
+        return
+    logger.info("Falling back to the last applied timezone {}", cached_tz_name)
+    _apply_container_timezone(
+        cached_tz_name,
+        zoneinfo_dir=zoneinfo_dir,
+        localtime_path=localtime_path,
+        timezone_path=timezone_path,
+    )
 
 
 def _write_update_recovery_cron_entry(target_dir: Path = Path("/etc/cron.d")) -> None:
@@ -454,7 +524,7 @@ def _write_update_recovery_cron_entry(target_dir: Path = Path("/etc/cron.d")) ->
     )
     entry = (
         "PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
-        f"*/5 * * * * root flock -n /var/lock/{UPDATE_RECOVER_CRON_NAME}.lock "
+        f"*/5 * * * * root flock -n {_UPDATE_RECOVER_LOCK_PATH} "
         f"-c '{command}' "
         f">> {SUPERVISOR_LOG_DIR}/{UPDATE_RECOVER_CRON_NAME}.log 2>&1\n"
     )
@@ -790,47 +860,110 @@ def _migrate_legacy_claude_state_best_effort() -> None:
         )
 
 
+def _bootstrap_events_path() -> Path | None:
+    """Where this boot's step events go, or None outside an agent (a bare dev run)."""
+    state_dir = os.environ.get(_AGENT_STATE_DIR_ENV_VAR, "")
+    if not state_dir:
+        return None
+    return Path(state_dir) / BOOTSTRAP_EVENTS_RELATIVE_PATH
+
+
+def _event_timestamp() -> str:
+    """The envelope's nanosecond-precision UTC form (``2026-02-28T00:00:00.123456789Z``), as other writers pad it."""
+    now = datetime.now(timezone.utc)
+    return f"{now.strftime('%Y-%m-%dT%H:%M:%S')}.{now.microsecond:06d}000Z"
+
+
+def _emit_bootstrap_event(
+    event_type: str, step: str, label: str, duration_seconds: float | None
+) -> None:
+    """Append one step event. Best effort: the boot must never fail over its own progress log.
+
+    The envelope is spelled out by hand rather than through ``imbue_common``'s
+    ``EventEnvelope``: this package deliberately depends on nothing beyond loguru
+    and tenacity (see its pyproject), so the first boot has nothing to import.
+    """
+    events_path = _bootstrap_events_path()
+    if events_path is None:
+        return
+    event: dict[str, object] = {
+        "timestamp": _event_timestamp(),
+        "type": event_type,
+        "event_id": f"boot-{uuid.uuid4().hex}",
+        "source": BOOTSTRAP_EVENTS_SOURCE,
+        "step": step,
+        "label": label,
+    }
+    if duration_seconds is not None:
+        event["duration_seconds"] = round(duration_seconds, 3)
+    try:
+        events_path.parent.mkdir(parents=True, exist_ok=True)
+        with events_path.open("a") as events_file:
+            events_file.write(json.dumps(event) + "\n")
+    except OSError as exc:
+        logger.warning(
+            "Could not record bootstrap event {} for step {}: {}", event_type, step, exc
+        )
+
+
+@contextmanager
+def _bootstrap_step(step: str, label: str) -> Generator[None, None, None]:
+    """Announce a boot step starting and, once the block exits normally, completing with its duration."""
+    _emit_bootstrap_event(BOOTSTRAP_STEP_STARTED_EVENT, step, label, None)
+    started_at = time.monotonic()
+    yield
+    _emit_bootstrap_event(
+        BOOTSTRAP_STEP_COMPLETED_EVENT, step, label, time.monotonic() - started_at
+    )
+
+
 def main() -> None:
     logger.info("Bootstrap starting: first-boot setup, then supervisord")
 
     # Move any root-homed claude state (pre-/home/user-layout workspaces) into
     # the current home BEFORE anything claude-related starts, so an updated
     # workspace keeps its chat history and sign-in.
-    _migrate_legacy_claude_state_best_effort()
+    with _bootstrap_step("migrate_claude_state", "Carrying over earlier chat state"):
+        _migrate_legacy_claude_state_best_effort()
 
     # Apply the global git config (https rewrites) before any service or
     # agent runs git.
-    _configure_git_global()
+    with _bootstrap_step("configure_git", "Configuring git"):
+        _configure_git_global()
 
     # Roll back any update apply the previous container run left mid-motion,
     # BEFORE the venv converge (which must run against the restored tree) and
     # before any service or agent starts from half-applied state. The agent to
     # re-engage afterwards is woken further down, once the venv is converged.
-    update_dri_agent = _recover_interrupted_update()
+    with _bootstrap_step("recover_update", "Checking for an interrupted update"):
+        update_dri_agent = _recover_interrupted_update()
 
     # Every boot, not once: `pool_bake` unsets the repo identity on finalize and expects the
     # adopted workspace to supply it again. Only-if-unset, so it never overwrites the user's.
-    _ensure_git_identity()
-
-    # Commit the rsynced template and put the work_dir on `main`. Its OWN one-shot signal:
-    # "does this workspace have a main branch" and "does it have a chat" are different
-    # questions with different answers, so they cannot share one.
-    _initialize_workspace_main_branch()
+    # Then commit the rsynced template and put the work_dir on `main`. Its OWN one-shot
+    # signal: "does this workspace have a main branch" and "does it have a chat" are
+    # different questions with different answers, so they cannot share one.
+    with _bootstrap_step(
+        "initialize_main_branch", "Setting up the workspace's main branch"
+    ):
+        _ensure_git_identity()
+        _initialize_workspace_main_branch()
 
     # Converge the workspace venv BEFORE the initial chat agent is created
     # (below) and before supervisord's `uv run` services start, so nothing
     # races the reconcile or runs against a bake-stale venv.
-    _sync_workspace_venv()
+    with _bootstrap_step("sync_venv", "Installing the workspace's Python packages"):
+        _sync_workspace_venv()
 
     # Set the container clock to the user's timezone so cron schedules run in
     # their local time. Must precede _exec_supervisord: cron reads the
     # timezone once at daemon start.
-    tz_name = _fetch_user_timezone()
-    if tz_name:
-        _apply_container_timezone(tz_name)
+    with _bootstrap_step("set_timezone", "Setting the clock to your timezone"):
+        _set_container_timezone(_fetch_user_timezone())
 
     # Overlay symlinks must exist before services start writing.
-    _run_env_converge_fast_phase()
+    with _bootstrap_step("converge_environment", "Preparing the environment"):
+        _run_env_converge_fast_phase()
 
     # Re-engage the agent whose update the boot-time rollback undid. Held until
     # here on purpose: waking it starts a live agent running `uv run`, which
@@ -843,13 +976,20 @@ def main() -> None:
     # they survive container recreation. Both must precede _exec_supervisord so
     # the entries exist before cron starts; the guard goes first so a
     # deliberate same-named runtime entry still overrides it.
-    _write_update_recovery_cron_entry()
-    _install_runtime_cron_entries()
+    with _bootstrap_step("install_cron", "Installing scheduled jobs"):
+        _write_update_recovery_cron_entry()
+        _install_runtime_cron_entries()
 
     # Make sure supervisord's log directory exists, then hand off: replace this
     # process with supervisord in the foreground. supervisord owns every
     # background service from here on (see system/supervisord.conf).
     _ensure_supervisor_log_dir()
+    _emit_bootstrap_event(
+        BOOTSTRAP_COMPLETED_EVENT,
+        "supervisord",
+        "Starting the workspace's services",
+        None,
+    )
     _exec_supervisord()
 
 

@@ -1,12 +1,12 @@
 """Verify that ``.mngr/settings.toml`` create-templates compose as expected.
 
-The minds/DEFAULT_WORKSPACE_TEMPLATE setup runs ``mngr create --template main --template <mode>``
+The Imbue Studio DEFAULT_WORKSPACE_TEMPLATE setup runs ``mngr create --template main --template <mode>``
 and relies on the fact that tuple-typed options (e.g. ``extra_provision_command``)
 concatenate when multiple templates stack, while scalar-typed options (e.g.
 ``provider``) get overridden by the latter template.
 
 If that behaviour ever regresses in mngr, the per-mode provisioning
-on minds hosts silently loses either the shared ``main`` setup (e.g. the
+on Imbue Studio hosts silently loses either the shared ``main`` setup (e.g. the
 default tmux config) or the mode-specific commands. These tests pin the
 contract.
 """
@@ -148,32 +148,7 @@ def test_scalar_template_options_override_rather_than_stack() -> None:
     assert result["target_path"] == "/home/user/workspace/"
 
 
-def test_worker_template_installs_claude_plugins_before_the_agent_starts() -> None:
-    """A worker gets exactly one claude session, in a worktree path no session has
-    seen before, and Claude Code resolves its plugin set at session startup. The
-    SessionStart-hook install is therefore too late for a worker: the review gates
-    its harden contract mandates (`/autofix`, `/verify-architecture`) come from the
-    code-guardian plugin, so the plugins must be installed at provision time,
-    after the venv converge that precedes every other provisioning step -- and
-    NOT strictly: a plugin or marketplace outage must never make a worker
-    undeployable, so the install is a warning on failure, not a failed launch."""
-    result = _apply(("worker",))
-    commands = result["extra_provision_command"]
-    plugin_commands = [cmd for cmd in commands if "claude_update_plugin.sh" in cmd]
-    assert len(plugin_commands) == 1, (
-        f"expected exactly one plugin-install provisioning command from worker, got {commands!r}"
-    )
-    assert plugin_commands[0].split() == [
-        "bash",
-        "system/scripts/claude_update_plugin.sh",
-    ]
-    sync_position = next(
-        idx for idx, cmd in enumerate(commands) if cmd == "uv sync --all-packages"
-    )
-    assert commands.index(plugin_commands[0]) > sync_position
-
-
-def test_worker_template_installs_no_worker_skill_and_keeps_venv_and_plugins() -> None:
+def test_worker_template_installs_no_worker_skill_and_keeps_the_venv() -> None:
     """A `-t worker` create installs nothing into the worker's skill tree.
 
     The generic harden worker is followed in place from the checkout every
@@ -181,22 +156,15 @@ def test_worker_template_installs_no_worker_skill_and_keeps_venv_and_plugins() -
     lead's task file), so the provisioning step that used to copy it in as a
     `harden-worker` skill is gone -- and must not creep back, since an
     installed copy is untracked scratch that a worker's broad `git add` would
-    carry onto its branch. What the template must still do is provision the
-    worker to run its own gates: converge the venv, then install the claude
-    plugins, and mark the agent's role."""
+    carry onto its branch. What the template must still do is converge the
+    worker's venv and mark the agent's role. Its Claude plugins load in place
+    from the pinned local marketplaces, with nothing to install."""
     result = _apply(("worker",))
     commands = result["extra_provision_command"]
     assert not any("install_worker_skills.sh" in cmd for cmd in commands), (
         f"the worker template must no longer install a worker skill, got {commands!r}"
     )
-    sync_position = commands.index("uv sync --all-packages")
-    plugin_positions = [
-        idx for idx, cmd in enumerate(commands) if "claude_update_plugin.sh" in cmd
-    ]
-    assert len(plugin_positions) == 1, (
-        f"expected exactly one plugin-install command from worker, got {commands!r}"
-    )
-    assert plugin_positions[0] > sync_position
+    assert "uv sync --all-packages" in commands
     assert "MNGR_AGENT_ROLE=worker" in result["env"]
 
 
@@ -206,7 +174,7 @@ def test_chat_template_marks_the_agent_role() -> None:
     They stay silent for anything else, so a chat that stopped carrying the
     role would simply never remind its agent to tell the user it finished --
     a silent loss, which is what this pins. The role also has to survive the
-    `welcome` and `fast` templates the chat app stacks on top.
+    `fast` template the chat app stacks on top.
     """
     assert "MNGR_AGENT_ROLE=chat" in _apply(("chat",))["env"]
-    assert "MNGR_AGENT_ROLE=chat" in _apply(("chat", "welcome", "fast"))["env"]
+    assert "MNGR_AGENT_ROLE=chat" in _apply(("chat", "fast"))["env"]

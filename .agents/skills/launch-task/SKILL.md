@@ -128,9 +128,9 @@ assumed to be `mngr/$NAME`.
 
 ## 3. Background-poll for the worker's report
 
-Poll with `create_worker.py await` as a background task
-(`run_in_background: true`) and continue with whatever else you were doing. It
-reads `finish_report_path` from the task file
+Poll with `create_worker.py await`, started through
+`system/scripts/run_in_background.py`, and continue with whatever else you were
+doing. `await` reads `finish_report_path` from the task file
 (`data/.tasks/launch-task/$NAME/reports/report.md`), blocks until the worker writes
 it back, then prints the report. `--name $NAME` is required so the poll also
 watches the OOM shed ledger: if the worker's own agent is shed for memory
@@ -138,16 +138,17 @@ pressure (so it will never report until revived), the poll surfaces that
 promptly and actionably (exit code 75) instead of waiting out the full timeout.
 
 ```bash
-# Run with Bash run_in_background: true
-uv run .agents/skills/launch-task/scripts/create_worker.py await \
+python3 system/scripts/run_in_background.py --description "Wait for the background agent" -- \
+    uv run .agents/skills/launch-task/scripts/create_worker.py await \
     --name $NAME \
     --task-file data/.tasks/launch-task/$NAME/task.md
 ```
 
 You own this poll for the lifetime of the dispatch. Without it, gate
 reports never reach the user and the worker deadlocks waiting for a
-reply. Reports surface as task notifications when the background job
-completes; handle them at that point, not by blocking on the poll.
+reply. `run_in_background.py` returns at once; when `await` exits, the report
+arrives in your chat as a message that starts your next turn, on any harness.
+Handle it then, not by blocking on the poll.
 
 Once it has printed a report, `await` archives it under
 `data/.tasks/launch-task/$NAME/reports/consumed/`, so the poll path is
@@ -194,11 +195,11 @@ Flow-specific substitutions when reading `lead-proxy.md`:
 - If a task fails (stuck report, or 30m poll timeout with no report and
   the worker is dead), see `references/worker-failure.md` -- do not
   silently retry.
-- If a worker is `STOPPED` with uncommitted work and carries no
-  `archived_at` label, default to `mngr start <worker>` and message it to
-  continue with `create_worker.py reply` -- the worktree is preserved across
-  restart. One with the label was stopped on purpose by its lead after a
-  failure; leave it. See `references/dead-worker-recovery.md` for the manual
+- If a worker is `STOPPED` with uncommitted work and its `archived_at` label
+  is absent or empty, message it to continue with `create_worker.py reply`,
+  which restarts it -- the worktree is preserved across the restart. One
+  whose `archived_at` is set was stopped on purpose by its lead
+  after a failure; leave it. See `references/dead-worker-recovery.md` for the manual
   salvage fallback when restart isn't viable.
 - If `launch` refuses a taken name, destroy that worker
   (`create_worker.py destroy --name <name>`) if it is finished with, or pick

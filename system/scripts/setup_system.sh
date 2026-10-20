@@ -46,16 +46,17 @@ provision_drop_inherited_pins
 : "${TTYD_VERSION:=1.7.7}"
 : "${UV_VERSION:=0.11.7}"
 : "${NODE_VERSION:=22.23.2}"
-: "${CLAUDE_CODE_VERSION:=2.1.269}"
-: "${CODEX_VERSION:=0.154.0}"
-: "${PI_VERSION:=0.83.0}"
+: "${CLAUDE_CODE_VERSION:=2.1.293}"
+: "${CODEX_VERSION:=0.161.0}"
+: "${PI_VERSION:=0.87.1}"
 : "${PLAYWRIGHT_CLI_VERSION:=0.1.18}"
 : "${OPENCODE_VERSION:=1.18.19}"
 : "${MODAL_VERSION:=1.4.2}"
 : "${GH_VERSION:=2.96.0}"
 : "${CADDY_VERSION:=2.11.4}"
 : "${FRP_VERSION:=0.70.1}"
-: "${LATCHKEY_VERSION:=3.9.0}"
+: "${LATCHKEY_VERSION:=3.16.1}"
+: "${MCPC_VERSION:=0.7.0}"
 : "${RESTIC_VERSION:=0.18.1}"
 
 # Shared curl flags for the pinned-binary downloads below. --retry-all-errors
@@ -84,9 +85,9 @@ install_downloaded_binary() {
 
 # System packages (tini for signal handling; supervisor runs our background
 # services; cron runs the recurring jobs, driven from supervisord rather than an
-# init system; earlyoom is the OOM-prevention daemon that sheds memory under
-# pressure before the kernel kills an arbitrary victim; the rest are
-# agent/runtime deps). supervisor provides the system supervisord + supervisorctl
+# init system; the rest are agent/runtime deps). earlyoom, the OOM-prevention
+# daemon, is not among them: it is the imbue-ai fork, installed below by
+# install_earlyoom.sh. supervisor provides the system supervisord + supervisorctl
 # that `uv run bootstrap` execs into the foreground.
 # xvfb + xclip (the browser fleet's virtual display and its clipboard bridge)
 # are baked here, NOT deferred to the env.d browser unit: [program:xvfb] execs
@@ -95,7 +96,7 @@ install_downloaded_binary() {
 # Fortress/Chromium stack stays deferred.
 apt-get update
 apt-get install -y --no-install-recommends \
-    bash build-essential ca-certificates cron curl earlyoom fd-find git git-lfs jq less nano \
+    bash build-essential ca-certificates cron curl fd-find git git-lfs jq less nano \
     openssh-server procps restic ripgrep rsync sqlite3 supervisor tini tmux unison util-linux wget \
     xclip xvfb xxd xmlstarlet
 # Runtime libraries the pixelflux/pcmflux wheels (the browser fleet's H.264 + Opus
@@ -119,6 +120,11 @@ if command -v systemctl >/dev/null 2>&1; then
     # packaged systemd unit would double-run every job on systemd hosts.
     systemctl disable --now cron.service 2>/dev/null || true
     systemctl mask cron.service 2>/dev/null || true
+    # And for earlyoom: a host provisioned before the fork has the apt package,
+    # whose unit runs a second, unconfigured earlyoom (no --avoid, no -N hook)
+    # beside ours. The package itself is purged after install_earlyoom.sh below.
+    systemctl disable --now earlyoom.service 2>/dev/null || true
+    systemctl mask earlyoom.service 2>/dev/null || true
 fi
 
 # Point supervisor's default config search path at the workspace config so a
@@ -128,11 +134,11 @@ fi
 ln -sfn /home/user/workspace/system/supervisord.conf /etc/supervisord.conf
 
 # The distro restic (bookworm ships 0.14) predates `restic restore --delete`,
-# which the minds in-place backup restore requires (restic >= 0.17). Install
+# which the Imbue Studio in-place backup restore requires (restic >= 0.17). Install
 # the pinned release (sha256-verified, from the official SHA256SUMS) at
 # /usr/local/bin so it shadows the apt binary and the whole workspace --
 # including the hourly host-backup service -- runs the same pinned version
-# minds bundles on the desktop side. The apt package above stays as a
+# Imbue Studio bundles on the desktop side. The apt package above stays as a
 # fallback for anything resolving /usr/bin/restic explicitly.
 restic_arch="$(uname -m)"
 case "${restic_arch}" in
@@ -275,6 +281,16 @@ command -v node npm >/dev/null
 npm install -g "@openai/codex@${CODEX_VERSION}"
 command -v codex >/dev/null
 codex --version
+# The OOM launch wrapper (system/services/oom_priority/bin/agent_oom_launch.py)
+# execs this native binary itself, because the npm entry point would run it as a
+# child under a pid the wrapper never registered. It looks where the entry point
+# does for this machine; fail here if a version bump moved it, rather than let the
+# wrapper fall back to the entry point.
+codex_native_binary="$(npm root -g)/@openai/codex/node_modules/@openai/codex-linux-${node_goarch}/vendor/${node_arch}-unknown-linux-musl/bin/codex"
+if [ ! -x "${codex_native_binary}" ]; then
+    echo "Expected the native codex binary at ${codex_native_binary}" >&2
+    exit 1
+fi
 
 # OpenCode CLI (pinned; standalone binary, no Node needed). Keep in sync with
 # agent_types.opencode.version in .mngr/settings.toml. Its installer reads
@@ -403,6 +419,17 @@ chmod 600 /root/.ssh/known_hosts
 
 # latchkey (gateway CLI) and modal (python tool).
 npm install -g "latchkey@${LATCHKEY_VERSION}"
+# mcpc: the one MCP client every harness, app, and scheduled job shares, so a
+# connected MCP server is reachable from all of them without per-harness config.
+npm install -g "@apify/mcpc@${MCPC_VERSION}"
+command -v mcpc >/dev/null
+# Remove mcpc's native keyring binding so it keeps sign-ins and stored headers
+# in its credentials file in ~/.mcpc (linked to data/.secrets/mcpc) on every
+# provider. With the binding present, a VM with a real kernel (lima) stores
+# them in the kernel keyring instead: in memory only, so a reboot loses them,
+# and outside the secrets guard and the backup. mcpc has no setting that picks
+# the file, and --omit=optional does not skip the binding on a global install.
+rm -rf "$(npm root -g)/@apify/mcpc/node_modules/@napi-rs/"keyring-*
 uv tool install "modal==${MODAL_VERSION}"
 
 # Secret-scanner binaries (betterleaks + kingfisher) for the publish-template
@@ -422,8 +449,9 @@ else
     bash "$setup_dir/default-workspace-template-install-secret-scanners"
 fi
 
-# owner-exec (the in-container exec daemon) and dufs (the file-viewer server),
-# each a pinned, sha256-verified static binary with its own idempotent installer.
+# owner-exec (the in-container exec daemon) and earlyoom (the OOM-prevention
+# daemon; see install_earlyoom.sh for why it is a fork), each a pinned,
+# sha256-verified static binary with its own idempotent installer.
 # Invoked from here rather than as their own Dockerfile layers so that a live
 # re-provision (the update apply) and a non-Docker provider get them too: this
 # script is the only provisioning path every provider shares.
@@ -432,10 +460,24 @@ if [ -f "$setup_dir/install_owner_exec.sh" ]; then
 else
     bash "$setup_dir/default-workspace-template-install-owner-exec"
 fi
-if [ -f "$setup_dir/install_dufs.sh" ]; then
-    bash "$setup_dir/install_dufs.sh"
+if [ -f "$setup_dir/install_earlyoom.sh" ]; then
+    bash "$setup_dir/install_earlyoom.sh"
 else
-    bash "$setup_dir/default-workspace-template-install-dufs"
+    bash "$setup_dir/default-workspace-template-install-earlyoom"
+fi
+# The agents' Claude and Codex plugins, pinned like the CLIs above (see
+# install_agent_plugins.sh).
+if [ -f "$setup_dir/install_agent_plugins.sh" ]; then
+    bash "$setup_dir/install_agent_plugins.sh"
+else
+    bash "$setup_dir/default-workspace-template-install-agent-plugins"
+fi
+# A host provisioned before the fork still has the apt earlyoom. Purging it
+# only touches /usr/bin/earlyoom: the fork lives at /usr/local/bin, which is
+# ahead of /usr/bin in PATH, so a rollback that reinstalls the package keeps
+# running the fork.
+if dpkg -s earlyoom >/dev/null 2>&1; then
+    apt-get purge -y earlyoom
 fi
 
 # Playwright + Chromium is deliberately NOT installed here; the deferred-install

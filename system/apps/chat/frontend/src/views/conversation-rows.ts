@@ -5,15 +5,18 @@
  * (buildSections) into turn sections, flattened into the virtualized list's
  * top-level rows (buildRows) -- a user message, a whole ProgressBlock for a turn
  * that has tk steps, an ungrouped assistant message, a stop-hook chip, a handoff
- * node, or a trailing wrap-up reply. Sharing it here means a subagent's "View conversation"
+ * node, a trailing wrap-up reply, or the chip row of a compaction that followed
+ * it. Sharing it here means a subagent's "View conversation"
  * gets the real progress view -- step timeline, statuses, summaries -- and the
  * same windowed virtualization as the main chat, with zero rendering drift.
  *
  * Structure and decoration both come from the transcript walk (tk prints its
  * step decoration on stdout, which buildSections parses); there is no
- * side-channel enrichment. `agentIsIdle` settles the frontier spinner on the
- * tail turn. The pre-login auth-error prefix is hidden here (a no-op for a
- * subagent, which never has one) so the two views stay byte-identical.
+ * side-channel enrichment. `isTailSettled` settles the frontier spinner on the
+ * tail turn (see `isTailTurnSettled`), and `liveCompaction` places the start
+ * chip of a compaction still running (see `liveCompactionOf`). The pre-login
+ * auth-error prefix is hidden here (a no-op for a subagent, which never has
+ * one) so the two views stay byte-identical.
  */
 
 import m from "mithril";
@@ -21,12 +24,16 @@ import type { TranscriptEvent, ToolResultEvent } from "../models/Response";
 import {
   renderUserMessage,
   renderAssistantMessage,
+  renderAssistantRunRow,
+  isChipOnlyEvent,
   renderPermissionItem,
   buildToolResultsWithSkillExpansions,
   computeAuthErrorHiddenEventIds,
+  type RunPart,
 } from "./message-renderers";
 import { isHiddenUserMessage } from "./message-classification";
-import { buildSections, type SectionView } from "./turn-grouping";
+import type { CompactionPart } from "./compaction-chips";
+import { buildSections, type LiveCompaction, type SectionView } from "./turn-grouping";
 import { ProgressBlock } from "./ProgressBlock";
 import { renderHandoffNode } from "./handoff-node";
 
@@ -36,6 +43,10 @@ import { renderHandoffNode } from "./handoff-node";
 export const ESTIMATED_USER_HEIGHT_PX = 90;
 export const ESTIMATED_ASSISTANT_HEIGHT_PX = 240;
 export const ESTIMATED_PROGRESS_HEIGHT_PX = 360;
+// A merged chip row is one line of chips plus the message gap below it -- an
+// order of magnitude shorter than the prose message the assistant estimate is
+// sized for.
+export const ESTIMATED_CHIP_ROW_HEIGHT_PX = 48;
 
 // Layout for the centered message column. Shared by the live transcript views
 // and the offscreen measurer, whose rows must lay out identically to measure
@@ -101,6 +112,16 @@ function buildRows(
   toolResults: Map<string, ToolResultEvent>,
 ): RowDescriptor[] {
   const rows: RowDescriptor[] = [];
+  // The compactions that landed after a turn's reply: one chip row of their own below it.
+  const pushTrailingCompactionRow = (parts: CompactionPart[]): void => {
+    if (parts.length === 0) return;
+    rows.push({
+      key: parts[0].event_id,
+      estimate: ESTIMATED_CHIP_ROW_HEIGHT_PX,
+      anchorEventId: runAnchorEventId(parts[0]),
+      render: () => renderAssistantRunRow(parts, toolResults, chatId),
+    });
+  };
   for (const section of sections) {
     const userEvent = section.user_event;
     if (userEvent !== null && !isHiddenUserMessage(userEvent)) {
@@ -129,6 +150,7 @@ function buildRows(
             chatId,
           }),
       });
+      pushTrailingCompactionRow(section.trailing_status);
       continue;
     }
 
@@ -136,12 +158,42 @@ function buildRows(
     // blocks inline, the same as assistant messages outside a progress section.
     for (const item of section.items) {
       if (item.kind === "ungrouped") {
-        for (const event of item.events) {
+        // A row is a RUN: one head event plus every chip-only event that
+        // follows it, so a turn the harness split across several events lays
+        // out as the one message it is (see renderAssistantRunRow).
+        let i = 0;
+        while (i < item.events.length) {
+          const start = i;
+          // The head joins unconditionally; only chip-only events accrete onto
+          // it, since anything else is a message in its own right.
+          i++;
+          while (i < item.events.length && isChipOnlyEvent(item.events[i], toolResults)) {
+            i++;
+          }
+          const run = item.events.slice(start, i);
+          const head = run[0];
+          // A lone event that is not a chip run keeps the memoized single-message
+          // renderer -- nothing was merged, so there is nothing to gain by
+          // giving up the memo.
+          if (run.length === 1 && head.type === "assistant_message" && !isChipOnlyEvent(head, toolResults)) {
+            rows.push({
+              key: head.event_id,
+              estimate: ESTIMATED_ASSISTANT_HEIGHT_PX,
+              anchorEventId: head.event_id,
+              render: () => renderAssistantMessage(head, toolResults, chatId),
+            });
+            continue;
+          }
+          // Keyed and anchored on the run's head: the row stands where that
+          // event does in the transcript, which is what scroll persistence and
+          // the fill planner resolve a row by.
           rows.push({
-            key: event.event_id,
-            estimate: ESTIMATED_ASSISTANT_HEIGHT_PX,
-            anchorEventId: event.event_id,
-            render: () => renderAssistantMessage(event, toolResults, chatId),
+            key: head.event_id,
+            estimate: isChipOnlyEvent(head, toolResults)
+              ? ESTIMATED_CHIP_ROW_HEIGHT_PX
+              : ESTIMATED_ASSISTANT_HEIGHT_PX,
+            anchorEventId: runAnchorEventId(head),
+            render: () => renderAssistantRunRow(run, toolResults, chatId),
           });
         }
       } else if (item.kind === "permission") {
@@ -149,6 +201,7 @@ function buildRows(
         // always-visible card so the user can act on it without expanding a step.
         const permissionEvent = item.event;
         const resolutionsByRequestId = item.resolutionsByRequestId;
+        const secretNotesByRequestId = item.secretNotesByRequestId;
         const permKey = `perm-${permissionEvent.event_id}`;
         rows.push({
           key: permKey,
@@ -156,7 +209,15 @@ function buildRows(
           anchorEventId: permissionEvent.event_id,
           // Pass the row key as the DOM id so the measured height is cached under
           // the same key the window math looks up (see renderPermissionItem).
-          render: () => renderPermissionItem(permissionEvent, toolResults, chatId, resolutionsByRequestId, permKey),
+          render: () =>
+            renderPermissionItem(
+              permissionEvent,
+              toolResults,
+              chatId,
+              resolutionsByRequestId,
+              permKey,
+              secretNotesByRequestId,
+            ),
         });
       } else if (item.kind === "chip") {
         const chipEvent = item.event;
@@ -204,8 +265,15 @@ function buildRows(
         render: () => renderAssistantMessage(event, toolResults, chatId),
       });
     }
+    pushTrailingCompactionRow(section.trailing_status);
   }
   return rows;
+}
+
+/** The transcript event a run's row stands at: its head's, or none for the compaction
+ *  running now, which has no event yet (the row then resolves by the row before it). */
+function runAnchorEventId(head: RunPart): string | null {
+  return head.type === "compaction" && head.event === null ? null : head.event_id;
 }
 
 /**
@@ -218,12 +286,13 @@ function buildRows(
 export function buildConversationRows(
   chatId: string,
   events: TranscriptEvent[],
-  agentIsIdle: boolean,
+  isTailSettled: boolean,
+  liveCompaction: LiveCompaction | null = null,
 ): RowDescriptor[] {
   const toolResults = buildToolResultsWithSkillExpansions(events);
   const hiddenEventIds = computeAuthErrorHiddenEventIds(events);
   const visibleEvents = hiddenEventIds.size > 0 ? events.filter((e) => !hiddenEventIds.has(e.event_id)) : events;
-  const sections = buildSections(visibleEvents, toolResults, agentIsIdle);
+  const sections = buildSections(visibleEvents, toolResults, isTailSettled, liveCompaction);
   return buildRows(chatId, sections, toolResults);
 }
 

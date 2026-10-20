@@ -10,7 +10,9 @@ import { getTerminalOriginLabel } from "../document-meta";
 import { deriveAppOrigin } from "@imbue/workspace-ui/src/origin";
 import { ReconnectBackoff } from "@imbue/workspace-ui/src/models/backoff";
 import type { ModelChoice, ModelIdentity } from "./ModelSettings";
+import type { CompactionCause, UserMessageEvent } from "./Response";
 import { parseJsonMessage } from "@imbue/workspace-ui/src/models/ws-json";
+import { loadAccounts } from "./Providers";
 
 /** The agent-level facts about a chat's active agent that the pages render (the backend's
  *  ``ActiveAgentSnapshot``). */
@@ -25,8 +27,11 @@ export interface ActiveAgent {
   account_id: string | null;
   // The agent's mngr lifecycle state.
   state: string;
-  // THINKING/TOOL_RUNNING/IDLE, or null when the chat app has no activity tracking for it.
+  // THINKING/TOOL_RUNNING/COMPACTING/IDLE, or null when the chat app has no activity tracking for it.
   activity_state: string | null;
+  // Who started the compaction while ``activity_state`` is COMPACTING; null otherwise, or when the
+  // chat app cannot tell.
+  compaction_cause: CompactionCause | null;
   // The live model/effort/fast selection plus the catalog option it matched. Null when no
   // model resolution is available.
   model_choice: ModelChoice | null;
@@ -39,6 +44,30 @@ export interface ActiveAgent {
   // A send is in flight and waiting for the agent to come up: the Connecting sub-state of
   // Sending, shown beside the model bar.
   is_connecting: boolean;
+  // The agent will resume on its own: a turn is in flight, or a background task is pending.
+  is_busy: boolean;
+  // The background tasks the chat waits on, oldest first. Rendered as given.
+  background_tasks: BackgroundTask[];
+}
+
+/** Who recorded a background task: the workspace's runner (``run_in_background.py``), which outlives the agent and
+ *  reports how its command ended to the chat, or the harness's own task list, whose tasks end with the agent's
+ *  process, unreported. */
+export type BackgroundTaskSource = "run_in_background" | "harness";
+
+/** One background task a chat waits on (the backend's ``BackgroundTaskSnapshot``): a command the agent
+ *  started whose completion will start its next turn. */
+export interface BackgroundTask {
+  id: string;
+  source: BackgroundTaskSource;
+  // The harness that recorded a "harness" task ("claude", ...); empty for the runner's.
+  harness: string;
+  // The harness's type for a "harness" task; empty for the runner's.
+  kind: string;
+  description: string;
+  // When it started (ISO 8601, UTC); for a "harness" task, when its turn-end hook first recorded it, at the
+  // end of the turn that started it.
+  started_at: string;
 }
 
 /** A handoff runs draining, summarizing, switching; a rebind runs draining, restarting; both can end failed. */
@@ -78,6 +107,8 @@ export interface HandoffState {
   error: string | null;
   // Which step failed, in the failed phase: the agent's start, or the model picked for it.
   failed_step: "start" | "model" | null;
+  // Whether the chat had no user turn to carry over, so the switch only starts it on the target: no handoff to show.
+  is_fresh_start: boolean;
 }
 
 /** Whether the switch can still be called off: a handoff only until the old agent is stopped (spec 5.6);
@@ -111,15 +142,21 @@ export interface ChatSnapshot {
 }
 
 /** One message currently parked in an agent's harness queue (the wire shape of the backend
- *  ``QueuedMessageState``). The frontend renders these verbatim and keys the bubble on
- *  ``queued_id``; it never derives or reconciles them. */
+ *  ``QueuedMessageState``). The frontend keys the bubble on ``queued_id`` and never derives or
+ *  reconciles these. */
 export interface QueuedMessage {
   queued_id: string;
   content: string;
   timestamp: string;
-  // True while the backend is actively re-sending this chip (a codex shoulder-tap's
-  // interrupt+resend): it renders as an ordinary send's bubble rather than as a plain queued chip.
+  // True while the backend is actively delivering this chip (a codex shoulder-tap's
+  // interrupt+resend, or a Claude message still queued when the reply landed): it renders as an
+  // ordinary send's bubble rather than as a plain queued chip.
   is_sending?: boolean;
+  // The render decision the content would get in the transcript (a user_message's fields of
+  // the same names); null for a plain message.
+  display?: UserMessageEvent["display"] | null;
+  display_label?: string | null;
+  display_body?: string | null;
 }
 
 /** Where a chat that is not an agent yet stands (the backend's ``ProvisionalChatPhase``). */
@@ -134,8 +171,8 @@ export interface ProvisionalChat {
   phase: ProvisionalChatPhase;
   // Why the create failed, in the failed phase.
   error: string | null;
-  // Whether the chat has a seed segment to show while it is created: the conversation the Mind
-  // app had before the workspace existed. Its page keeps the transcript and the composer up
+  // Whether the chat has a seed segment to show while it is created: the conversation the
+  // Imbue Studio app had before the workspace existed. Its page keeps the transcript and the composer up
   // through the create rather than the provisional screens.
   is_seeded: boolean;
 }
@@ -143,7 +180,8 @@ export interface ProvisionalChat {
 type WsEvent =
   | { type: "chats_updated"; chats: ChatSnapshot[] }
   | ({ type: "provisional_chat_created" } & ProvisionalChat)
-  | { type: "provisional_chat_completed"; chat_id: string; success: boolean; error: string | null };
+  | { type: "provisional_chat_completed"; chat_id: string; success: boolean; error: string | null }
+  | { type: "accounts_updated" };
 
 export type ChatsUpdatedListener = (chats: ChatSnapshot[]) => void;
 /**
@@ -162,6 +200,9 @@ let chats: ChatSnapshot[] = [];
 // The JSON of the last chats_updated payload, to skip redundant identical pushes.
 let lastChatsSerialized = "";
 let provisionalChats: ProvisionalChat[] = [];
+// Whether the chat app has sent its chat list at least once: before that, a chat the page names
+// may simply not be known here yet.
+let isChatListReceived = false;
 // The ids of the provisional chats a (re)connect's replay has carried so far, while the replay
 // is in flight: from the socket opening to the chat list that ends it. Null otherwise.
 let replayedProvisionalIds: Set<string> | null = null;
@@ -172,6 +213,8 @@ let chatsUpdatedListeners: ChatsUpdatedListener[] = [];
 let chatActivityListeners: ChatActivityListener[] = [];
 let chatActiveAgentListeners: ChatActiveAgentListener[] = [];
 let ws: WebSocket | null = null;
+// Whether the socket has opened before, so an open is a reconnect.
+let hasConnectedBefore = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let connected = false;
 
@@ -187,6 +230,9 @@ function connect(): void {
     connected = true;
     console.info("[chat-ws] connected");
     reconnectBackoff.reset();
+    // A change to the account list while the socket was down was pushed to no one.
+    if (hasConnectedBefore) rereadAccounts();
+    hasConnectedBefore = true;
     // The app replays what it holds (its provisional chats, then its chat list) on every
     // connection; the list ends the replay and must be handled even when nothing changed.
     replayedProvisionalIds = new Set();
@@ -227,9 +273,22 @@ function scheduleReconnect(): void {
   }, delayMs);
 }
 
+/** Read the account list again because it changed outside this page (a sign-in or a removal in another chat or
+ *  window), so a chat whose account was removed shows it at once; a failed read keeps the list read before. */
+function rereadAccounts(): void {
+  loadAccounts().then(
+    () => m.redraw(),
+    (error: unknown) => console.warn("[chat-ws] could not re-read the account list", error),
+  );
+}
+
 function handleEvent(event: WsEvent): void {
   switch (event.type) {
+    case "accounts_updated":
+      rereadAccounts();
+      break;
     case "chats_updated": {
+      isChatListReceived = true;
       // The backend can broadcast the same snapshot many times during a turn (transcript
       // churn), and a redraw on each identical push makes the model bar visibly flicker.
       const serialized = JSON.stringify(event.chats);
@@ -350,6 +409,11 @@ export function isConnected(): boolean {
   return connected;
 }
 
+/** Whether the chat app has sent its chat list yet; until it has, a chat missing from it is unknown, not gone. */
+export function hasReceivedChatList(): boolean {
+  return isChatListReceived;
+}
+
 /** Every chat the app lists: the backend keeps the workspace's services-only "primary" agent
  *  out of the snapshots it pushes, so nothing here needs filtering. */
 export function getChats(): ChatSnapshot[] {
@@ -422,6 +486,18 @@ export function buildAgentTerminalUrl(agentName: string): string {
   return `${baseUrl}${separator}arg=_&arg=agent&arg=${encodeURIComponent(agentName)}`;
 }
 
+/** A create the chat app refused, with its reason in words and, when the account is the reason, the refusal's kind:
+ *  ``no_provider_account`` when nothing is signed in, ``account_signed_out`` when the named account was removed. */
+export class CreateChatRefusedError extends Error {
+  readonly kind: string | null;
+
+  constructor(detail: string, kind: string | null) {
+    super(detail);
+    this.name = "CreateChatRefusedError";
+    this.kind = kind;
+  }
+}
+
 /** A freshly-created chat's identity: its id and its name pair. */
 export interface CreatedChat {
   chatId: string;
@@ -436,7 +512,7 @@ export interface CreatedChat {
  * shows up as provisional until mngr registers it). The display name is minted server-side.
  * ``projectId`` becomes the agent's ``project`` label and is empty for a chat started outside
  * any project; ``message`` is the chat's first message, sent once it runs (empty sends none).
- * Throws with the server's detail on rejection.
+ * Throws a ``CreateChatRefusedError`` with the server's detail on rejection.
  */
 export function createChat(
   projectId: string,
@@ -446,6 +522,15 @@ export function createChat(
 ): Promise<CreatedChat> {
   // No harness: the account decides it. An empty account_id takes the most recently used account.
   return postCreateChat({ project_id: projectId, account_id: accountId, message, model: pick });
+}
+
+/** The chat a chat list with none to show opens on: one waiting for its first send, which launches it on the
+ *  selected account. Nothing is created until then, and a list asking while another waits gets that one. */
+export async function awaitingChatForEmptyList(): Promise<string> {
+  const response = await fetch(apiUrl("/api/chats/awaiting"), { method: "POST" });
+  if (!response.ok) throw new Error(`The chat list could not open a new chat (${response.status})`);
+  const data = (await response.json()) as { chat_id: string };
+  return data.chat_id;
 }
 
 /**
@@ -467,8 +552,8 @@ async function postCreateChat(body: Record<string, string | ModelIdentity | null
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(data.detail ?? `HTTP ${response.status}`);
+    const data = (await response.json().catch(() => ({}))) as { detail?: string; kind?: string };
+    throw new CreateChatRefusedError(data.detail ?? `HTTP ${response.status}`, data.kind ?? null);
   }
   const created = (await response.json()) as { chat_id?: string; name?: string; display_name?: string };
   if (!created.chat_id) {

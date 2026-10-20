@@ -6,6 +6,14 @@ class InvalidManifestValueError(AppManifestError, ValueError):
     """A manifest or registry value does not satisfy its rule."""
 
 
+class PageTemplateFieldError(AppManifestError, ValueError):
+    """A message cannot fill a page template: a field it names is missing, not a string, or leaves no rooted path."""
+
+
+class PolicySourceError(AppManifestError, ValueError):
+    """A URL cannot name a Content-Security-Policy source: it has no scheme or host to take an origin from."""
+
+
 class ManifestLoadError(AppManifestError):
     """An app.toml file cannot be read, parsed, or validated."""
 
@@ -16,6 +24,12 @@ class RegistryReadError(AppManifestError):
 
 class ScopeComputationError(AppManifestError):
     """A creation's footprint cannot be computed: a git command failed, or a config it reads is unparseable."""
+
+
+class SuiteSelectionError(AppManifestError):
+    """The suite selection cannot be computed: a file it reads cannot be read or parsed, a
+    guard it lists is not tracked by git, or a diff selection would miss the working tree's
+    uncommitted changes."""
 
 
 class AppRegistrationError(AppManifestError):

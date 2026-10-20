@@ -15,6 +15,7 @@ import {
   parseDesktop,
   parseInventory,
   parseLayout,
+  parseMessageRelay,
   parseWallpaperListings,
   parseWindow,
 } from "./records";
@@ -30,6 +31,7 @@ import type {
   IfPresent,
   Inventory,
   Layout,
+  MessageRelay,
   Placement,
   Wallpaper,
   WallpaperListing,
@@ -96,12 +98,16 @@ export interface WindowOpenRequest {
   readonly path: string;
   readonly clientId: string;
   readonly ifPresent: IfPresent;
+  /** Placed out of sight for this client, so no other client finds it placed either. */
+  readonly isMinimized: boolean;
 }
 
 export interface WindowOpenOutcome {
   readonly window: WindowRecord;
   /** True for an open, false when an existing window was answered and raised instead. */
   readonly isNew: boolean;
+  /** The client has only pop-outs open, so the window waits on its desktop for a desktop window. */
+  readonly hasNoDesktopWindow: boolean;
 }
 
 export async function openWindow(desktopId: string, request: WindowOpenRequest): Promise<WindowOpenOutcome> {
@@ -110,9 +116,17 @@ export async function openWindow(desktopId: string, request: WindowOpenRequest):
     path: request.path,
     client_id: request.clientId,
     if_present: request.ifPresent,
+    minimized: request.isMinimized,
   };
-  const data = await postJson<{ window: unknown; is_new: boolean }>(desktopUrl(desktopId, "/windows"), body);
-  return { window: parseWindow(data.window), isNew: data.is_new === true };
+  const data = await postJson<{ window: unknown; is_new: boolean; has_no_desktop_window?: boolean }>(
+    desktopUrl(desktopId, "/windows"),
+    body,
+  );
+  return {
+    window: parseWindow(data.window),
+    isNew: data.is_new === true,
+    hasNoDesktopWindow: data.has_no_desktop_window === true,
+  };
 }
 
 /** Where a launch's page goes (post-launch-paths plan section 3.3): a new window, a window already at the path (else
@@ -126,6 +140,8 @@ export interface LaunchRequest {
   readonly params: Readonly<Record<string, string>>;
   readonly clientId: string;
   readonly target: LaunchTarget;
+  /** A window the launch opens is placed out of sight for this client. */
+  readonly isMinimized: boolean;
 }
 
 export interface LaunchOutcome {
@@ -148,6 +164,7 @@ export async function launch(desktopId: string, request: LaunchRequest): Promise
     params: request.params,
     client_id: request.clientId,
     target,
+    minimized: request.isMinimized,
   });
   return { window: parseWindow(data.window), path: data.path, isNew: data.is_new === true };
 }
@@ -216,6 +233,13 @@ export async function fetchInventory(): Promise<Inventory> {
   return parseInventory(await getJson(apiUrl("/api/inventory")));
 }
 
+/** Record what this client's phone layout shows: a window, or the home grid for null. Answers the client record. */
+export async function recordShown(clientId: string, windowId: string | null): Promise<ClientRecord> {
+  return parseClientRecord(
+    await postJson<unknown>(apiUrl(`/api/clients/${encodeURIComponent(clientId)}/shown`), { window_id: windowId }),
+  );
+}
+
 export async function fetchClients(): Promise<ClientRecord[]> {
   const data = (await getJson(apiUrl("/api/clients"))) as { clients?: unknown };
   return parseClientRecords(data.clients);
@@ -241,8 +265,23 @@ export async function fetchWallpapers(): Promise<WallpaperListing[]> {
 }
 
 /** Where a wallpaper reference's image is served. */
-export function wallpaperImageUrl(wallpaper: Wallpaper): string {
+function wallpaperImageUrl(wallpaper: Wallpaper): string {
   return apiUrl(`/wallpapers/${wallpaper.kind}/${encodeURIComponent(wallpaper.name)}`);
+}
+
+/**
+ * The `background-image` a desktop's chosen wallpaper paints: the image itself, and the default
+ * under it.
+ *
+ * A reference outlives the file it names -- a bundled wallpaper the shell stops shipping, a file
+ * taken back out of the wallpapers directory -- and the desktop keeps holding it, since the choice
+ * is still the choice and the file may come back. A layer whose image does not load is simply not
+ * painted, so the default shows through in the meantime, which is what a desktop with no wallpaper
+ * of its own already wears. Without the second layer that desktop would fall all the way to the
+ * flat page colour, which reads as a broken shell rather than as a wallpaper that went missing.
+ */
+export function wallpaperBackgroundImage(wallpaper: Wallpaper): string {
+  return `url("${wallpaperImageUrl(wallpaper)}"), var(--desk-default-wallpaper)`;
 }
 
 export async function fetchAvatars(): Promise<AvatarCatalog> {
@@ -266,9 +305,22 @@ export function avatarSourceUrl(design: string): string {
   return apiUrl(`/api/avatars/${encodeURIComponent(design)}/source.svg`);
 }
 
-export type AppLifecycleAction = "stop" | "start";
+/** Quit an app: the shell closes every window of it and stops its program; the ``desktops_updated`` and
+ *  ``apps_updated`` pushes that follow carry the result. */
+export async function quitApp(appName: string): Promise<void> {
+  await postJson<void>(apiUrl(`/api/apps/${encodeURIComponent(appName)}/quit`), {});
+}
 
-/** Stop or start an app's supervised program; the ``apps_updated`` push that follows carries the result. */
-export async function setAppLifecycle(appName: string, action: AppLifecycleAction): Promise<void> {
-  await postJson<void>(apiUrl(`/api/apps/${encodeURIComponent(appName)}/${action}`), {});
+/** Ask the shell to deliver a message this client's page received, from the Imbue Studio chrome or from an app's frame
+ *  (``sender`` says which: ``embedder`` or the app), to the apps registered for its type (contracts.md section 5.6);
+ *  answers what each app did with it, and throws with the shell's detail when an app did not take it. */
+export async function relayEmbedderMessage(
+  type: string,
+  clientId: string,
+  payload: Readonly<Record<string, unknown>>,
+  sender: string,
+): Promise<MessageRelay> {
+  return parseMessageRelay(
+    await postJson<unknown>(apiUrl("/api/embedder-messages"), { type, client_id: clientId, payload, sender }),
+  );
 }
