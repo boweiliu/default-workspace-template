@@ -232,6 +232,15 @@ describe("ChatPanel over a provisional chat", () => {
     expect(bubbleListOf(started)?.attrs).toEqual(bubbleListOf(starting)?.attrs);
   });
 
+  it("shows the status row instead of the ready line in an empty chat whose agent is busy", () => {
+    mocks.chat = chatSnapshotFixture(AGENT_ID, { active_agent: { activity_state: "COMPACTING" } });
+
+    const tree = mountPanel()();
+
+    expect(renderedText(tree)).not.toContain("Your chat is ready.");
+    expect(bubbleListOf(tree)?.children).toEqual([expect.objectContaining({ key: "turn-status" })]);
+  });
+
   it("drops the starting line once a message is on its way", () => {
     mocks.outgoingBubbles = [{ tag: "div", key: "outgoing-0", attrs: { class: "outgoing-message" }, children: [] }];
     creating();

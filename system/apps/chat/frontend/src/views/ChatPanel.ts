@@ -359,6 +359,19 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
   }
 
   /** The status row at the live end of the transcript (see ActivityIndicator), keyed like the rows beside it. */
+  /** Whether the backend reports the chat doing something the status row shows: an activity, a switch,
+   *  or a background task it waits on. */
+  function isAgentBusy(chatId: string): boolean {
+    const chat = getChatById(chatId);
+    if (chat === undefined) return false;
+    const agent = chat.active_agent;
+    return (
+      chat.handoff !== null ||
+      (agent.activity_state !== null && agent.activity_state !== "IDLE") ||
+      agent.background_tasks.length > 0
+    );
+  }
+
   function renderTurnStatus(chatId: string, events: TranscriptEvent[]): m.Children {
     return m(ActivityIndicator, { key: "turn-status", chatId, events });
   }
@@ -656,7 +669,10 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
 
     if (events.length === 0) {
       if (tailNodes.length === 0) {
-        return renderEmptyConversation("message-list-empty", [], READY_STATUS);
+        // An empty chat can still be busy (a compaction, a switch, a background task): the status row
+        // says so in place of the ready line.
+        const nodes = isAgentBusy(chatId) ? [renderTurnStatus(chatId, events)] : [];
+        return renderEmptyConversation("message-list-empty", nodes, READY_STATUS);
       }
       return m("div", { class: "message-list-wrapper" }, [
         failedReloadNotice,
