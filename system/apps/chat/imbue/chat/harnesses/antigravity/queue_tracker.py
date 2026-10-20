@@ -121,7 +121,7 @@ class AntigravityQueueTracker:
         self._replay()
         return self
 
-    # --- wiring ----------------------------------------------------------------------
+    # Wiring
 
     def attach(self, *, publish: PublishCallback, wake: Callable[[], None]) -> None:
         """Bind the watcher's snapshot publisher and flush wake. Idempotent."""
@@ -135,7 +135,7 @@ class AntigravityQueueTracker:
             self._publish = None
             self._wake = None
 
-    # --- journal ---------------------------------------------------------------------
+    # Journal
 
     def _replay(self) -> None:
         """Restore entries written by THIS session; discard a dead session's.
@@ -201,7 +201,7 @@ class AntigravityQueueTracker:
             for entry in self._queued.snapshot()
         ]
 
-    # --- session identity ------------------------------------------------------------
+    # Session identity
 
     def set_session(self, token: str) -> bool:
         """Adopt ``token``; on a CHANGE, discard everything. Returns True if it changed.
@@ -227,7 +227,7 @@ class AntigravityQueueTracker:
             self._settled()
             return True
 
-    # --- mutations -------------------------------------------------------------------
+    # Mutations
 
     def enqueue(self, content: str, timestamp: str, *, is_turn_open: bool = True) -> str:
         """Hold ``content`` for the next flush; returns its queued id.
@@ -436,7 +436,7 @@ class AntigravityQueueTracker:
         with self._lock:
             self._settled()
 
-    # --- reads -----------------------------------------------------------------------
+    # Reads
 
     def snapshot(self) -> list[dict[str, Any]]:
         with self._lock:

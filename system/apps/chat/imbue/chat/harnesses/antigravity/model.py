@@ -27,8 +27,7 @@ from imbue.chat.harnesses.model import PickerMode
 from imbue.chat.harnesses.model import SwitchMode
 from imbue.chat.harnesses.model import SwitchResult
 
-# =============================================================================================
-# !!! THIS LIST MUST BE UPDATED WHEN GOOGLE SHIPS NEW ANTIGRAVITY MODELS !!!
+# This list must be updated when Google ships new Antigravity models.
 #
 # Pinning the agy BINARY does not pin this. `agy models` fetches the list over the network
 # (it prints "Fetching available models..." first), so it is account- and server-side: Google
@@ -44,7 +43,6 @@ from imbue.chat.harnesses.model import SwitchResult
 #
 # A model missing from this list still renders, via `derived_option` below, but it is not
 # offered in the picker. Re-run those commands in a signed-in workspace whenever agy is bumped.
-# =============================================================================================
 _MODEL_ROWS: Final[tuple[tuple[str, str, tuple[str, ...], str | None], ...]] = (
     ("gemini-3.8-flash", "Gemini 3.8 Flash", ("low", "medium", "high"), "high"),
     ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)", (), None),
@@ -121,8 +119,7 @@ class AntigravityModelResolver(HarnessModelResolver):
         return self
 
     def switch(self, identity: ModelIdentity, axes: frozenset[ModelAxis], send: Callable[[str], bool]) -> SwitchResult:
-        # Not through ``send``: that types now, whatever agy is doing. The tracker is the same
-        # instance the watcher's worker reads, which types the command once no turn is open.
+        # Not through ``send``, which types now whatever agy is doing (see the module docstring).
         if ModelAxis.MODEL not in axes and ModelAxis.EFFORT not in axes:
             return SwitchResult(ok=True)
         tracker = get_tracker(self._agent_id, self._state_dir / OUTBOX_FILENAME, session_token(self._state_dir))

@@ -45,7 +45,6 @@ def test_each_recorded_model_state_matches_its_catalog_option(
 @pytest.mark.parametrize(
     ("model_id", "effort", "expected_command"),
     [
-        # Each verified against a live agy 1.4.3 session.
         ("gemini-3.8-flash", "low", "/model gemini-3.8-flash-low"),
         ("gemini-3.8-flash", "high", "/model gemini-3.8-flash-high"),
         # A bare base slug starts the model at agy's default effort.

@@ -172,7 +172,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         self.stop()
         drop_tracker(self._agent_id)
 
-    # --- paths ---------------------------------------------------------------------------
+    # Paths
 
     def _conversations_dir(self) -> Path:
         return self._state_dir / _CONVERSATIONS_RELATIVE
@@ -196,7 +196,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
                 seen.append(candidate)
         return seen
 
-    # --- lifecycle -----------------------------------------------------------------------
+    # Lifecycle
 
     def start(self) -> None:
         if self._thread is not None:
@@ -294,7 +294,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         if pending:
             self._on_events(self._agent_id, pending)
 
-    # --- scanning ------------------------------------------------------------------------
+    # Scanning
 
     def _collect_new_events(self) -> list[dict[str, Any]]:
         """Scan every conversation for new/settled rows; append + return newly-emitted events.
@@ -369,7 +369,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             except sqlite3.Error as e:
                 logger.debug("antigravity: closing the {} connection failed: {}", db_path, e)
 
-    # --- read interface (single flat session; subagents not surfaced) --------------------
+    # Read interface (single flat session; subagents not surfaced)
 
     def get_all_events(self, session_id: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
@@ -446,7 +446,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
     def is_main_session_event(self, event: dict[str, Any]) -> bool:
         return True
 
-    # --- queued messages: the queue we hold on agy's behalf ---------------------------
+    # Queued messages: the queue we hold on agy's behalf
     #
     # Every other harness mirrors a queue its harness keeps. agy parks mid-turn input
     # invisibly inside its TUI, so instead we hold the messages and deliver them ourselves
@@ -532,7 +532,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         except OSError:
             return None
 
-    # --- the flush worker: the ONLY typist ---------------------------------------------
+    # The flush worker: the ONLY typist
 
     def _run_flush_worker(self) -> None:
         """Deliver the held queue when no turn is open. Own thread, so a slow send stalls nothing.

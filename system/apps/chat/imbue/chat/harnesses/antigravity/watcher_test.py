@@ -211,7 +211,7 @@ def _tag(field: int, wire: int) -> bytes:
     return encode_varint((field << 3) | wire)
 
 
-# --- the flush worker: the only typist ----------------------------------------------------
+# The flush worker: the only typist
 #
 # This code path had NO tests, which is why an ungated flush -- one that typed the held queue
 # into a live turn every 5 seconds -- shipped green.
@@ -624,7 +624,7 @@ def test_a_loader_reads_a_settled_conversation_with_no_thread_and_releases_what_
     assert loader._connections == {}
 
 
-# --- model switches: typed by the same worker, alone, between turns --------------------------
+# Model switches: typed by the same worker, alone, between turns
 
 
 def _switching_watcher(tmp_path: Path, conv: str, sent: list[str], *, is_slash_command_delivered: bool = True):
