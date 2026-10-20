@@ -12,7 +12,7 @@ import {
   turnStatusPlacement,
   wakeUpSpinnerDeadline,
 } from "./ActivityIndicator";
-import { addOutgoing, clearOutgoing, getOutgoingMessages } from "../models/OutgoingMessages";
+import { addOutgoing, clearOutgoing, getOutgoingMessages, noteBackendArrivals } from "../models/OutgoingMessages";
 import { BackgroundTasksLine } from "./BackgroundTasksLine";
 import { notePermissionResolutions, resetShellPermissionResolutionsForTesting } from "./permission-card";
 import { handoffStateFixture } from "../models/chatSnapshotFixture";
@@ -512,19 +512,37 @@ describe("ActivityIndicator — the row before, during and after a turn", () => 
     expect(partOf(render([...finished, userMsg(isoAt(NOW - 5_000))]), "elapsed")).toBe("5s");
   });
 
-  it("keeps the dot while the harness closes a turn whose reply is in, and names that once it lasts", () => {
+  it("shows nothing while the harness closes a turn whose reply is in", () => {
     chatState.status = "working";
     const events = [userMsg(isoAt(NOW - 10_000)), toolResult(isoAt(NOW - 200), "c1")];
 
-    const closing = render(events);
-    expect(stateOf(closing)).toBe("FINISHING");
-    expect(partOf(closing, "label")).toBeNull();
-
-    now = NOW + SENDING_LABEL_AFTER_MS;
-    expect(partOf(render(events), "label")).toBe("Finishing up…");
-
-    chatState.status = "idle";
     expect(render(events)).toBeNull();
+    now = NOW + 10_000;
+    expect(render(events)).toBeNull();
+  });
+
+  it("keeps the dot, counting from the send, for a turn whose message landed before the agent works on it", () => {
+    addOutgoing(CHAT_ID, "hello");
+    const opening = userMsg(isoAt(NOW + 2_000));
+    noteBackendArrivals(CHAT_ID, [opening.event_id]);
+    chatState.status = "working";
+
+    const starting = render([opening]);
+    expect(stateOf(starting)).toBe("STARTING");
+    expect(partOf(starting, "label")).toBeNull();
+
+    now = NOW + 5_400;
+    expect(partOf(render([opening]), "elapsed")).toBe("5s");
+  });
+
+  it("counts a turn this page sent from the send, so the count runs on unbroken", () => {
+    addOutgoing(CHAT_ID, "hello");
+    now = NOW + 8_000;
+    const opening = userMsg(isoAt(NOW + 6_500));
+    noteBackendArrivals(CHAT_ID, [opening.event_id]);
+    agentState.activity_state = "THINKING";
+
+    expect(partOf(render([opening]), "elapsed")).toBe("8s");
   });
 
   it("puts the row under the user's own send while it waits, and under the turn while the agent works", () => {

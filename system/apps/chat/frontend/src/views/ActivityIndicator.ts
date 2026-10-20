@@ -12,15 +12,19 @@
  *   - TOOL_RUNNING     -> the in-flight tool call, captioned by the agent's harness
  *   - COMPACTING       -> "Compacting…", named for who started it ("Compacting while idle…"),
  *                         and "…, then replying…" once a message is queued behind it
- * and, once a turn has run for `ELAPSED_SHOWN_AFTER_MS`, how long it has run so far, counted
- * from the transcript's own record of when the turn started (`turnTiming`).
+ * and, once a turn has run for `ELAPSED_SHOWN_AFTER_MS`, how long it has run so far: from the
+ * moment the user sent the message that opened it when this page sent it, so the count runs on
+ * unbroken from the send's own, else from the transcript's record of when the turn started
+ * (`turnTiming`).
  *
  * Before the agent's turn starts, the row stands for the user's send (contract A1/A2): a send
  * waiting on the agent to come up says "Connecting to <model> on <provider>…" (the backend's
  * ``is_connecting``), and any other send still in flight shows the row's dot at once, captioned
  * "Sending to <harness>…" only if it is still in flight after `SENDING_LABEL_AFTER_MS`. Both
  * are the Sending state drawn on the agent's side; neither resolves anything, and both give way
- * as soon as the backend reports the turn.
+ * as soon as the backend reports the turn. Once the agent's turn ends the row goes, though its
+ * harness may still be closing it (Claude's Stop hooks): the reply is in, so the done mark under
+ * it (`TurnDoneMark`) takes over at once.
  *
  * The TOOL_RUNNING caption is read straight off the tool call: the harness's own
  * parser labelled it, so this view needs no notion of which harness is running.
@@ -46,14 +50,14 @@ import { activityDotClass, type ActivityDotTone } from "@imbue/workspace-ui/src/
 import type { CompactionCause, ToolCall, TranscriptEvent } from "../models/Response";
 import { COMPACTING_STATE } from "../models/activityState";
 import { getChatById, getQueuedMessagesForChat } from "../models/Chats";
-import { getOutgoingMessages } from "../models/OutgoingMessages";
+import { getOutgoingMessages, sentAtOfArrival } from "../models/OutgoingMessages";
 import { BackgroundTasksLine } from "./BackgroundTasksLine";
 import { connectingLabel, isChatConnecting } from "./ConnectingIndicator";
 import { handoffPhaseText } from "./handoff-phase";
 import { harnessLabel } from "./harness-labels";
 import { resolutionRequestIdOf } from "./message-classification";
 import { hasShellResolutionSince, shellResolutionArrivalFor } from "./permission-card";
-import { formatElapsed, latestTurnSpan } from "./turnTiming";
+import { formatElapsed, latestTurnSpan, type TurnSpan } from "./turnTiming";
 
 /**
  * Find the most recent assistant tool call whose tool_call_id has no matching
@@ -155,9 +159,8 @@ export const SENDING_LABEL_AFTER_MS = 1_500;
 const SENDING_STATE = "SENDING";
 // The row of a send waiting for the agent to come up (``is_connecting``).
 const CONNECTING_STATE = "CONNECTING";
-// The row of a turn whose reply is in while its harness closes it (the chat still reads working).
-const FINISHING_STATE = "FINISHING";
-const FINISHING_LABEL = "Finishing up…";
+// The row of a turn whose message is in the transcript but which the agent has not reported working on.
+const STARTING_STATE = "STARTING";
 
 function renderStrip(
   label: string | null,
@@ -200,8 +203,14 @@ function elapsedSince(startedAt: number | null, now: number): string | null {
 // latest message there is the finished turn's, which is no start to count from.
 const settledTurnByChat = new Map<string, string>();
 
+/** When the turn opened by the transcript's latest turn-opening message started: when the user sent
+ *  that message, if this page sent it, else when the transcript recorded it. */
+export function turnStartedAt(span: TurnSpan): number {
+  return sentAtOfArrival(span.openingEventId) ?? span.startedAt;
+}
+
 /** When the turn the row reports started, or null when the row reports none or its message has not
- *  landed yet. Notes the latest turn as settled whenever the agent is idle. */
+ *  landed yet. Notes the latest turn as settled once the agent is idle after working on it. */
 function runningTurnStartedAt(
   chatId: string,
   state: string | null,
@@ -211,10 +220,10 @@ function runningTurnStartedAt(
   const span = latestTurnSpan(events);
   if (span === null) return null;
   if (state === "IDLE") {
-    settledTurnByChat.set(chatId, span.openingEventId);
+    if (span.hasAgentWork) settledTurnByChat.set(chatId, span.openingEventId);
     return null;
   }
-  return isTurnReported && settledTurnByChat.get(chatId) !== span.openingEventId ? span.startedAt : null;
+  return isTurnReported && settledTurnByChat.get(chatId) !== span.openingEventId ? turnStartedAt(span) : null;
 }
 
 /** Forget what the page has seen of each chat's turns. */
@@ -383,24 +392,22 @@ export function ActivityIndicator(): m.Component<ActivityIndicatorAttrs> {
     return renderStrip(caption, SENDING_STATE, columnClass, elapsedSince(sentAt, now));
   };
 
-  /** The row of a turn whose final reply is in but which its harness has not closed yet (Claude's Stop
-   *  hooks still running): the chat still reads working, and a hook can yet send the agent back to work,
-   *  so the row keeps its dot rather than calling the turn done. Null for any other chat. */
-  const finishingStrip = (attrs: ActivityIndicatorAttrs, columnClass: string, now: number): m.Vnode | null => {
+  /** The row of a turn whose message has reached the transcript while the backend reports the chat
+   *  working but not yet its activity: the dot, with the count the send started. Null for any other
+   *  chat, including one whose agent has already worked on the latest turn (it is closing, and the
+   *  done mark says so). */
+  const startingStrip = (attrs: ActivityIndicatorAttrs, columnClass: string, now: number): m.Vnode | null => {
     const chat = getChatById(attrs.chatId);
     if (chat === undefined || chat.status !== "working" || chat.active_agent.activity_state !== "IDLE") return null;
-    const replyAt = latestTurnSpan(attrs.events)?.lastEventAt ?? null;
-    if (replyAt === null) return renderStrip(null, FINISHING_STATE, columnClass);
-    const captionAt = replyAt + SENDING_LABEL_AFTER_MS;
-    if (now < captionAt) {
-      scheduleRedrawAt(captionAt, now);
-      return renderStrip(null, FINISHING_STATE, columnClass);
-    }
-    return renderStrip(FINISHING_LABEL, FINISHING_STATE, columnClass);
+    const span = latestTurnSpan(attrs.events);
+    if (span === null || span.hasAgentWork) return null;
+    const startedAt = turnStartedAt(span);
+    scheduleTick(startedAt, now);
+    return renderStrip(null, STARTING_STATE, columnClass, elapsedSince(startedAt, now));
   };
 
   /** The activity line: the switch's phase, the turn's caption, the wake-up caption, the row of a send
-   *  not yet in a turn, or the row of a turn closing; null when there is none. */
+   *  not yet in a turn, or the row of a turn not yet started; null when there is none. */
   const activityStrip = (attrs: ActivityIndicatorAttrs, columnClass: string): m.Vnode | null => {
     cancelTick();
     const { chatId, events } = attrs;
@@ -469,7 +476,7 @@ export function ActivityIndicator(): m.Component<ActivityIndicatorAttrs> {
         return renderStrip(WAKE_LABEL, WAKE_STATE, columnClass);
       }
       cancelWake();
-      return sendStrip(chatId, columnClass, now) ?? finishingStrip(attrs, columnClass, now);
+      return sendStrip(chatId, columnClass, now) ?? startingStrip(attrs, columnClass, now);
     }
     cancelWake();
     return renderStrip(label, state, columnClass, turnElapsed);

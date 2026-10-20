@@ -127,13 +127,17 @@ how the user knows something is moving at every moment between pressing Enter an
   after a moment, or "Connecting…" while the backend reports the send waiting on the agent (A1). This
   is the Sending state drawn on the agent's side, not a further optimism: it lives exactly as long as
   the placeholder, and the backend's report of the real state ends it.
+- **A turn starting.** Its message is in the transcript but the backend has not yet reported the agent
+  working on it: the row keeps its dot.
 - **A turn in flight.** The row sits under the latest turn and carries the activity of A6, with the
-  turn's running time once it has run a while, counted from the transcript's record of the message
-  that opened the turn (never from a turn the page has already seen end).
-- **A turn closing.** Its final reply is in but its harness has not closed it (Claude's Stop hooks,
-  A6a): the row keeps its dot, captioned after a moment, since a hook can send the agent back to work.
-- **Done.** Once the backend reports the chat idle, the row gives way to a mark under the reply saying
-  the turn is finished and how long the agent worked on it, from the transcript's own timestamps.
+  turn's running time once it has run a while: from the user's send when this page made it, so the
+  count runs on unbroken from the send's, else from the transcript's record of the message that opened
+  the turn (never from a turn the page has already seen end).
+- **Done.** Once the backend reports the agent's turn over (its activity idle), the row gives way to a
+  mark under the reply saying the turn is finished, even while its harness still closes it (Claude's
+  Stop hooks, A6a): the reply is in, so the user's wait is over. A hook that sends the agent back to
+  work brings the row back with the activity it reports. When this page saw both the send and the
+  reply land, the mark says how long the user waited, on this page's clock.
 The frontend decides none of these transitions; each follows the backend's report or the transcript.
 
 ### A3. Queue fidelity — the UI queue IS the harness's own queue

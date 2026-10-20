@@ -45,6 +45,7 @@ describe("latestTurnSpan", () => {
       openingEventId: "u-2026-10-20T10:01:00Z",
       startedAt: Date.parse("2026-10-20T10:01:00Z"),
       lastEventAt: Date.parse("2026-10-20T10:01:14Z"),
+      lastWorkEventId: "a-2026-10-20T10:01:14Z",
       hasAgentWork: true,
     });
   });
@@ -74,6 +75,7 @@ describe("latestTurnSpan", () => {
       openingEventId: "u-2026-10-20T10:00:00Z",
       startedAt: Date.parse("2026-10-20T10:00:00Z"),
       lastEventAt: Date.parse("2026-10-20T10:00:00Z"),
+      lastWorkEventId: null,
       hasAgentWork: false,
     });
   });

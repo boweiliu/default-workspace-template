@@ -6,8 +6,7 @@
  * verdict), not a skill expansion or a framework injection inside the turn. It ends at the agent's
  * last reply, tool call or tool result after that message -- not at a compaction that ran once the
  * agent was idle, which lands later without opening a turn. Both are the transcript's own
- * timestamps, so the running timer and the "Worked for" mark agree, and a reloaded page reads the same
- * numbers.
+ * timestamps, so a reloaded page reads the same turn the same way.
  */
 
 import type { TranscriptEvent } from "../models/Response";
@@ -20,6 +19,8 @@ export interface TurnSpan {
   startedAt: number;
   /** When the agent last recorded work in the turn; equal to `startedAt` while it has recorded none. */
   lastEventAt: number;
+  /** The event id of the agent's last work in the turn (its reply, tool call or tool result), or null while it has recorded none. */
+  lastWorkEventId: string | null;
   /** Whether anything of the agent's follows the opening message (a reply, a tool call or its result). */
   hasAgentWork: boolean;
 }
@@ -27,6 +28,7 @@ export interface TurnSpan {
 /** The latest turn's span, or null when the transcript holds no turn-opening message or its timestamp does not parse. */
 export function latestTurnSpan(events: readonly TranscriptEvent[]): TurnSpan | null {
   let lastWorkAt: number | null = null;
+  let lastWorkEventId: string | null = null;
   let hasAgentWork = false;
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
@@ -37,11 +39,13 @@ export function latestTurnSpan(events: readonly TranscriptEvent[]): TurnSpan | n
         openingEventId: event.event_id,
         startedAt: at,
         lastEventAt: Math.max(at, lastWorkAt ?? at),
+        lastWorkEventId,
         hasAgentWork,
       };
     }
     if (event.type === "assistant_message" || event.type === "tool_result") {
       hasAgentWork = true;
+      lastWorkEventId ??= event.event_id;
       if (lastWorkAt === null && !Number.isNaN(at)) lastWorkAt = at;
     }
   }
