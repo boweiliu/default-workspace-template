@@ -54,8 +54,8 @@ from imbue.chat.testing import is_chat_frontend_built
 from imbue.chat.testing import is_e2e_browser_installed
 from imbue.chat.testing import remove_background_task_marker
 from imbue.chat.testing import running_workspace
-from imbue.chat.testing import wait_until_true
 from imbue.chat.testing import seed_agent_state
+from imbue.chat.testing import wait_until_true
 from imbue.chat.testing import write_background_task_marker
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import DEFAULT_STATIC_DIRECTORY as SHELL_STATIC_DIRECTORY
