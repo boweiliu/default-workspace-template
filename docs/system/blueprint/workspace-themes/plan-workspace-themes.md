@@ -1,7 +1,7 @@
 # Workspace themes
 
 This is the spec for themes: whole looks the workspace can wear, of which the standard look is one.
-It defines what a theme is (a folder of files, section 3), the contract between the interface and a theme (tokens, parts, and window chrome, section 4), how a theme reaches every app page (section 5), how a theme's icons are made with any image model (section 6), how far each app takes part (section 7), and how a user makes a theme of their own (section 8).
+It defines what a theme is (a folder of files, section 3), the contract between the interface and a theme (tokens, parts, and window chrome, section 4), how a theme reaches every app page (section 5), how a theme's icons are made (section 6), how far each app takes part (section 7), and how a user makes a theme of their own (section 8).
 It is written for the people and agents implementing and extending it, and it is the reference the implementation is judged against.
 Classic Mac (on system.css) and Windows 2000 (on win95.css) ship as theme folders like any other.
 
@@ -10,7 +10,7 @@ Classic Mac (on system.css) and Windows 2000 (on win95.css) ship as theme folder
 - **A theme is data, not code.** A theme is a folder of CSS, assets, and a manifest. It carries no JavaScript, so a theme can change how everything looks and nothing about how anything behaves. What a theme may change about layout it declares in its manifest, and the interface renders the declaration (section 4.3).
 - **One contract, versioned.** The interface promises a set of tokens, parts, and chrome slots (section 4), numbered as `contract = 1`. A theme styles only through that contract. Nothing else in the markup is a theme's to touch: a class name is an app's private business and can change in any release.
 - **Themes are loaded, not compiled in.** No app build contains a theme. Every app page loads the one theme it wears at run time, from its own origin, so a theme a user made a minute ago works in every app without a rebuild.
-- **Every theme has an icon guide.** Icons are part of a look, so a theme says, in prose and in checkable limits, how its icons are drawn, and the workspace can draw a missing one with whatever image model it can reach.
+- **Every theme has an icon guide.** Icons are part of a look, so a theme says, in prose and in checkable limits, how its icons are drawn, and the workspace can draw a missing one, with the harness's image tool or by hand.
 - **The standard look is a theme too.** It is the base every other theme starts from, and it obeys the same rules.
 
 ## 2. Glossary
@@ -273,12 +273,12 @@ Every theme says how its icons look, twice: in prose for people and models (`ico
 
 The standard theme's guide is `docs/system/app-icons.md` (the 216-pixel two-layer tile with one fill-only glyph), which `system/themes/standard/icons/guide.md` points to; its icons are each app's own `icon.svg`.
 
-### 6.2 Making an icon, with any model
+### 6.2 Making an icon
 
 The `make-theme-icon` skill makes a theme's icon for an app:
 
 1. It reads the theme's guide and limits, the app's name, display name, and purpose, and the app's standard icon.
-2. It draws a candidate with whatever it can reach: an image tool the harness provides, an image API the user has a key for (the skill's `providers/` has examples), or, with no image model at all, a pixel grid or an SVG the agent writes itself.
+2. It draws a candidate with an image tool the harness provides, or, with none, a pixel grid or an SVG the agent writes itself.
 3. `workspace-themes icon fit` forces the candidate onto the limits: trims it, scales it to the canvas (for a pixelated theme, shrinking averages each canvas pixel's area and enlarging copies pixels whole), quantizes it to the palette or color count, and clears or fills the background. A candidate already at the canvas size (a pixel grid drawn at the theme's size) is not trimmed or scaled, so its pixels stay one for one.
 4. `workspace-themes icon check` checks the result. A png icon: size, format, background, palette, color count, that it is not blank, and that it still reads scaled down to 16 pixels (enough contrast between the icon and its background). An svg icon: that it is well-formed SVG with a `viewBox`, so it scales, and holds no script, event handler, `foreignObject`, or reference outside itself. `workspace-themes validate` holds a theme's own svg icons to the same rules.
 5. `workspace-themes icon install` puts it in place (section 6.3).
