@@ -145,7 +145,7 @@ under `system/apps/<your-package>/` so they get an isolated window and origin.
   manual port checks (`ss -tln`) is unnecessary. If you are picking a port
   manually for the wrap-existing escape hatch, check `ss -tln` and avoid `8000`
   (system_interface), `8010` (the chat app), `8030` (the Getting Started app),
-  `8040` (the Memory & disk app) and `8081` (the browser service).
+  `8040` (the System Monitor app) and `8081` (the browser service).
   Two things do not show up there: the `agent-observer` program binds no port at
   all, and a preview of any app (`update-app`'s `preview_app.py`) takes free
   ports at boot, so nothing to avoid is written down for it.
@@ -174,7 +174,12 @@ Required:
 - `--name`: kebab-case (lowercase letters/digits with single hyphens;
   must not start with `host-` or `agent-`) -- it becomes the service's
   hostname label.
-- `--description`: becomes the lib `pyproject.toml` description.
+- `--description`: the manifest's `description` -- one line of at most 200
+  characters saying what the app is for, in the person's terms. It is
+  what an agent reads to decide whether the app does what it needs (the
+  visiting-agent primer shows it, and the app's API document carries it),
+  so write it for them; it also becomes the lib `pyproject.toml`
+  description.
 - `--icon-file`: the icon you drew in pre-flight (`.svg` only); copied
   to `system/apps/<package>/icon.svg`, named by the manifest, and
   registered on every start.
@@ -193,13 +198,16 @@ Optional:
   `uv sync --all-packages` (for fast iteration / dry runs).
 
 The scaffolder fails non-zero with a clear stderr message if the lib
-already exists, the name is reserved or invalid, the requested port
+already exists, the name is reserved or invalid, the description is
+empty, spans lines or is over 200 characters, the requested port
 is taken, or the manifest check, the tool install or `uv sync` fails.
 
 What gets generated:
 
 - `system/apps/<package>/app.toml` -- the app's manifest: its registered
-  `name`, `display_name`, `icon`,
+  `name`, `display_name`, `description` (the one-liner, which is what an
+  agent reads to know what the app is for), `api_schema_path` (`/api/schema`,
+  where the app describes its own API; see below), `icon`,
   `priority = "user"` (shed before any built-in under memory pressure),
   `program` (its supervisord program), and `stop_when_no_windows = true` (the
   shell stops the app a minute after its last window closes and starts it
@@ -208,10 +216,13 @@ What gets generated:
   frees the whole process while nobody looks at it, its data on disk is
   untouched, and the next request wakes it. Set it to `false` when the app
   does work between requests that a stop would lose or interrupt: a
-  background thread or scheduler that refreshes data, a poller or file
+  background thread that keeps something live, a poller or file
   watcher, a websocket or subscription to an outside service, a job that
   must finish after the user closes the window, or an API another agent
-  drives with no window open. A stopped app runs nothing until its next
+  drives with no window open. Work on a cadence (a refresh every N minutes,
+  a nightly sync) is never a scheduler inside the service: it is a routine
+  with `--app <name>` (the `manage-routines` skill), which the Routines app
+  shows and the user can run, pause and retime. A stopped app runs nothing until its next
   request, and the wake serves that request, not the work that was in
   flight. `forward_port.py --manifest`
   reads it on every start; the scaffold checks it with `uv run app-manifest
@@ -225,6 +236,9 @@ What gets generated:
   `ty` project (an empty `[tool.ty]` table and a pinned `ty` dev dependency)
   for the ratchets' type check.
 - `system/apps/<package>/src/<package>/__init__.py` -- empty.
+- `system/apps/<package>/src/<package>/runner_test.py` -- the one test every
+  app starts with: its API document at `/api/schema` says what its manifest
+  says and covers every route (see "The app describes its own API" below).
 - `system/apps/<package>/src/<package>/runner.py` -- sync Flask starter.
   Builds a `Flask` app and serves it with
   `werkzeug.serving.run_simple(..., threaded=True)`. It serves at `/`,
@@ -398,6 +412,46 @@ itself. Stand it up, show it to the user, and confirm it's what they wanted befo
 investing in configuration or integration around it.
 
 ## Step 2: Build the real routes to a usable site (after confirmation)
+
+### The app describes its own API
+
+Every app with an HTTP API serves an OpenAPI document of its routes at
+`/api/schema` (the manifest's `api_schema_path`), built by
+`app_schema.api_schema.register_api_schema_route(app, DEFAULT_API_SCHEMA_PATH, title=..., description=..., route_table=ROUTE_TABLE)`,
+which the scaffold already calls in `runner.py` with the manifest's
+`display_name` and `description` and a starting table. The document is built
+from the live url map on each request, so every route you add is listed
+automatically; what each route owes it is:
+
+- A docstring on the view: its first paragraph, as one line, is the
+  operation's summary, the whole of it the operation's description. Write
+  them in the user's terms.
+- An entry in `ROUTE_TABLE`, keyed by `(method, path)` with path parameters
+  in `{name}` form. A route that reads or answers JSON gets
+  `RouteModels(request_model=..., response_model=..., success_status=...)`
+  (plus `alternate_responses` for a second success under another status, or a
+  failure whose answer is a model richer than the error shape),
+  and the view reads its body only through
+  `app_schema.routes.parse_request_body(Model)` and answers only through
+  `app_schema.routes.model_response(model, status)`; a refusal or a failure is
+  `app_schema.routes.error_response(detail, status)`. A page, a file, a
+  stream, a socket or a redirect gets `SchemalessRoute(reason=...)`. Define the
+  models as `FrozenModel`s with a `Field(description=...)` per attribute; the
+  descriptions are what the document shows.
+
+Never read the body with `request.get_json` or answer JSON with `jsonify` of a
+dict: the helpers check every parse and answer against the table at request
+time, and the app checks every answer, so a route that disagrees with the
+document, answers JSON by hand, or succeeds without reading its body through
+the helper fails its first request instead of shipping a document that lies.
+A failure richer than `{"detail"}` (a model extending `ErrorResponse`) is
+listed among the route's answers like any other. The scaffolded test
+`assert_api_schema_describes_app` keeps the rest honest: it fails when the
+manifest's `description` and the document disagree, when a route is missing,
+when a view has no docstring, when a route is not in the table (or the table
+names a route the app lacks), or when a modelled view reads its body around
+the helper. This document is how a visiting agent (`.agents/shared/references/visiting-agents.md`)
+and any other agent learns what the app can do without reading its code.
 
 Everything from here runs **only after** the user has confirmed the mock. The
 goal of the foreground work is a *usable* site the user can actually try -- not a

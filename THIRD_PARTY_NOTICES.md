@@ -32,5 +32,5 @@ notice.
 
 The app icons are not Lucide's: every one is drawn for this workspace to the
 rules in `docs/system/app-icons.md`, and the Classic Mac and Windows 2000 themes' pixel-art
-icons under `system/themes/<theme>/icons/` were drawn for the workspace with
-Retro Diffusion.
+icons under `system/themes/<theme>/icons/` were drawn for the workspace, most with
+Retro Diffusion and the Routines icons by hand.

@@ -3,7 +3,8 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Final, assert_never
 
-from flask import Flask, Response, abort, request, send_file
+from app_schema.api_schema import RouteTable, SchemalessRoute
+from flask import Blueprint, Flask, Response, abort, request, send_file
 from loguru import logger
 
 from workspace_themes.catalog import CachingThemeCatalogLoader
@@ -19,6 +20,7 @@ from workspace_themes.injection import (
     INJECTED_BASE_FILE_NAME,
     INJECTED_KIT_FILE_NAME,
     INJECTED_LAYERS_FILE_NAME,
+    INJECTED_THEMES_ROUTE_PREFIX,
     injected_kit_script,
     parse_theme_level,
     resolve_injected_theme_asset,
@@ -39,6 +41,28 @@ from workspace_themes.serving import (
 # Every theme answer is revalidated on each use, so an edited theme shows on the next load (section 5.1).
 _CACHE_CONTROL: Final[str] = "no-cache"
 _ENDPOINT: Final[str] = "workspace_theme_static"
+
+# The route-table entry for ``register_theme_static_route``'s route, which every app serving it merges into its own.
+THEME_STATIC_ROUTE_TABLE: Final[RouteTable] = {
+    ("GET", f"{THEME_STATIC_ROUTE_PREFIX}{{asset_path}}"): SchemalessRoute(
+        reason="a workspace theme's bundle, or a file the bundle loads"
+    ),
+}
+# The route-table entries for ``register_injected_theme_routes``' routes, for the shell to publish.
+INJECTED_THEME_ROUTE_TABLE: Final[RouteTable] = {
+    ("GET", f"{INJECTED_ROUTE_PREFIX}{INJECTED_LAYERS_FILE_NAME}"): SchemalessRoute(
+        reason="the cascade layer order an injected theme sits in, a stylesheet"
+    ),
+    ("GET", f"{INJECTED_ROUTE_PREFIX}{INJECTED_KIT_FILE_NAME}"): SchemalessRoute(
+        reason="the page kit's script at the app's theme level"
+    ),
+    ("GET", f"{INJECTED_ROUTE_PREFIX}{INJECTED_BASE_FILE_NAME}"): SchemalessRoute(
+        reason="the page kit's stylesheet at a theme level"
+    ),
+    ("GET", f"{INJECTED_THEMES_ROUTE_PREFIX}{{asset_path}}"): SchemalessRoute(
+        reason="a theme's file at a theme level"
+    ),
+}
 _ETAG_LENGTH: Final[int] = 16
 
 
@@ -116,6 +140,7 @@ def register_injected_theme_routes(
     """
 
     def layers() -> Response:
+        """The cascade layer order an injected theme sits in, put first in the app's page; empty at none."""
         level = level_of_app(request.headers.get(INJECTED_APP_HEADER))
         return _text_response(
             "" if level == ThemeLevel.NONE else INJECTED_LAYER_ORDER,
@@ -124,6 +149,7 @@ def register_injected_theme_routes(
         )
 
     def kit() -> Response:
+        """The page kit's script, carrying the app's theme level; empty at none."""
         level = level_of_app(request.headers.get(INJECTED_APP_HEADER))
         return _text_response(
             injected_kit_script(read_kit_script(), level),
@@ -132,6 +158,7 @@ def register_injected_theme_routes(
         )
 
     def base() -> Response:
+        """The page kit's standard stylesheet, at the level in the query."""
         level = _request_level()
         return _text_response(
             style_text_at_level(read_kit_stylesheet(), level),
@@ -140,6 +167,7 @@ def register_injected_theme_routes(
         )
 
     def themes(asset_path: str) -> Response:
+        """A theme's bundle or style file, at the level in the query, or a file the theme serves."""
         level = _request_level()
         try:
             asset = resolve_injected_theme_asset(load_catalog(), asset_path, level)
@@ -160,7 +188,7 @@ def register_injected_theme_routes(
             methods=["GET"],
         )
     application.add_url_rule(
-        f"{INJECTED_ROUTE_PREFIX}themes/<path:asset_path>",
+        f"{INJECTED_THEMES_ROUTE_PREFIX}<path:asset_path>",
         endpoint="workspace_injected_themes",
         view_func=themes,
         methods=["GET"],
@@ -168,18 +196,23 @@ def register_injected_theme_routes(
 
 
 def register_theme_static_route(
-    application: Flask, load_catalog: Callable[[], ThemeCatalog]
+    application: Flask | Blueprint, load_catalog: Callable[[], ThemeCatalog]
 ) -> None:
     """Serve ``/_static/themes/<path>`` from this app's own origin: the theme bundles and the files they load."""
+
+    def theme_static(asset_path: str) -> Response:
+        """A workspace theme's bundle, or a file the bundle loads, served from this app's own origin."""
+        return serve_theme_static(load_catalog, asset_path)
+
     application.add_url_rule(
         f"{THEME_STATIC_ROUTE_PREFIX}<path:asset_path>",
         endpoint=_ENDPOINT,
-        view_func=lambda asset_path: serve_theme_static(load_catalog, asset_path),
+        view_func=theme_static,
         methods=["GET"],
     )
 
 
-def register_workspace_theme_route(application: Flask) -> None:
+def register_workspace_theme_route(application: Flask | Blueprint) -> None:
     """Serve the workspace's themes from this app's origin, reading them from the working directory, which is the
     repo root every supervised app runs from."""
     loader = CachingThemeCatalogLoader(repo_root=Path.cwd())

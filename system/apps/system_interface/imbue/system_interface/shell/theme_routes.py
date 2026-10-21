@@ -4,9 +4,10 @@ from its own origin, which the shell serves for its own pages too."""
 
 from typing import Final
 
+from app_schema.routes import model_response
+from app_schema.routes import parse_request_body
 from flask import Flask
 from flask import abort
-from flask import jsonify
 from flask import send_file
 from flask.typing import ResponseReturnValue
 from loguru import logger
@@ -24,18 +25,22 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.system_interface.app_context import get_state
 from imbue.system_interface.shell.app_theme_levels import is_themed_from_outside
 from imbue.system_interface.shell.errors import InvalidShellValueError
-from imbue.system_interface.shell.route_helpers import parse_request_body
 from imbue.system_interface.shell.state import ShellState
 from imbue.system_interface.shell.theme_wire import THEME_ICON_ROUTE
-from imbue.system_interface.shell.theme_wire import theme_catalog_wire_json
+from imbue.system_interface.shell.theme_wire import theme_catalog_wire
 
 
 class ThemeLevelRequest(FrozenModel):
     """The body of the app theme level route."""
 
-    level: ThemeLevel = Field(
-        description="How far the theme reaches the app's pages: none, light, medium, or heavy"
-    )
+    level: ThemeLevel = Field(description="How far the theme reaches the app's pages: none, light, medium, or heavy")
+
+
+class AppThemeLevelResponse(FrozenModel):
+    """What setting an app's theme level answers."""
+
+    app: str = Field(description="The app whose level was set")
+    level: str = Field(description="Its level now")
 
 
 class ThemeChoiceRequest(FrozenModel):
@@ -55,63 +60,57 @@ def _shell() -> ShellState:
     return get_state().shell
 
 
-def require_available_theme(
-    catalog: ThemeCatalog, theme: ThemeId | None
-) -> ThemeId | None:
+def require_available_theme(catalog: ThemeCatalog, theme: ThemeId | None) -> ThemeId | None:
     """The theme id as asked for; raises InvalidShellValueError (a 400) for one that is not available."""
     if theme is not None and catalog.find_available(theme) is None:
         found = catalog.find(theme)
-        reason = (
-            "there is no such theme" if found is None else "; ".join(found.problems)
-        )
+        reason = "there is no such theme" if found is None else "; ".join(found.problems)
         raise InvalidShellValueError(f"theme {str(theme)!r} is not available: {reason}")
     return theme
 
 
+class DefaultThemeResponse(FrozenModel):
+    """What setting the workspace's default theme answers."""
+
+    default: str | None = Field(description="The workspace's default theme now; null wears the standard one")
+
+
 def list_themes() -> ResponseReturnValue:
+    """The workspace's themes, each with what the picker shows and where its icons are, and the default it wears."""
     shell = _shell()
-    return jsonify(
-        theme_catalog_wire_json(
-            shell.themes.load(), shell.desktops.read_theme_choices()
-        )
-    )
+    return model_response(theme_catalog_wire(shell.themes.load(), shell.desktops.read_theme_choices()))
 
 
 def set_default_theme() -> ResponseReturnValue:
+    """Set the theme every desktop that chose none wears; null wears the standard one."""
     body = parse_request_body(ThemeChoiceRequest)
     shell = _shell()
     catalog = shell.themes.load()
-    choices = shell.desktops.set_default_theme(
-        require_available_theme(catalog, body.theme)
-    )
+    choices = shell.desktops.set_default_theme(require_available_theme(catalog, body.theme))
     shell.broadcast_themes_changed()
-    return jsonify(
-        {"default": None if choices.default is None else str(choices.default)}
-    )
+    return model_response(DefaultThemeResponse(default=None if choices.default is None else str(choices.default)))
 
 
 def set_app_theme_level(app_name: str) -> ResponseReturnValue:
+    """Set how far the workspace's theme reaches an app that does not wear it itself."""
     body = parse_request_body(ThemeLevelRequest)
     shell = _shell()
     entry = shell.inventory.entry(app_name)
     if entry is None:
         raise InvalidShellValueError(f"there is no app {app_name!r}")
     if not is_themed_from_outside(entry.row):
-        raise InvalidShellValueError(
-            f"{app_name!r} wears the workspace's theme itself, at no level"
-        )
+        raise InvalidShellValueError(f"{app_name!r} wears the workspace's theme itself, at no level")
     shell.theme_levels.set(entry.row.name, body.level)
     shell.inventory.broadcast_if_changed()
-    return jsonify({"app": app_name, "level": str(body.level)})
+    return model_response(AppThemeLevelResponse(app=app_name, level=str(body.level)))
 
 
 def _kit_file_text(file_name: str) -> str:
-    return (get_state().static_directory / "_static" / file_name).read_text(
-        encoding="utf-8"
-    )
+    return (get_state().static_directory / "_static" / file_name).read_text(encoding="utf-8")
 
 
 def serve_theme_icon(theme_id: str, file_name: str) -> ResponseReturnValue:
+    """One of a theme's icons, by the URL the theme catalog gives it."""
     try:
         path = resolve_theme_icon(_shell().themes.load(), theme_id, file_name)
     except ThemeFileNotFoundError as error:
@@ -124,9 +123,7 @@ def serve_theme_icon(theme_id: str, file_name: str) -> ResponseReturnValue:
 
 
 def register_theme_routes(application: Flask) -> None:
-    application.add_url_rule(
-        "/api/themes", view_func=list_themes, methods=["GET"], endpoint="list_themes"
-    )
+    application.add_url_rule("/api/themes", view_func=list_themes, methods=["GET"], endpoint="list_themes")
     application.add_url_rule(
         "/api/themes/default",
         view_func=set_default_theme,

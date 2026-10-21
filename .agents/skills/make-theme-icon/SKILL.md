@@ -1,6 +1,6 @@
 ---
 name: make-theme-icon
-description: "Use when an app needs an icon drawn for a workspace theme (Classic Mac, Windows 2000, or a theme the user made) -- after making a theme the user wants icons for, when `workspace-themes icon missing` names one, when an app's own icon changed, or when the user asks for a new or better icon under a theme. Works with any image model, or none: the agent can draw a pixel grid or an SVG itself, and the workspace-themes tools fit any drawing onto the theme's limits."
+description: "Use when an app needs an icon drawn for a workspace theme (Classic Mac, Windows 2000, or a theme the user made) -- after making a theme the user wants icons for, when `workspace-themes icon missing` names one, when an app's own icon changed, or when the user asks for a new or better icon under a theme. Works with an image tool the harness gives, or with none: the agent can draw a pixel grid or an SVG itself, and the workspace-themes tools fit any drawing onto the theme's limits."
 metadata:
   author: imbue
 ---
@@ -49,25 +49,6 @@ Use the first of these you have. Draw two to four candidates and keep the best.
 **An image tool the harness gives you.** Prompt it with the object, the guide's treatment
 (outline, light, palette, view), "flat plain background", and "no text". Ask for a size of
 `draw_at_scale` times the canvas when the tool takes one.
-
-**Retro Diffusion**, for a pixelated theme, when the user has a Retro Diffusion key saved as
-`data/.secrets/retrodiffusion.env` (`RETRODIFFUSION_API_KEY=...`). It draws pixel art at the
-theme's own size, and keeps to the theme's palette:
-
-```bash
-python3 system/scripts/with_secrets.py data/.secrets/retrodiffusion.env -- uv run python .agents/skills/make-theme-icon/providers/retro_diffusion.py --prompt "<object and treatment>" --size <size> --palette "<the theme's palette, comma-separated, if it has one>" --variants 2 --out-dir /tmp/<app>-<theme>
-```
-
-**Any image model litellm reaches** (OpenAI, Vertex, Bedrock, ...), when the user has a key for
-one saved under `data/.secrets/`:
-
-```bash
-python3 system/scripts/with_secrets.py data/.secrets/<provider>.env -- uv run python .agents/skills/make-theme-icon/providers/litellm_image.py --model <model> --prompt "<object and treatment>" --variants 2 --out-dir /tmp/<app>-<theme>
-```
-
-Each image costs the user money with these two: draw only the icons that are missing. Do not
-ask the user for a key just to draw an icon; if they want one, the `connect-external-service`
-skill's secret card is how it is saved. A background agent never asks; it draws by hand.
 
 **By hand, with no image model.** For a `png` theme, write the icon as a text grid at the
 theme's size, one character per pixel, `.` for clear, and a legend for the rest:
