@@ -599,18 +599,8 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             # is genuinely parked now and must read as queued rather than Sending.
             self._queue.demote_pending()
             return
-        # Typed here rather than by the switch request, so it never lands in a live turn.
-        model_command = self._queue.model_command()
-        if model_command is not None:
-            self._queue.settle_model_command(model_command, is_delivered=send(model_command))
-            held_command = self._queue.model_command()
-            if held_command is not None:
-                # Still held (a failed send, or a newer pick): the block waits so it runs on the pick.
-                if held_command == model_command:
-                    # Waiting a retry cadence behind the failed switch, the block is parked, not on
-                    # its way. A newer pick has already woken the worker, so its block stays Sending.
-                    self._queue.demote_pending()
-                return
+        if not self._type_held_model_command(send):
+            return
         block, claimed, generation = self._queue.begin_flush()
         if not claimed:
             return
@@ -642,6 +632,25 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             # emit would let the poll thread wake in between and ship a later row first,
             # inverting the transcript -- the ordering this whole embargo exists to protect.
             self._emit_embargo_until = 0.0
+
+    def _type_held_model_command(self, send: Callable[[str], bool]) -> bool:
+        """Type a held model switch, if any; returns whether the held block may follow on this pass.
+
+        Typed here rather than by the switch request, so it never lands in a live turn. While a
+        switch stays held (a failed send, or a newer pick), the block waits so it runs on the pick.
+        """
+        model_command = self._queue.model_command()
+        if model_command is None:
+            return True
+        self._queue.settle_model_command(model_command, is_delivered=send(model_command))
+        held_command = self._queue.model_command()
+        if held_command is None:
+            return True
+        if held_command == model_command:
+            # Waiting a retry cadence behind the failed switch, the block is parked, not on its
+            # way. A newer pick has already woken the worker, so its block stays Sending.
+            self._queue.demote_pending()
+        return False
 
     def _observe_delivery(
         self, before: tuple[str, ...], block: str, claimed: tuple[str, ...]
