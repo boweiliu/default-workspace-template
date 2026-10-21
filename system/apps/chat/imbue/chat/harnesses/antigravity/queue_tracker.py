@@ -204,12 +204,13 @@ class AntigravityQueueTracker:
     # Session identity
 
     def set_session(self, token: str) -> bool:
-        """Adopt ``token``; on a CHANGE, discard everything. Returns True if it changed.
+        """Adopt ``token``; on a CHANGE, discard every held message. Returns True if it changed.
 
         Discard rather than carry over: keeping the entries and only swapping the token would
         deliver a dead session's queue into a fresh agy, which Part B forbids in as many words
         ("NEVER revived, NEVER auto-sent on resume"). Bumping the generation additionally
-        voids any flush the old session had claimed.
+        voids any flush the old session had claimed. A held model switch is kept: the pick
+        still applies to the agy that comes up.
         """
         with self._lock:
             if token == self._session_token:
