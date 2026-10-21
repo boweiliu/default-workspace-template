@@ -640,6 +640,19 @@ def _pick(tmp_path: Path, model_id: str, effort: str | None) -> None:
     assert result.ok
 
 
+def _repick_while_typing(tmp_path: Path, watcher: AntigravitySessionWatcher) -> None:
+    """Make the user pick `gemini-3.8-flash` at `low` while the worker is typing `/model claude-sonnet-4-6`."""
+    send = watcher._flush_send
+    assert send is not None
+
+    def _send_while_the_user_picks_again(text: str) -> bool:
+        if text == "/model claude-sonnet-4-6":
+            _pick(tmp_path, "gemini-3.8-flash", "low")
+        return send(text)
+
+    watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
+
+
 def _close_turn(tmp_path: Path, conv: str, watcher: AntigravitySessionWatcher) -> None:
     append_step(_conv_db_path(tmp_path, conv), (2, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("done")))
     (tmp_path / ACTIVE_MARKER_FILENAME).unlink(missing_ok=True)
@@ -742,14 +755,7 @@ def test_a_message_behind_a_failed_switch_a_newer_pick_replaced_still_reads_send
     """The newer pick is typed on the very next pass, so the message is still on its way."""
     sent: list[str] = []
     watcher = _idle_flushing_watcher(tmp_path, "conv-switch-failed-superseded", sent, is_slash_command_delivered=False)
-    fail_slash_commands = watcher._flush_send
-
-    def _send_while_the_user_picks_again(text: str) -> bool:
-        if text == "/model claude-sonnet-4-6":
-            _pick(tmp_path, "gemini-3.8-flash", "low")
-        return fail_slash_commands(text)
-
-    watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
+    _repick_while_typing(tmp_path, watcher)
     watcher._queue.enqueue("next thing", "t0", is_turn_open=False)
     _pick(tmp_path, "claude-sonnet-4-6", None)
 
@@ -762,14 +768,7 @@ def test_a_message_behind_a_failed_switch_a_newer_pick_replaced_still_reads_send
 def test_a_pick_made_while_a_switch_is_typed_goes_next_and_the_block_runs_on_it(tmp_path: Path) -> None:
     sent: list[str] = []
     watcher = _idle_flushing_watcher(tmp_path, "conv-switch-superseded", sent)
-    record_and_commit = watcher._flush_send
-
-    def _send_while_the_user_picks_again(text: str) -> bool:
-        if text == "/model claude-sonnet-4-6":
-            _pick(tmp_path, "gemini-3.8-flash", "low")
-        return record_and_commit(text)
-
-    watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
+    _repick_while_typing(tmp_path, watcher)
     watcher._queue.enqueue("next thing", "t0")
     _pick(tmp_path, "claude-sonnet-4-6", None)
 
