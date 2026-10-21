@@ -11,7 +11,7 @@ metadata:
 The user interacts with you (and the apps you build) through a desktop defined
 in `system/apps/system_interface`: windows over a backdrop, a taskbar, and a
 launcher. Your chat is one window; every other window is a page of some app: a
-terminal, a browser, a folder in the file viewer, another chat, an app you built.
+terminal, a browser, a folder in Files, another chat, an app you built.
 
 `uv run --no-sync workspace-layout` is the agent-facing command. Use it whenever you want
 to surface, inspect, or arrange windows. Do not hand-edit the shell's state
@@ -168,7 +168,7 @@ Some paths worth knowing: your own chat is `show chat --path
 "/${MINDS_CHAT_ID:-$MNGR_AGENT_ID}" --repoint /`, which shows it in the chat's
 pinned window (an `open` at that path would open a second chat window, since the
 pinned window stays at `/`); a folder is `open files --path
-/home/user/workspace/data/notes/` (the file viewer serves the filesystem root
+/home/user/workspace/data/notes/` (the Files app serves the filesystem root
 and opens at the workspace folder, so the path is absolute; the `path` launch
 parameter, `open files --param path=/home/user/workspace/data/notes/`, lands in
 the same folder but as a window at `/home/user/workspace/?path=...`, and a
