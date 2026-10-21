@@ -511,6 +511,11 @@ def get_tracker(agent_id: str, outbox_path: Path, session_token: str) -> Antigra
         return tracker
 
 
+def get_agent_tracker(agent_id: str, state_dir: Path) -> AntigravityQueueTracker:
+    """The tracker of the agent whose state dir is ``state_dir``, journalling beside its other agy files."""
+    return get_tracker(agent_id, state_dir / OUTBOX_FILENAME, session_token(state_dir))
+
+
 def drop_tracker(agent_id: str) -> None:
     """Forget an agent's tracker entirely (the agent is gone, not merely restarted)."""
     with _TRACKERS_LOCK:

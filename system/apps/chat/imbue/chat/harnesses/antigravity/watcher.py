@@ -34,9 +34,8 @@ from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.harnesses.antigravity.agy_transcript import TruncatedError
 from imbue.chat.harnesses.antigravity.agy_transcript import decode_step
 from imbue.chat.harnesses.antigravity.queue_tracker import AntigravityQueueTracker
-from imbue.chat.harnesses.antigravity.queue_tracker import OUTBOX_FILENAME
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
-from imbue.chat.harnesses.antigravity.queue_tracker import get_tracker
+from imbue.chat.harnesses.antigravity.queue_tracker import get_agent_tracker
 from imbue.chat.harnesses.antigravity.queue_tracker import session_token
 from imbue.chat.harnesses.antigravity.session_parser import parse_step
 from imbue.chat.harnesses.antigravity.session_parser import parse_step_detail
@@ -145,7 +144,7 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         # The session's identity: the marker mngr stamps on every launch/resume. A journal
         # written under a different token belongs to a session that has since restarted, and
         # the contract says such a queue is gone -- never replayed, never delivered.
-        self._queue = get_tracker(self._agent_id, self._state_dir / OUTBOX_FILENAME, session_token(self._state_dir))
+        self._queue = get_agent_tracker(self._agent_id, self._state_dir)
         self._turn_state = get_turn_state(self._agent_id)
         self._queue_snapshot_callback = None
         self._flush_send = None

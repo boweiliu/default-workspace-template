@@ -16,9 +16,7 @@ from typing import Final
 from loguru import logger
 
 from imbue.chat.agent_discovery import AgentInfo
-from imbue.chat.harnesses.antigravity.queue_tracker import OUTBOX_FILENAME
-from imbue.chat.harnesses.antigravity.queue_tracker import get_tracker
-from imbue.chat.harnesses.antigravity.queue_tracker import session_token
+from imbue.chat.harnesses.antigravity.queue_tracker import get_agent_tracker
 from imbue.chat.harnesses.model import EffortChoice
 from imbue.chat.harnesses.model import HarnessCatalog
 from imbue.chat.harnesses.model import HarnessModelResolver
@@ -132,6 +130,5 @@ class AntigravityModelResolver(HarnessModelResolver):
             # already on it. Its id is a display name, which `/model` would not accept.
             logger.debug("antigravity: {} already runs the unlisted model {!r}", self._agent_id, identity.model_id)
             return SwitchResult(ok=True)
-        tracker = get_tracker(self._agent_id, self._state_dir / OUTBOX_FILENAME, session_token(self._state_dir))
-        tracker.request_model_command(model_command(identity))
+        get_agent_tracker(self._agent_id, self._state_dir).request_model_command(model_command(identity))
         return SwitchResult(ok=True)
