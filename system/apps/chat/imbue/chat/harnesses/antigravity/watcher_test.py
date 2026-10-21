@@ -9,8 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from imbue.chat.activity_state import ACTIVE_MARKER_FILENAME
 from imbue.chat.agent_discovery import AgentInfo
+from imbue.chat.agent_discovery import SendFailedError
 from imbue.chat.harnesses.antigravity.model import AntigravityModelResolver
 from imbue.chat.harnesses.antigravity.queue_tracker import MAX_DELIVERY_ATTEMPTS
 from imbue.chat.harnesses.antigravity.queue_tracker import drop_tracker
@@ -735,6 +738,32 @@ def test_an_undelivered_model_switch_is_retried_then_dropped(tmp_path: Path) -> 
         watcher._attempt_flush()
 
     assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS + ["next thing"]
+
+
+def test_a_model_switch_whose_send_raises_is_still_dropped_after_its_attempts(tmp_path: Path) -> None:
+    """A send that raises counts as an attempt, so the held messages are not stuck behind the switch."""
+    sent: list[str] = []
+    watcher = _idle_flushing_watcher(tmp_path, "conv-switch-raises", sent)
+    send = watcher._flush_send
+    assert send is not None
+
+    def _send_raising_for_slash_commands(text: str) -> bool:
+        if text.startswith("/"):
+            sent.append(text)
+            raise SendFailedError("the agent could not be found")
+        return send(text)
+
+    watcher.set_flush_hooks(_send_raising_for_slash_commands, lambda: True)
+    watcher._queue.enqueue("next thing", "t0")
+    _pick(tmp_path, "gemini-3.8-flash", "high")
+
+    for _ in range(MAX_DELIVERY_ATTEMPTS):
+        with pytest.raises(SendFailedError):
+            watcher._attempt_flush()
+    watcher._attempt_flush()
+
+    assert sent == ["/model gemini-3.8-flash-high"] * MAX_DELIVERY_ATTEMPTS + ["next thing"]
+    assert watcher.get_queued_messages() == []
 
 
 def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path: Path) -> None:

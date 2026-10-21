@@ -642,7 +642,13 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
         model_command = self._queue.model_command()
         if model_command is None:
             return True
-        self._queue.settle_model_command(model_command, is_delivered=send(model_command))
+        # Settled even when the send raises, so the attempt counts toward the switch's bound and
+        # the block behind it is not held forever.
+        is_delivered = False
+        try:
+            is_delivered = send(model_command)
+        finally:
+            self._queue.settle_model_command(model_command, is_delivered=is_delivered)
         held_command = self._queue.model_command()
         if held_command is None:
             return True
