@@ -2718,7 +2718,7 @@ def _run_layout_command(server: E2EServer, args: list[str], agent_id: str, cwd: 
 
 @pytest.mark.timeout(90, func_only=False)
 def test_an_agents_show_of_its_own_chat_lands_in_the_pinned_window(tmp_path: Path, page: Page) -> None:
-    """The command the caretaker, the scheduled agents, and manage-desktop give an agent for surfacing its own chat
+    """The command the caretaker and manage-desktop give an agent for surfacing its own chat
     (``show`` at the chat root on the chat, the chat's own page counting as showing it, the root page repointable)
     points the user's pinned window at the chat and brings it on screen; a second agent's moves that same window. No
     second window of the app opens, as an ``open`` at the path would."""
