@@ -20,10 +20,10 @@ class _ScriptedDraftReader:
 
 
 def _publisher(
-    streamed: list[tuple[str, str, ReplyDraftReader]], sent: list[tuple[str, dict[str, Any]]]
+    watched: list[tuple[str, str, ReplyDraftReader]], sent: list[tuple[str, dict[str, Any]]]
 ) -> ReplyDraftPublisher:
     return ReplyDraftPublisher(
-        list_streamed_watchers=lambda: list(streamed),
+        list_watched_agents=lambda: list(watched),
         capture_agent_pane=lambda agent_id: f"pane of {agent_id}",
         broadcast_to_chat=lambda chat_id, frame: sent.append((chat_id, frame)),
     )
@@ -76,17 +76,17 @@ def test_a_harness_without_drafts_sends_nothing() -> None:
     assert sent == []
 
 
-def test_a_chat_that_stops_being_streamed_starts_from_nothing_when_streamed_again() -> None:
+def test_a_chat_looked_away_from_starts_from_nothing_when_looked_at_again() -> None:
     draft = ReplyDraft(after_event_id="event-1", text="Same draft")
     reader = _ScriptedDraftReader([draft, draft])
-    streamed: list[tuple[str, str, ReplyDraftReader]] = [("chat-7", "agent-9", reader)]
+    watched: list[tuple[str, str, ReplyDraftReader]] = [("chat-7", "agent-9", reader)]
     sent: list[tuple[str, dict[str, Any]]] = []
-    publisher = _publisher(streamed, sent)
+    publisher = _publisher(watched, sent)
 
     publisher.publish_once()
-    streamed.clear()
+    watched.clear()
     publisher.publish_once()
-    streamed.append(("chat-7", "agent-9", reader))
+    watched.append(("chat-7", "agent-9", reader))
     publisher.publish_once()
 
     # The page that opened the chat again gets the draft, though it did not change.

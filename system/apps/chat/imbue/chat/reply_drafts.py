@@ -1,15 +1,17 @@
 """Stream the reply an agent is writing to the pages showing its chat, before its transcript has it.
 
 Claude records a reply only once it has finished writing it, so the chat would otherwise show a
-reply seconds after the agent's terminal does. One thread asks each watcher whose chat a page
-streams for its draft (``AgentSessionWatcher.read_reply_draft``) a few times a second and sends
+reply seconds after the agent's terminal does. One thread asks each watcher whose chat the user
+is looking at for its draft (``AgentSessionWatcher.read_reply_draft``) a few times a second and sends
 any change on the chat's stream as an ``assistant_draft`` frame: ``{"type": "assistant_draft",
 "agent_id", "after_event_id", "text"}``, with ``text`` empty once there is no draft. The frame is
 not a transcript event (it has no ``event_id`` and nothing stores it); the page shows it at the
 end of the transcript until the reply itself lands.
 
-The work is bounded by what the user is looking at: a chat no page streams is never read, and a
-Claude agent with no turn in flight costs one stat of its ``active`` marker per pass.
+The work is bounded by what the user is looking at: only a chat a page streams *and* reports
+shown and focused (its presence, ``presence.py``) is read, so background chats, chats in a hidden
+or unfocused window, and chats the chat root keeps loaded out of sight cost nothing; and a
+looked-at Claude agent with no turn in flight costs one stat of its ``active`` marker per pass.
 """
 
 import threading
@@ -30,7 +32,7 @@ from imbue.imbue_common.mutable_model import MutableModel
 
 REPLY_DRAFT_EVENT_TYPE: Final[str] = "assistant_draft"
 
-# How often a streamed chat's draft is re-read. Each read of a turn in flight is one tmux capture.
+# How often a looked-at chat's draft is re-read. Each read of a turn in flight is one tmux capture.
 REPLY_DRAFT_POLL_INTERVAL_SECONDS: Final[float] = 0.3
 
 _CAPTURE_TIMEOUT_SECONDS: Final[float] = 5.0
@@ -42,8 +44,8 @@ class ReplyDraftReader(Protocol):
     def read_reply_draft(self, capture_pane: CapturePaneCallback) -> ReplyDraft | None: ...
 
 
-# ``(chat id, agent id, watcher)`` for each agent with a watcher whose chat a page streams.
-ListStreamedWatchers = Callable[[], list[tuple[str, str, ReplyDraftReader]]]
+# ``(chat id, agent id, watcher)`` for each agent with a watcher whose chat the user is looking at.
+ListWatchedAgents = Callable[[], list[tuple[str, str, ReplyDraftReader]]]
 # Captures one agent's pane by agent id.
 CaptureAgentPane = Callable[[str], str | None]
 # Sends one frame on a chat's streams.
@@ -77,12 +79,12 @@ def reply_draft_frame(agent_id: str, draft: ReplyDraft) -> dict[str, Any]:
 
 
 class ReplyDraftPublisher(MutableModel):
-    """Reads the drafts of the streamed chats on one thread and broadcasts what changed."""
+    """Reads the drafts of the chats the user is looking at on one thread and broadcasts what changed."""
 
     model_config = {"arbitrary_types_allowed": True}
 
-    list_streamed_watchers: ListStreamedWatchers = Field(
-        frozen=True, description="The watchers of the agents whose chats a page streams"
+    list_watched_agents: ListWatchedAgents = Field(
+        frozen=True, description="The watchers of the agents whose chats the user is looking at"
     )
     capture_agent_pane: CaptureAgentPane = Field(frozen=True, description="Captures one agent's pane by agent id")
     broadcast_to_chat: BroadcastToChat = Field(frozen=True, description="Sends one frame on a chat's streams")
@@ -106,9 +108,9 @@ class ReplyDraftPublisher(MutableModel):
             self._thread.join(timeout=_CAPTURE_TIMEOUT_SECONDS + 1.0)
 
     def publish_once(self) -> None:
-        """One pass: read each streamed agent's draft and broadcast the ones that changed."""
+        """One pass: read each looked-at agent's draft and broadcast the ones that changed."""
         seen_agent_ids: set[str] = set()
-        for chat_id, agent_id, watcher in self.list_streamed_watchers():
+        for chat_id, agent_id, watcher in self.list_watched_agents():
             seen_agent_ids.add(agent_id)
             draft = watcher.read_reply_draft(self._bind_capture(agent_id))
             if draft is None:
@@ -119,7 +121,7 @@ class ReplyDraftPublisher(MutableModel):
                 continue
             self._published_by_agent[agent_id] = draft
             self.broadcast_to_chat(chat_id, reply_draft_frame(agent_id, draft))
-        # A chat no page streams any more starts from nothing when one opens it again.
+        # A chat the user looked away from starts from nothing when they look at it again.
         for agent_id in set(self._published_by_agent) - seen_agent_ids:
             del self._published_by_agent[agent_id]
 
@@ -131,4 +133,4 @@ class ReplyDraftPublisher(MutableModel):
             try:
                 self.publish_once()
             except OSError as e:
-                logger.opt(exception=e).warning("Reading the streamed chats' reply drafts failed")
+                logger.opt(exception=e).warning("Reading the looked-at chats' reply drafts failed")

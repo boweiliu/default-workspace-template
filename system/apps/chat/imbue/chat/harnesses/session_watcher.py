@@ -178,7 +178,8 @@ class AgentSessionWatcher(TranscriptReader, ABC):
         """The reply the agent is writing now, which its transcript does not hold yet.
 
         For a harness that records a reply only once it is finished, while its terminal shows it
-        as it streams. Called by one poller at a time, and only while a page streams the chat.
+        as it streams. Called by one poller at a time, and only while a page streams the chat and shows
+        it focused.
         None by default: the harness has no drafts to offer (its transcript already streams, or
         nothing on screen can be read back).
         """

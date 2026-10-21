@@ -267,14 +267,19 @@ class ChatAppState(MutableModel):
         """
         if self._reply_draft_publisher is None:
             self._reply_draft_publisher = ReplyDraftPublisher(
-                list_streamed_watchers=self.list_streamed_watchers,
+                list_watched_agents=self.list_watched_agents,
                 capture_agent_pane=self.capture_agent_pane,
                 broadcast_to_chat=self.event_queues.broadcast,
             )
         self._reply_draft_publisher.start()
 
-    def list_streamed_watchers(self) -> list[tuple[str, str, ReplyDraftReader]]:
-        """``(chat id, agent id, watcher)`` for every running watcher whose chat a page streams."""
+    def list_watched_agents(self) -> list[tuple[str, str, ReplyDraftReader]]:
+        """``(chat id, agent id, watcher)`` for every running watcher whose chat a user is looking at now.
+
+        Looking at means a page streams the chat and a page reports it shown and focused
+        (``AgentManager.chat_watchers``): a chat in a hidden or unfocused window, one the chat root
+        keeps loaded in the background, and one no page has open are never read.
+        """
         streamed_chat_ids = self.event_queues.streamed_chat_ids()
         if not streamed_chat_ids:
             return []
@@ -284,12 +289,12 @@ class ChatAppState(MutableModel):
                 for agent_id, watcher in self.watchers.items()
                 if id(watcher) not in self._starting_watchers
             ]
-        streamed: list[tuple[str, str, ReplyDraftReader]] = []
+        watched: list[tuple[str, str, ReplyDraftReader]] = []
         for agent_id, watcher in running:
-            chat_id = str(self.agent_manager.chat_id_of_agent(agent_id))
-            if chat_id in streamed_chat_ids:
-                streamed.append((chat_id, agent_id, watcher))
-        return streamed
+            chat_id = self.agent_manager.chat_id_of_agent(agent_id)
+            if str(chat_id) in streamed_chat_ids and self.agent_manager.chat_watchers(chat_id):
+                watched.append((str(chat_id), agent_id, watcher))
+        return watched
 
     def capture_agent_pane(self, agent_id: str) -> str | None:
         """The visible terminal pane of an agent, colour codes kept, or None when it cannot be read."""

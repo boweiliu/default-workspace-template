@@ -216,7 +216,8 @@ what follows its last event, appends what the stream did not deliver, and
 reloads the transcript when an event is missing further up. The stream also
 carries `assistant_draft` frames (`reply_drafts.py`): Claude writes a reply to
 its session file only once the text block is finished, so while a page
-streams a chat and a Claude turn is in flight (its `active` marker), the app
+streams a chat and reports it shown and focused (its presence, below), and a
+Claude turn is in flight (its `active` marker), the app
 reads the reply being written off the agent's terminal pane three times a
 second, through mngr's `stream_snapshot` converter
 (`harnesses/claude/reply_draft.py`), and sends what changed:
@@ -225,7 +226,9 @@ shows the draft after the transcript while `after_event_id` is still the last
 event it holds, so the reply landing replaces it at once; an empty `text`
 clears it. A draft that matches a reply the transcript already holds is never
 sent. The terminal's rendering loses heading levels and code-fence languages,
-which the landed reply restores. No chat that no page streams is read.
+which the landed reply restores. A chat in the background (no page, a hidden
+or unfocused window, or a frame the chat root keeps loaded out of sight) is
+never read.
 
 A handoff (`chat_handoffs.py`) is how a chat moves to another harness:
 `POST /api/chats/<chat-id>/handoff` with an `account_id` and the message typed
