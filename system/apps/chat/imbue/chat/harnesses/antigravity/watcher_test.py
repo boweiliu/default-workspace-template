@@ -656,6 +656,20 @@ def _repick_while_typing(tmp_path: Path, watcher: AntigravitySessionWatcher) -> 
     watcher.set_flush_hooks(_send_while_the_user_picks_again, lambda: True)
 
 
+def _raise_on_slash_commands(watcher: AntigravitySessionWatcher, sent: list[str]) -> None:
+    """Make the watcher's send record and then raise for a slash command, as when the agent cannot be found."""
+    send = watcher._flush_send
+    assert send is not None
+
+    def _send_raising_for_slash_commands(text: str) -> bool:
+        if text.startswith("/"):
+            sent.append(text)
+            raise SendFailedError("the agent could not be found")
+        return send(text)
+
+    watcher.set_flush_hooks(_send_raising_for_slash_commands, lambda: True)
+
+
 def _close_turn(tmp_path: Path, conv: str, watcher: AntigravitySessionWatcher) -> None:
     append_step(_conv_db_path(tmp_path, conv), (2, _TYPE_PLANNER, _STATUS_DONE, _planner_payload("done")))
     (tmp_path / ACTIVE_MARKER_FILENAME).unlink(missing_ok=True)
@@ -744,16 +758,7 @@ def test_a_model_switch_whose_send_raises_is_still_dropped_after_its_attempts(tm
     """A send that raises counts as an attempt, so the held messages are not stuck behind the switch."""
     sent: list[str] = []
     watcher = _idle_flushing_watcher(tmp_path, "conv-switch-raises", sent)
-    send = watcher._flush_send
-    assert send is not None
-
-    def _send_raising_for_slash_commands(text: str) -> bool:
-        if text.startswith("/"):
-            sent.append(text)
-            raise SendFailedError("the agent could not be found")
-        return send(text)
-
-    watcher.set_flush_hooks(_send_raising_for_slash_commands, lambda: True)
+    _raise_on_slash_commands(watcher, sent)
     watcher._queue.enqueue("next thing", "t0")
     _pick(tmp_path, "gemini-3.8-flash", "high")
 
@@ -766,15 +771,22 @@ def test_a_model_switch_whose_send_raises_is_still_dropped_after_its_attempts(tm
     assert watcher.get_queued_messages() == []
 
 
-def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path: Path) -> None:
+@pytest.mark.parametrize("does_send_raise", [False, True])
+def test_a_message_waiting_behind_a_failed_model_switch_reads_as_queued(tmp_path: Path, does_send_raise: bool) -> None:
     """Accepted against an idle agy, a message reads Sending; once the switch ahead of it fails, it is waiting."""
     sent: list[str] = []
     watcher = _idle_flushing_watcher(tmp_path, "conv-switch-demote", sent, is_slash_command_delivered=False)
+    if does_send_raise:
+        _raise_on_slash_commands(watcher, sent)
     watcher._queue.enqueue("next thing", "t0", is_turn_open=False)
     _pick(tmp_path, "gemini-3.8-flash", "low")
     assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [True]
 
-    watcher._attempt_flush()
+    if does_send_raise:
+        with pytest.raises(SendFailedError):
+            watcher._attempt_flush()
+    else:
+        watcher._attempt_flush()
 
     assert sent == ["/model gemini-3.8-flash-low"]
     assert [entry["is_sending"] for entry in watcher.get_queued_messages()] == [False]

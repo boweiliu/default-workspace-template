@@ -648,14 +648,12 @@ class AntigravitySessionWatcher(AgentSessionWatcher, TranscriptLoader):
             is_delivered = send(model_command)
         finally:
             self._queue.settle_model_command(model_command, is_delivered=is_delivered)
-        held_command = self._queue.model_command()
-        if held_command is None:
-            return True
-        if held_command == model_command:
-            # Waiting a retry cadence behind the failed switch, the block is parked, not on its
-            # way. A newer pick has already woken the worker, so its block stays Sending.
-            self._queue.demote_pending()
-        return False
+            held_command = self._queue.model_command()
+            if held_command == model_command:
+                # Waiting a retry cadence behind the failed switch, the block is parked, not on
+                # its way. A newer pick has already woken the worker, so its block stays Sending.
+                self._queue.demote_pending()
+        return held_command is None
 
     def _observe_delivery(
         self, before: tuple[str, ...], block: str, claimed: tuple[str, ...]
