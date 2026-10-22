@@ -103,8 +103,8 @@ the computer; circular arrows: synced, a copy kept here, turning while the
 copy is being made or a change carried across), and its own entry
 wears the same badge wherever a folder view lists it. After the label come
 marks only when there is something to say: a "Read-only" word badge, a filled
-orange disc when Imbue Studio says a sync stopped, and a struck-through laptop when its
-computer is not answering. Inside a copy, a stopped sync says so above the
+orange disc when Imbue Studio says a sync stopped. A share whose computer is
+not answering is greyed out, icon and all. Inside a copy, a stopped sync says so above the
 entries (with Studio's reason), and an empty copy that is syncing says how far
 along it is. The row's tooltip says, without repeating
 the name, how it reaches the workspace and how it stands. A synced share opens

@@ -147,6 +147,7 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
     (notes_copy / "todo.md").write_text("- call\n")
     (files_root / "home/user/synced_folders/host-mac/Users/kim/Brand Fonts").mkdir(parents=True)
     (files_root / "home/user/synced_folders/host-mac/Users/kim/Atkinson").mkdir(parents=True)
+    (files_root / "home/user/synced_folders/host-mac/Users/kim/Taxes").mkdir(parents=True)
     connections.listed = {
         "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
         "shares": [
@@ -179,6 +180,16 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
             },
             {
                 "device": "host-mac",
+                "path": "/Users/kim/Taxes",
+                "access": "write",
+                "kind": "folder",
+                "is_reachable": True,
+                "synced_copy": "/home/user/synced_folders/host-mac/Users/kim/Taxes/",
+                # Its computer did not say how the sync stands.
+                "sync": None,
+            },
+            {
+                "device": "host-mac",
                 "path": "/Users/kim/photo.png",
                 "access": "read",
                 "kind": "file",
@@ -191,7 +202,7 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
     page = open_files_page("/home/user/workspace/")
 
     expect(page.locator("[data-sidebar-row] .files-sidebar-label")).to_have_text(
-        ["Workspace", "Uploads", "notes", "Brand Fonts", "Atkinson", "photo.png"]
+        ["Workspace", "Uploads", "notes", "Brand Fonts", "Atkinson", "Taxes", "photo.png"]
     )
     expect(page.locator('[data-sidebar-row="shortcut:workspace"]')).to_have_attribute("aria-current", "true")
 
@@ -205,6 +216,15 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
     # A sync on its way turns its badge rather than adding a mark.
     assert marks("/Users/kim/Atkinson") == ("syncing", [])
     assert marks("/Users/kim/photo.png") == ("linked", ["read-only"])
+    # A computer not answering greys its share out, icon and all, rather than adding a mark.
+    assert marks("/Users/kim/Taxes") == ("synced", [])
+
+    def icon_opacity(path: str) -> str:
+        icon = page.locator(f'[data-sidebar-row="share:host-mac:{path}"] [data-share-badge]')
+        return icon.evaluate("el => getComputedStyle(el).opacity")
+
+    assert icon_opacity("/Users/kim/Taxes") == "0.5"
+    assert icon_opacity("/Users/kim/notes") == "1"
     expect(
         page.locator('[data-sidebar-row="share:host-mac:/Users/kim/photo.png"] [data-mark="read-only"]')
     ).to_have_text("Read-only")
@@ -242,6 +262,45 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
     expect(
         _entry(page, "/home/user/synced_folders/host-mac/Users/kim/notes/").locator("[data-icon-badge]")
     ).to_have_attribute("data-icon-badge", "synced")
+
+
+def test_a_long_reason_for_a_stopped_sync_is_cut_to_two_lines_in_the_tooltip_and_read_in_full_in_the_folder(
+    open_files_page: OpenFilesPage, files_root: Path, connections: Any
+) -> None:
+    (files_root / "home/user/workspace").mkdir(parents=True)
+    (files_root / "home/user/synced_folders/host-mac/Users/kim/notes").mkdir(parents=True)
+    reason = (
+        "Unison could not finish: the archive for /Users/kim/notes is locked by another copy of Unison, "
+        "which may still be running or may have stopped without letting go of it. Close it and try again."
+    )
+    connections.listed = {
+        "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
+        "shares": [
+            {
+                "device": "host-mac",
+                "path": "/Users/kim/notes",
+                "access": "write",
+                "kind": "folder",
+                "is_reachable": True,
+                "synced_copy": "/home/user/synced_folders/host-mac/Users/kim/notes/",
+                "sync": _sync(state="FAILED", message=reason),
+            }
+        ],
+    }
+    page = open_files_page("/home/user/workspace/")
+
+    row = page.locator('[data-sidebar-row="share:host-mac:/Users/kim/notes"]')
+    row.hover()
+    detail = page.get_by_role("tooltip").locator(".hover-tooltip-detail")
+    expect(detail).to_be_visible()
+    shown_lines, holds_more = detail.evaluate(
+        "el => [Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)),"
+        " el.scrollHeight > el.clientHeight]"
+    )
+    assert (shown_lines, holds_more) == (2, True)
+
+    row.click()
+    expect(page.locator(".files-sync-notice")).to_contain_text(reason)
 
 
 _FROM_STUDIO = """(message) => window.postMessage(message, "*")"""

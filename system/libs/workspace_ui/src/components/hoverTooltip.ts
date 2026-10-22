@@ -63,8 +63,9 @@ const TOOLTIP_MARGIN = 6;
 const TOOLTIP_CLASS =
   "hover-tooltip type-helper pointer-events-none fixed z-(--z-tooltip) hidden max-w-[480px] items-center gap-1.5 rounded-md bg-inverse px-2 py-1 text-center whitespace-normal text-on-accent shadow-overlay dark:bg-surface dark:text-primary";
 
-/** The second line: the bubble's own text, quieter. */
-const DETAIL_CLASS = "hover-tooltip-detail opacity-70";
+/** The second line: the bubble's own text, quieter, and cut off after two lines with an ellipsis -- a glance, not the
+ * place to read a long error in full. */
+const DETAIL_CLASS = "hover-tooltip-detail line-clamp-2 opacity-70";
 
 /** The part of a ``DOMRect`` the placement needs. */
 export interface TooltipAnchor {

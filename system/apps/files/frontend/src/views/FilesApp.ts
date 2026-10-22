@@ -74,8 +74,9 @@ interface SidebarRow {
   /** A small glyph in the icon's corner: how a shared item reaches the workspace. */
   iconBadge?: ShareBadge;
   tooltip?: ShareTooltip;
-  /** Marks after the label, shown only when there is something to say: read-only, stuck, not answering. */
+  /** Marks after the label, shown only when there is something to say: read-only, stuck. */
   badges?: m.Children;
+  /** Greyed out, icon and all: its computer is not answering. */
   isFaint?: boolean;
   /** A shared file opens its page and takes no drops; every other row is a folder. */
   isFile?: boolean;
@@ -113,7 +114,7 @@ function sidebarRow(app: FilesController, row: SidebarRow, isCurrent: boolean): 
     [
       row.iconBadge === undefined
         ? m.trust(icon(row.icon, { size: 16, className: "shrink-0" }))
-        : sharedItemIcon(row.label, row.icon === "folder", row.iconBadge),
+        : sharedItemIcon(row.label, row.icon === "folder", row.iconBadge, row.isFaint === true),
       m("span.files-sidebar-label", { class: "min-w-0 flex-1 truncate" }, row.label),
       row.badges ?? null,
     ],
@@ -122,11 +123,15 @@ function sidebarRow(app: FilesController, row: SidebarRow, isCurrent: boolean): 
 
 /** A shared item drawn as the folder views draw it, with their small disc over its corner saying how it reaches the
  *  workspace. */
-function sharedItemIcon(name: string, isFolder: boolean, badge: ShareBadge): m.Vnode {
-  return m("span.files-share-icon", { "data-share-badge": badge, class: "relative flex shrink-0" }, [
-    m.trust(fileIconSvg(name, isFolder, 18)),
-    cornerBadge(badge, 18),
-  ]);
+function sharedItemIcon(name: string, isFolder: boolean, badge: ShareBadge, isFaint: boolean): m.Vnode {
+  return m(
+    "span.files-share-icon",
+    {
+      "data-share-badge": badge,
+      class: `relative flex shrink-0 ${isFaint ? "opacity-50" : ""}`,
+    },
+    [m.trust(fileIconSvg(name, isFolder, 18)), cornerBadge(badge, 18)],
+  );
 }
 
 function mark(kind: string, label: string, body: m.Children, extra: string): m.Vnode {
@@ -147,14 +152,9 @@ function readOnlyMark(): m.Vnode {
   );
 }
 
-function unreachableMark(): m.Vnode {
-  return mark("unreachable", "Not answering", m.trust(icon("laptop-off", { size: 12 })), "text-faint");
-}
-
 function shareRow(app: FilesController, connections: Connections, share: Share): SidebarRow {
   const target = targetOf(share);
   const status = syncStatusOf(share);
-  const isUnreachable = !share.is_reachable || status?.kind === "unknown";
   return {
     key: `share:${share.device}:${share.path}`,
     label: labelOf(share),
@@ -162,13 +162,9 @@ function shareRow(app: FilesController, connections: Connections, share: Share):
     icon: share.kind === "file" ? "page" : "folder",
     iconBadge: shareBadgeOf(share),
     tooltip: describeShare(share, deviceNameOf(connections, share.device)),
-    isFaint: !share.is_reachable && share.synced_copy === null,
+    isFaint: !share.is_reachable || status?.kind === "unknown",
     isFile: share.kind === "file",
-    badges: [
-      share.access === "read" ? readOnlyMark() : null,
-      status?.kind === "failed" ? failedMark() : null,
-      isUnreachable ? unreachableMark() : null,
-    ],
+    badges: [share.access === "read" ? readOnlyMark() : null, status?.kind === "failed" ? failedMark() : null],
     onOpen: share.kind === "file" ? () => app.openPage(target, "view") : undefined,
   };
 }
