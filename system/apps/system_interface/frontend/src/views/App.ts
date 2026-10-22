@@ -81,8 +81,7 @@ import { UpdateStalenessBanner } from "./UpdateStalenessBanner";
 import {
   MENU_MIN_WIDTH,
   openShareSettings,
-  reimagineAppPrompt,
-  restyleAppPrompt,
+  enableThemingPrompt,
   taskbarEntryMenuRows,
   windowMenuRows,
   type WindowThemeActions,
@@ -598,21 +597,17 @@ export function App(): m.Component<AppAttrs> {
       quit: app !== undefined && current.canStopApp(app) ? () => void current.quitApp(app.name) : null,
       popOut: current.getCanPopOut() ? () => void current.detachWindow(windowId) : null,
       close: () => void current.closeOrMinimizeWindow(windowId),
-      theme:
-        app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
+      theme: app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
     });
   }
 
   function windowThemeActionsOf(current: DesktopStore, app: AppRecord, level: ThemeLevel): WindowThemeActions {
     const canDraft = draftTargetOf(current.getState()) !== null;
     return {
-      level,
-      setLevel: (chosen) => void current.setAppThemeLevel(app.name, chosen),
-      restyle: canDraft ? () => void current.draftIntoPinnedWindow(restyleAppPrompt(app.display_name), false) : null,
-      reimagine: canDraft
-        ? () =>
-            void current.draftIntoPinnedWindow(reimagineAppPrompt(app.display_name, current.shownTheme().name), false)
-        : null,
+      isThemeable: app.is_themeable,
+      isOn: level !== "none",
+      setOn: (isOn) => void current.setAppTheming(app.name, isOn),
+      enable: canDraft ? () => void current.draftIntoPinnedWindow(enableThemingPrompt(app.display_name), false) : null,
     };
   }
 

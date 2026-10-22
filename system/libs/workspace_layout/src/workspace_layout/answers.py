@@ -130,8 +130,13 @@ class InventoryApp(FrozenModel):
     )
     theme_level: str | None = Field(
         default=None,
-        description="How far the workspace's theme is put into the app's pages from outside (none, light, medium, or "
-        "heavy); None for an app that wears the theme itself, or declares that it is not themed",
+        description="How far the workspace's theme is put into the app's pages from outside: light when the user has "
+        "theming on, none when off or when the app is not themeable yet; None for an app that wears the theme itself, "
+        "or declares that it is not themed",
+    )
+    is_themeable: bool = Field(
+        default=False,
+        description="Whether the app is written to take the theme from outside, so its theming can be turned on and off",
     )
 
 

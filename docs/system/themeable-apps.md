@@ -1,21 +1,26 @@
 # Making an app themeable
 
 The user can dress the workspace in a theme (Desktop settings > Theme): the standard look,
-Classic Mac, Windows 2000, or one they made. An app the workspace built takes the theme from
-outside, with no work of its own: the page it serves gets the theme's design tokens and styles put
-into it, at the level the user chose for the app in its window menu's Theming submenu (none,
-light, medium, or heavy). The design is
+Classic Mac, Windows 2000, or one they made. A themeable app takes the theme from outside: while
+its theming is on (its window menu's Theming submenu, On or Off), the page it serves gets the
+theme's design tokens and the theme's look for plain controls put into it. The design is
 `docs/system/blueprint/workspace-themes/plan-workspace-themes.md`, sections 4 and 7.1.
 
-What that reaches depends on how the app is written. A literal color or font the app sets is one
-no theme can change. Making the app themeable means writing its look so every theme reaches it,
-while it keeps the look it has today when theming is off.
+Making an app themeable means writing its look so every theme reaches it, while it keeps the look
+it has today when theming is off. A literal color or font the app sets is one no theme can change.
 
-## Leave the app's manifest alone
+## Mark the app themeable
 
-Keep `app.toml` without a `[theming]` table. An app with no `[theming]` is the kind the
-workspace themes from outside; declaring a mode turns that off, and the app would then have to
-load the theme itself.
+Add to the app's `app.toml`:
+
+```toml
+[theming]
+mode = "outside"
+```
+
+That is what tells the workspace the app is written on the tokens: its Theming submenu offers On
+and Off, and the theme goes into its pages while theming is on. Without it the app takes no theme,
+and the submenu offers Enable theming instead.
 
 ## Take every color, font, radius, and shadow from a token
 

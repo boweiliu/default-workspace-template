@@ -184,20 +184,14 @@ export interface AppRecord {
   /** How far the workspace's theme is put into the app's pages from outside (workspace-themes plan section 7.2);
    *  null for an app that wears the theme itself, or declares that it is not themed. */
   readonly theme_level: ThemeLevel | null;
+  /** Whether the app is written to take the theme from outside, so its theming can be turned on and off. */
+  readonly is_themeable: boolean;
 }
 
 /** How far a theme reaches into an app that does not wear it itself. */
 export type ThemeLevel = "none" | "light" | "medium" | "heavy";
 
 export const THEME_LEVELS: readonly ThemeLevel[] = ["none", "light", "medium", "heavy"];
-
-/** What the user reads for each level. */
-export const THEME_LEVEL_LABELS: Readonly<Record<ThemeLevel, string>> = {
-  none: "None",
-  light: "Light",
-  medium: "Medium",
-  heavy: "Heavy",
-};
 
 function parseThemeLevel(raw: unknown): ThemeLevel | null {
   return THEME_LEVELS.find((level) => level === raw) ?? null;
@@ -539,6 +533,7 @@ export function parseAppRecord(raw: unknown): AppRecord {
     is_running: record.is_running === true,
     share_url: typeof record.share_url === "string" && record.share_url !== "" ? record.share_url : null,
     theme_level: parseThemeLevel(record.theme_level),
+    is_themeable: record.is_themeable === true,
   };
 }
 

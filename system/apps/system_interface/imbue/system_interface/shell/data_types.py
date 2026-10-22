@@ -39,6 +39,7 @@ from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.primitives import NonEmptyStr
 from imbue.imbue_common.pure import pure
+from imbue.system_interface.shell.app_theme_levels import is_themeable
 from imbue.system_interface.shell.app_theme_levels import is_themed_from_outside
 from imbue.system_interface.shell.app_theme_levels import theme_level_of
 from imbue.system_interface.shell.errors import InvalidShellValueError
@@ -112,6 +113,7 @@ def app_view(
         is_running=entry.is_running,
         share_url=f"https://{row.label}.{share_domain}/" if share_domain is not None and row.label else None,
         theme_level=str(theme_level_of(row, level_by_app)) if is_themed_from_outside(row) else None,
+        is_themeable=is_themeable(row),
     )
 
 

@@ -64,7 +64,7 @@ import type {
   WindowRecord,
   WindowState,
 } from "../model/records";
-import { THEME_LEVEL_LABELS, THEME_LEVELS, isSameCell, isSameWindowPaths, shortcutKey } from "../model/records";
+import { isSameCell, isSameWindowPaths, shortcutKey } from "../model/records";
 import { ToastQueue } from "@imbue/workspace-ui/src/models/toasts";
 import { OwnIdMinter, PAGE_ID_PREFIX, REPORT_ID_PREFIX, SAVE_ID_PREFIX, mintHex } from "../model/ownIds";
 import { isPreviewShell } from "../model/PreviewShell";
@@ -1036,9 +1036,14 @@ export class DesktopStore {
     this.toast(`Theme: ${next.name}`);
   }
 
-  /** A Theming key's more or less theming for the focused window's app: its level moves one step, stopping at none
-   *  and heavy, and the user is told where it is now. An app that wears the workspace's theme itself has no level. */
-  async stepFocusedAppThemeLevel(step: 1 | -1): Promise<void> {
+  /** Turn the theme on or off in a themeable app's pages; every client reloads them when the app list says so. */
+  async setAppTheming(app: string, isOn: boolean): Promise<void> {
+    await this.setAppThemeLevel(app, isOn ? "light" : "none");
+  }
+
+  /** A Theming key's on or off for the focused window's app, and the user is told where it is now. An app that wears
+   *  the workspace's theme itself, or is not themeable yet, is left as it is. */
+  async setFocusedAppTheming(isOn: boolean): Promise<void> {
     const focused =
       this.soloWindowId ??
       (this.isPhoneLayout() ? (shownWindowOf(this.state)?.id ?? null) : activeFocusedWindowId(this.state));
@@ -1049,11 +1054,14 @@ export class DesktopStore {
       this.toast(`${app.display_name} wears the workspace's theme itself`);
       return;
     }
-    const index = THEME_LEVELS.indexOf(app.theme_level);
-    const level = THEME_LEVELS[Math.min(Math.max(index + step, 0), THEME_LEVELS.length - 1)];
-    if (level !== app.theme_level) await this.setAppThemeLevel(app.name, level);
-    this.toast(`${app.display_name}: ${THEME_LEVEL_LABELS[level]} theming`);
+    if (!app.is_themeable) {
+      this.toast(`${app.display_name} is not themeable yet: choose Enable theming in its window menu`);
+      return;
+    }
+    if ((app.theme_level !== "none") !== isOn) await this.setAppTheming(app.name, isOn);
+    this.toast(`${app.display_name}: theming ${isOn ? "on" : "off"}`);
   }
+
 
   private takePresence(users: PresentUser[]): void {
     applyPresence(users);

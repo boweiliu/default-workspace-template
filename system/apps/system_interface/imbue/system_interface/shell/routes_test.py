@@ -2844,12 +2844,13 @@ def test_a_theme_bundle_imports_its_chain_and_its_files_are_served_from_this_ori
     assert client.get("/_static/themes/nowhere/theme.css").status_code == 404
 
 
-def test_an_app_themed_from_outside_takes_the_level_set_for_it_and_its_kit_carries_that_level(
+def test_a_themeable_app_turns_its_theming_on_and_off_and_its_kit_carries_that(
     tmp_path: Path, broadcaster: WebSocketBroadcaster
 ) -> None:
     registry_path = write_registry(
         tmp_path / "apps.toml",
-        registry_row_toml("notes", "http://localhost:7001"),
+        registry_row_toml("notes", "http://localhost:7001", theming_mode="outside"),
+        registry_row_toml("todo", "http://localhost:7002"),
         registry_row_toml("chat", "http://localhost:8010", theming_mode="parts"),
     )
     inventory = build_inventory(
@@ -2861,19 +2862,26 @@ def test_an_app_themed_from_outside_takes_the_level_set_for_it_and_its_kit_carri
     (kit_directory / "workspace_theme.js").write_text("wearKit();\n", encoding="utf-8")
     (kit_directory / "workspace_theme.css").write_text("", encoding="utf-8")
 
-    def levels() -> dict[str, str | None]:
-        return {app["name"]: app["theme_level"] for app in client.get("/api/inventory").get_json()["apps"]}
+    def theming() -> dict[str, tuple[str | None, bool]]:
+        return {
+            app["name"]: (app["theme_level"], app["is_themeable"])
+            for app in client.get("/api/inventory").get_json()["apps"]
+        }
 
-    assert levels() == {"notes": "light", "chat": None}
-    assert client.post("/api/apps/notes/theme-level", json={"level": "heavy"}).get_json() == {
+    # An app not themeable yet takes no theme; a themeable one has it on until the user turns it off.
+    assert theming() == {"notes": ("light", True), "todo": ("none", False), "chat": (None, False)}
+    assert client.post("/api/apps/notes/theme-level", json={"level": "none"}).get_json() == {
         "app": "notes",
-        "level": "heavy",
+        "level": "none",
     }
-    assert levels() == {"notes": "heavy", "chat": None}
-    assert client.post("/api/apps/chat/theme-level", json={"level": "heavy"}).status_code == 400
-    assert client.post("/api/apps/nowhere/theme-level", json={"level": "heavy"}).status_code == 400
-    assert client.post("/api/apps/notes/theme-level", json={"level": "ultra"}).status_code == 400
+    assert theming()["notes"] == ("none", True)
+    assert client.post("/api/apps/notes/theme-level", json={"level": "heavy"}).status_code == 400
+    assert client.post("/api/apps/todo/theme-level", json={"level": "light"}).status_code == 400
+    assert client.post("/api/apps/chat/theme-level", json={"level": "light"}).status_code == 400
+    assert client.post("/api/apps/nowhere/theme-level", json={"level": "light"}).status_code == 400
+    assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"}).data == b""
+    assert client.post("/api/apps/notes/theme-level", json={"level": "light"}).status_code == 200
     notes_kit = client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"})
-    assert notes_kit.get_data(as_text=True) == 'self.__WORKSPACE_THEME_LEVEL__ = "heavy";\nwearKit();\n'
-    assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "chat"}).data == b""
-    assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "ttyd"}).data == b""
+    assert notes_kit.get_data(as_text=True).startswith('self.__WORKSPACE_THEME_LEVEL__ = "light";')
+    for app in ("todo", "chat", "ttyd"):
+        assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": app}).data == b""

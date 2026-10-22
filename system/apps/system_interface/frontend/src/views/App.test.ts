@@ -24,7 +24,7 @@ import {
 import { AVATAR_DESIGN_PROMPT } from "./AvatarChooserDialog";
 import { THEME_DESIGN_PROMPT } from "./DesktopSettingsDialog";
 import { App } from "./App";
-import { restyleAppPrompt } from "./WindowMenu";
+import { enableThemingPrompt } from "./WindowMenu";
 
 const CLIENT = "client-1";
 const NO_LINK = { desktopId: null, open: null, launch: null };
@@ -488,8 +488,8 @@ describe("the avatar chooser", () => {
 });
 
 describe("the window menu's Theming submenu", () => {
-  it("drafts Restyle with AI... into the main chat, not the chat on screen", async () => {
-    offerApps(api, socket, [appRecord("docs", { theme_level: "light" }), buddy]);
+  it("drafts Enable theming into the main chat, not the chat on screen", async () => {
+    offerApps(api, socket, [appRecord("docs", { theme_level: "none" }), buddy]);
     api.postLaunchAnswer = "/?chat=agent-1";
     api.desktops = [
       desktopRecord("home", {
@@ -503,13 +503,13 @@ describe("the window menu's Theming submenu", () => {
     m.redraw.sync();
     (document.querySelector('[data-menu-row="theme"]') as HTMLElement).click();
     m.redraw.sync();
-    const restyle = document.querySelector('[data-menu-row="theme-restyle"]') as HTMLElement;
-    restyle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-    restyle.click();
+    const enable = document.querySelector('[data-menu-row="theme-enable"]') as HTMLElement;
+    enable.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    enable.click();
     await settle();
 
     expect(api.calls).toContain(
-      `launch:home:buddy:draft:${JSON.stringify({ message: restyleAppPrompt("Docs") })}:window:win-9:without-page`,
+      `launch:home:buddy:draft:${JSON.stringify({ message: enableThemingPrompt("Docs") })}:window:win-9:without-page`,
     );
   });
 });

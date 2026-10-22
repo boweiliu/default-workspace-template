@@ -793,6 +793,7 @@ def _upsert(
     program: str | None = None,
     display_name: str | None = None,
     manifest_fields: dict[str, object] | None = None,
+    theming_mode: str | None = None,
 ) -> None:
     """Register ``name`` at ``url``, optionally setting its icon markup.
 
@@ -814,6 +815,8 @@ def _upsert(
 
     ``display_name`` is what users read instead of the raw service name, for a
     row with no manifest to carry one, and is authoritative the same way.
+    ``theming_mode`` is the ``[theming]`` mode of the app such a row serves (a
+    preview of it), authoritative the same way.
 
     ``manifest_fields`` (a ``--manifest`` registration) is authoritative for
     every manifest-owned key the same way: each is set to the manifest's value
@@ -821,7 +824,11 @@ def _upsert(
     """
     apps = _load_apps(path)
     manifest_owned = _manifest_owned_values(
-        manifest_fields, internal=internal, program=program, display_name=display_name
+        manifest_fields,
+        internal=internal,
+        program=program,
+        display_name=display_name,
+        theming_mode=theming_mode,
     )
 
     # Update an existing entry's URL in place, minting a label only if one was
@@ -865,6 +872,7 @@ def _manifest_owned_values(
     internal: bool,
     program: str | None,
     display_name: str | None,
+    theming_mode: str | None = None,
 ) -> dict[str, object]:
     """The manifest-owned keys a registration sets, from the manifest or from the plain flags."""
     if manifest_fields is not None:
@@ -884,6 +892,8 @@ def _manifest_owned_values(
         values["program"] = program
     if display_name is not None:
         values["display_name"] = display_name
+    if theming_mode is not None:
+        values["theming_mode"] = theming_mode
     return values
 
 
@@ -964,6 +974,13 @@ def main() -> None:
             "behind it would otherwise open blank."
         ),
     )
+    parser.add_argument(
+        "--theming-mode",
+        help=(
+            "The [theming] mode of the app this registration serves, for a row with "
+            "no manifest to carry one (a preview of the app). Authoritative per call."
+        ),
+    )
     args = parser.parse_args()
 
     if args.manifest is None and args.name is None:
@@ -991,10 +1008,11 @@ def main() -> None:
         or args.program is not None
         or args.internal
         or args.display_name is not None
+        or args.theming_mode is not None
     ):
         parser.error(
             "--manifest cannot be combined with --remove, --icon-file, --no-icon, --program, "
-            "--display-name, or --internal"
+            "--display-name, --theming-mode, or --internal"
         )
 
     if args.program is not None and not args.program.strip():
@@ -1067,6 +1085,7 @@ def main() -> None:
                     program=args.program.strip() if args.program is not None else None,
                     display_name=args.display_name,
                     manifest_fields=manifest_fields,
+                    theming_mode=args.theming_mode,
                 )
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
+from app_manifest.manifest import ThemingMode
 from app_manifest.primitives import AppName
 from app_manifest.registry import RegistryRow
 from pydantic import Field
@@ -32,15 +33,22 @@ class AppThemeLevelsDocument(FrozenModel):
 
 @pure
 def is_themed_from_outside(row: RegistryRow) -> bool:
-    """Whether the app's pages take the theme from outside, at a level: it declares no ``[theming]`` of its own."""
-    return row.theming_mode is None
+    """Whether the app's pages could take the theme from outside: it declares no ``[theming]`` of its own (and is not
+    themeable yet), or declares ``mode = "outside"`` (it is). Its window menu has a Theming submenu."""
+    return row.theming_mode is None or row.theming_mode == ThemingMode.OUTSIDE
+
+
+@pure
+def is_themeable(row: RegistryRow) -> bool:
+    """Whether the app is written to take the theme from outside, so the user can turn its theming on and off."""
+    return row.theming_mode == ThemingMode.OUTSIDE
 
 
 @pure
 def theme_level_of(row: RegistryRow | None, level_by_app: Mapping[AppName, ThemeLevel]) -> ThemeLevel:
-    """The level the theme is put into an app's pages at: none for an app that themes itself (or declares it is not
-    themed) and for a service the registry does not know, else the user's choice for it, light by default."""
-    if row is None or not is_themed_from_outside(row):
+    """The level the theme is put into an app's pages at: for a themeable app, the user's choice for it, on (light) by
+    default; none for every other app and for a service the registry does not know."""
+    if row is None or not is_themeable(row):
         return ThemeLevel.NONE
     return level_by_app.get(row.name, DEFAULT_THEME_LEVEL)
 

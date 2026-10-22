@@ -15,8 +15,7 @@ import type { MenuRow, SubmenuChildRow } from "@imbue/workspace-ui/src/component
 import { OPEN_SHARE_SETTINGS, sendToEmbedder } from "@imbue/workspace-ui/src/embed";
 import { windowSizeSubmenuRow } from "./WindowSizeRow";
 import type { WindowSizeActions } from "./WindowSizeRow";
-import { THEME_LEVEL_LABELS, THEME_LEVELS } from "../model/records";
-import type { AppRecord, EntryMode, PinStyle, ThemeLevel } from "../model/records";
+import type { AppRecord, EntryMode, PinStyle } from "../model/records";
 import type { EntryLook } from "../reducers/desktopState";
 
 /** The width the shell's menus, the desktop's and the phone's, never go under, so a menu of two-word verbs is still
@@ -24,66 +23,55 @@ import type { EntryLook } from "../reducers/desktopState";
 export const MENU_MIN_WIDTH = 176;
 
 /** What the window menu's Theming submenu offers, for an app the theme is put into from outside (workspace-themes
- *  plan section 7.2). */
+ *  plan section 7.1): On and Off once the app is themeable, and Enable theming until it is. */
 export interface WindowThemeActions {
-  readonly level: ThemeLevel;
-  readonly setLevel: (level: ThemeLevel) => void;
-  /** Draft a request to rewrite the app onto the design tokens into the chat; null with no chat to draft into. */
-  readonly restyle: (() => void) | null;
-  /** Draft a request to re-imagine the app for the theme into the chat; null with no chat to draft into. */
-  readonly reimagine: (() => void) | null;
+  /** Whether the app is written to take the theme from outside; until it is, On and Off are greyed. */
+  readonly isThemeable: boolean;
+  /** Whether the theme is put into the app's pages now. */
+  readonly isOn: boolean;
+  readonly setOn: (isOn: boolean) => void;
+  /** Draft the request that makes the app themeable into the main chat; null with no chat to draft into. */
+  readonly enable: (() => void) | null;
 }
 
-const THEME_LEVEL_TOOLTIPS: Readonly<Record<ThemeLevel, string>> = {
-  none: "Leave the app as it was built",
-  light: "Theme only the controls the app left plain",
-  medium: "Add the theme wherever the app sets nothing itself",
-  heavy: "Put the theme over the app's own look",
-};
-
-/** The chat request "Restyle with AI..." drafts: the app rewritten onto the design tokens and controls. */
-export function restyleAppPrompt(appName: string): string {
+/** The chat request "Enable theming" drafts: the app made themeable, following the workspace's guide. */
+export function enableThemingPrompt(appName: string): string {
   return (
     `Make the ${appName} app themeable, following docs/system/themeable-apps.md, and keep how it works. ` +
     "Show me before keeping the change."
   );
 }
 
-/** The chat request "Re-imagine with AI..." drafts: the app redesigned for the theme the desktop wears. */
-export function reimagineAppPrompt(appName: string, themeName: string): string {
-  return (
-    `Re-imagine the ${appName} app for the ${themeName} theme, its pictures and icons included, and keep what it ` +
-    "does. Show me before keeping the change."
-  );
-}
-
 function themeSubmenuRow(actions: WindowThemeActions): MenuRow {
-  const levelRows: SubmenuChildRow[] = THEME_LEVELS.map((level) => ({
-    kind: "action",
-    key: `theme-${level}`,
-    label: THEME_LEVEL_LABELS[level],
-    tooltip: THEME_LEVEL_TOOLTIPS[level],
-    trailing: level === actions.level ? m.trust(icon("check", { size: 13, strokeWidth: 2.5 })) : undefined,
-    onSelect: () => actions.setLevel(level),
-  }));
-  const chatRows: SubmenuChildRow[] = [];
-  if (actions.restyle !== null) {
-    chatRows.push({ kind: "action", key: "theme-restyle", label: "Restyle with AI...", onSelect: actions.restyle });
-  }
-  if (actions.reimagine !== null) {
-    chatRows.push({
+  const check = (isChosen: boolean): m.Children =>
+    actions.isThemeable && isChosen ? m.trust(icon("check", { size: 13, strokeWidth: 2.5 })) : undefined;
+  const rows: SubmenuChildRow[] = [
+    {
       kind: "action",
-      key: "theme-reimagine",
-      label: "Re-imagine with AI...",
-      onSelect: actions.reimagine,
-    });
+      key: "theme-on",
+      label: "On",
+      isDisabled: !actions.isThemeable,
+      trailing: check(actions.isOn),
+      onSelect: () => actions.setOn(true),
+    },
+    {
+      kind: "action",
+      key: "theme-off",
+      label: "Off",
+      isDisabled: !actions.isThemeable,
+      trailing: check(!actions.isOn),
+      onSelect: () => actions.setOn(false),
+    },
+  ];
+  if (!actions.isThemeable && actions.enable !== null) {
+    rows.push({ kind: "divider" }, { kind: "action", key: "theme-enable", label: "Enable theming", onSelect: actions.enable });
   }
   return {
     kind: "submenu",
     key: "theme",
     label: "Theming",
-    value: THEME_LEVEL_LABELS[actions.level],
-    rows: () => (chatRows.length === 0 ? levelRows : [...levelRows, { kind: "divider" }, ...chatRows]),
+    value: actions.isThemeable && actions.isOn ? "On" : "Off",
+    rows: () => rows,
   };
 }
 

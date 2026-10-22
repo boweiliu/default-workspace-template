@@ -23,7 +23,7 @@ from workspace_themes.serving import theme_file_security_headers
 
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.system_interface.app_context import get_state
-from imbue.system_interface.shell.app_theme_levels import is_themed_from_outside
+from imbue.system_interface.shell.app_theme_levels import is_themeable
 from imbue.system_interface.shell.errors import InvalidShellValueError
 from imbue.system_interface.shell.state import ShellState
 from imbue.system_interface.shell.theme_wire import THEME_ICON_ROUTE
@@ -33,7 +33,7 @@ from imbue.system_interface.shell.theme_wire import theme_catalog_wire
 class ThemeLevelRequest(FrozenModel):
     """The body of the app theme level route."""
 
-    level: ThemeLevel = Field(description="How far the theme reaches the app's pages: none, light, medium, or heavy")
+    level: ThemeLevel = Field(description="light to turn the app's theming on, none to turn it off")
 
 
 class AppThemeLevelResponse(FrozenModel):
@@ -92,14 +92,16 @@ def set_default_theme() -> ResponseReturnValue:
 
 
 def set_app_theme_level(app_name: str) -> ResponseReturnValue:
-    """Set how far the workspace's theme reaches an app that does not wear it itself."""
+    """Turn theming on (light) or off (none) for a themeable app."""
     body = parse_request_body(ThemeLevelRequest)
     shell = _shell()
     entry = shell.inventory.entry(app_name)
     if entry is None:
         raise InvalidShellValueError(f"there is no app {app_name!r}")
-    if not is_themed_from_outside(entry.row):
-        raise InvalidShellValueError(f"{app_name!r} wears the workspace's theme itself, at no level")
+    if not is_themeable(entry.row):
+        raise InvalidShellValueError(f"{app_name!r} is not written to take the theme from outside")
+    if body.level not in (ThemeLevel.NONE, ThemeLevel.LIGHT):
+        raise InvalidShellValueError("theming is turned on (light) or off (none)")
     shell.theme_levels.set(entry.row.name, body.level)
     shell.inventory.broadcast_if_changed()
     return model_response(AppThemeLevelResponse(app=app_name, level=str(body.level)))

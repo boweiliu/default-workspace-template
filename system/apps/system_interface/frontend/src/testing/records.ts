@@ -73,6 +73,7 @@ export function appRecord(name: string, overrides: Partial<AppRecord> = {}): App
     is_running: true,
     share_url: null,
     theme_level: null,
+    is_themeable: false,
     ...overrides,
   };
 }

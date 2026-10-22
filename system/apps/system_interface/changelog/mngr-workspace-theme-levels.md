@@ -1,9 +1,9 @@
-Apps whose manifest declares no `[theming]` now take the workspace's theme from outside, at a level set per app.
+An app the workspace built can be made themeable and then take the workspace's theme from outside, turned on and off by the user.
 
-- The window menu has a Theming submenu with None, Light (the default: only unstyled controls), Medium (fills in only what the app left unset), and Heavy (the theme's values win). Changing the level reloads the app's open pages.
+- The window menu's Theming submenu offers On and Off for a themeable app (`[theming] mode = "outside"`), with theming on by default. Changing it reloads the app's open pages.
 
-- "Restyle with AI..." and "Re-imagine with AI..." in the same submenu draft a request in the main chat: one asks for the app to be made themeable, following `docs/system/themeable-apps.md`, the other redesigns it, assets included, for the theme.
+- For an app that is not themeable yet, On and Off are greyed and "Enable theming" drafts a request into the main chat to make it themeable, following `docs/system/themeable-apps.md`. Such an app takes no theme until then.
 
-- The window menu's submenu is called Theming, and Imbue Studio's Theming keys (Option-Command-Right and -Left, -Up and -Down) step the theme on screen and the focused app's level, each with a notice saying where it is now.
+- Imbue Studio's Theming keys: Option-Command-Right and -Left step the theme on screen, -Up and -Down turn the focused app's theming on and off, each with a notice saying where it is now.
 
-- `POST /api/apps/<app>/theme-level` sets an app's level, kept in `app_theme_levels.json`. The inventory carries each such app's `theme_level`, and the shell serves the theme files under `/__workspace_theme/` that Imbue Studio's proxy puts into the app's pages. An app that themes itself, and a service the registry does not know, get no theme.
+- `POST /api/apps/<app>/theme-level` takes `light` (on) or `none` (off) for a themeable app, kept in `app_theme_levels.json`. The inventory carries each app's `theme_level` and `is_themeable`, and the shell serves the theme files under `/__workspace_theme/` that Imbue Studio's proxy puts into a themeable app's pages, with the workspace's default theme set in `kit.js` for a page the shell does not frame itself.

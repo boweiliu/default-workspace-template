@@ -51,7 +51,12 @@ def themed_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[st
     port = find_free_port()
     base_url = f"http://127.0.0.1:{port}"
     registry = tmp_path / "apps.toml"
-    write_registry(registry, registry_row_toml("files", f"http://127.0.0.1:{find_free_port()}", display_name="Files"))
+    write_registry(
+        registry,
+        registry_row_toml(
+            "files", f"http://127.0.0.1:{find_free_port()}", display_name="Files", theming_mode="outside"
+        ),
+    )
     monkeypatch.setenv("MINDS_APPS_FILE", str(registry))
     state = build_test_state(
         config=Config(system_interface_host="127.0.0.1", system_interface_port=port),
@@ -156,9 +161,9 @@ def _load_app_page(page: Page, themed_shell: str) -> None:
     )
 
 
-def test_an_app_page_wears_the_theme_at_its_level_light_medium_and_heavy(themed_shell: str, page: Page) -> None:
-    """The page kit the proxy puts into an app's page wears the theme at the app's level: light dresses only the
-    plain button; medium also the app's own, where it set nothing; heavy over the app's own values."""
+def test_a_themeable_app_page_wears_the_theme_while_its_theming_is_on(themed_shell: str, page: Page) -> None:
+    """The page kit the proxy puts into a themeable app's page wears the theme while the app's theming is on: the
+    plain button takes the theme and the app's own keeps its look; turned off, the page is left as it was built."""
     page.add_init_script(
         "window.localStorage.setItem('workspace-theme', JSON.stringify({id: 'windows-2000', revision: ''}))"
     )
@@ -173,12 +178,6 @@ def test_an_app_page_wears_the_theme_at_its_level_light_medium_and_heavy(themed_
     assert "Tahoma" not in _style_of(page, "mine", "fontFamily")
     assert _style_of(page, "mine", "backgroundColor") == "rgb(1, 2, 3)"
 
-    assert page.request.post(f"{themed_shell}/api/apps/files/theme-level", data={"level": "medium"}).ok
-    _load_app_page(page, themed_shell)
-    assert "Tahoma" in _style_of(page, "mine", "fontFamily")
-    assert _style_of(page, "mine", "backgroundColor") == "rgb(1, 2, 3)"
-
-    assert page.request.post(f"{themed_shell}/api/apps/files/theme-level", data={"level": "heavy"}).ok
-    _load_app_page(page, themed_shell)
-    assert "Tahoma" in _style_of(page, "mine", "fontFamily")
-    assert _style_of(page, "mine", "backgroundColor") != "rgb(1, 2, 3)"
+    assert page.request.post(f"{themed_shell}/api/apps/files/theme-level", data={"level": "none"}).ok
+    page.goto(f"{themed_shell}/app-page")
+    assert "Tahoma" not in _style_of(page, "plain", "fontFamily")

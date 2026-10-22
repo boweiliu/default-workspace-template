@@ -2839,26 +2839,27 @@ describe("themes", () => {
     expect(notices()).toEqual(["Theme: Standard", "Theme: Ink", "Theme: Ink"]);
   });
 
-  it("steps the focused app's theme level, stopping at the ends, and not for an app that themes itself", async () => {
-    api.apps = [appRecord("docs", { theme_level: "light" }), appRecord("notes")];
+  it("turns the focused app's theming on and off, and leaves alone an app that is not themeable or themes itself", async () => {
+    api.apps = [appRecord("docs", { theme_level: "light", is_themeable: true }), appRecord("notes")];
     const store = await startedStore();
     await settle();
 
-    await store.stepFocusedAppThemeLevel(1);
-    expect(api.calls).toContain("setAppThemeLevel:docs:medium");
+    await store.setFocusedAppTheming(false);
+    expect(api.calls).toContain("setAppThemeLevel:docs:none");
 
-    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
-    await store.stepFocusedAppThemeLevel(1);
+    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "none" }), appRecord("notes")]);
+    await store.setFocusedAppTheming(true);
     socket.deliver().onAppsUpdated([appRecord("docs"), appRecord("notes")]);
-    await store.stepFocusedAppThemeLevel(-1);
+    await store.setFocusedAppTheming(true);
 
-    expect(api.calls.filter((call) => call.startsWith("setAppThemeLevel"))).toEqual(["setAppThemeLevel:docs:medium"]);
+    expect(api.calls.filter((call) => call.startsWith("setAppThemeLevel"))).toEqual(["setAppThemeLevel:docs:none"]);
     expect(notices()).toEqual([
-      "Docs: Medium theming",
-      "Docs: Heavy theming",
+      "Docs: theming off",
+      "Docs is not themeable yet: choose Enable theming in its window menu",
       "Docs wears the workspace's theme itself",
     ]);
   });
+
 
   it("takes a new workspace default at once, without reading the catalog again", async () => {
     const store = await startedStore();
