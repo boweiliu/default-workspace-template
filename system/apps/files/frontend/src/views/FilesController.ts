@@ -31,6 +31,10 @@ import { startDownload } from "./download";
  *  server reads the computers for every Files window at once, so more windows do not mean more requests to them. */
 const MOVING_POLL_MS = 3000;
 const IDLE_POLL_MS = 15000;
+/** How often the workspace folders on screen are asked whether anything was added, removed or renamed in them, so a
+ *  file a sync brings in shows within a couple of seconds. One stat a folder on the server; a folder is fetched again
+ *  only when it changed. */
+const FOLDER_CHECK_MS = 2000;
 
 /** Below this width the window lays itself out for a phone: the sidebar floats over the folder, and one tap opens. A
  *  desktop window this narrow is rare; one a little wider keeps its sidebar beside the folder. */
@@ -82,6 +86,7 @@ export class FilesController {
   /** Whether the shell shows this window; a page no shell frames counts as shown. */
   private isShownByShell = true;
   private pollTimer: number | null = null;
+  private checkTimer: number | null = null;
 
   constructor(
     folder: string,
@@ -126,9 +131,9 @@ export class FilesController {
     // Shares and what is in them change on the user's computer: read them again whenever the window comes back to the
     // front, and every few seconds while it is on screen.
     win.addEventListener("focus", () => this.readAgain());
-    win.document.addEventListener("visibilitychange", () => this.poll());
+    win.document.addEventListener("visibilitychange", () => this.watch());
     // After the first read, which the model began, so the first wait is the one the listing calls for.
-    void this.model.loadConnections().then(() => this.poll());
+    void this.model.loadConnections().then(() => this.watch());
     // The handshake says it for a window opened after the chrome did; one already open hears the chrome itself.
     setEmbedderMessageHandler(EMBEDDER_CAPABILITIES, (message) =>
       this.setOpensLocalFiles(message.opensLocalFiles === true),
@@ -143,7 +148,7 @@ export class FilesController {
   setShownByShell(isShown: boolean): void {
     this.isShownByShell = isShown;
     if (isShown) this.readAgain();
-    this.poll();
+    this.watch();
   }
 
   /** Read the shares and the folders on screen again. */
@@ -154,6 +159,23 @@ export class FilesController {
 
   private get isOnScreen(): boolean {
     return this.isShownByShell && this.win.document.visibilityState !== "hidden";
+  }
+
+  /** Keep up with the shares and the folders on screen for as long as the window is on screen. */
+  private watch(): void {
+    this.poll();
+    this.checkFolders();
+  }
+
+  /** Ask after a moment whether the workspace folders on screen changed, for as long as the window is on screen. */
+  private checkFolders(): void {
+    if (this.checkTimer !== null) this.win.clearTimeout(this.checkTimer);
+    this.checkTimer = null;
+    if (!this.isOnScreen) return;
+    this.checkTimer = this.win.setTimeout(() => {
+      this.checkTimer = null;
+      void this.model.reloadChangedShown().then(() => this.checkFolders());
+    }, FOLDER_CHECK_MS);
   }
 
   /** Read the shares and the folders on screen again after a while, for as long as the window is on screen. */

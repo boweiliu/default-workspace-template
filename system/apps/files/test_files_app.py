@@ -391,8 +391,8 @@ def test_a_file_a_sync_brings_into_the_open_folder_shows_with_nothing_from_the_u
                 "kind": "folder",
                 "is_reachable": True,
                 "synced_copy": "/home/user/synced_folders/host-mac/Users/kim/Brand Fonts/",
-                # Moving, so the window reads again every few seconds.
-                "sync": _sync(state="SYNCING", bytes_done=1, bytes_total=4),
+                # Settled, so the shares are read again only every 15 s: the folder's own check finds the file.
+                "sync": _sync(),
             }
         ],
     }
@@ -402,7 +402,7 @@ def test_a_file_a_sync_brings_into_the_open_folder_shows_with_nothing_from_the_u
 
     (copy / "Atkinson.otf").write_text("font\n")
 
-    expect(_entry(page, folder + "Atkinson.otf")).to_be_visible(timeout=10_000)
+    expect(_entry(page, folder + "Atkinson.otf")).to_be_visible(timeout=5_000)
 
 
 def test_enter_on_a_focused_button_presses_it_rather_than_opening_the_selection(

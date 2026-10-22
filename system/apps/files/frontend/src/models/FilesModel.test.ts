@@ -11,6 +11,7 @@ vi.mock("./server", async (importOriginal) => {
   return {
     ...actual,
     listFolder: vi.fn(),
+    folderStamps: vi.fn(),
     exists: vi.fn(),
     movePath: vi.fn(),
     deletePath: vi.fn(),
@@ -322,6 +323,33 @@ describe("reloadShown", () => {
     model.reloadShown();
 
     expect(vi.mocked(server.listFolder).mock.calls.map(([folder]) => folder)).toEqual(["/", HOME]);
+  });
+});
+
+describe("reloadChangedShown", () => {
+  it("fetches a folder again only when its stamp is not the one it was fetched at, and never one on a computer", async () => {
+    const { model } = harness();
+    const stamps = vi.mocked(server.folderStamps);
+    const listed = vi.mocked(server.listFolder);
+    listed.mockClear();
+    listed.mockResolvedValue({ exists: true, entries: ENTRIES, stamp: "1:100" });
+
+    // The page came with no stamp, so the first check fetches it again, and that fetch takes the stamp.
+    stamps.mockResolvedValue({ [HOME]: "1:100" });
+    await model.reloadChangedShown();
+    await vi.waitFor(() => expect(listed).toHaveBeenCalledTimes(1));
+    await model.reloadChangedShown();
+    expect(listed).toHaveBeenCalledTimes(1);
+
+    // Something landed in it.
+    stamps.mockResolvedValue({ [HOME]: "1:200" });
+    await model.reloadChangedShown();
+    expect(listed).toHaveBeenCalledTimes(2);
+
+    model.navigate("/__remote/host-mac/Users/kim/notes/");
+    stamps.mockClear();
+    await model.reloadChangedShown();
+    expect(stamps).not.toHaveBeenCalled();
   });
 });
 

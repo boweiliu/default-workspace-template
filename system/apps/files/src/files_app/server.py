@@ -39,6 +39,7 @@ from files_app.gateway import Gateway
 from files_app.local_files import LocalFiles
 from files_app.sources import FileSource
 from files_app.sources import FilesError
+from files_app.sources import FolderStamps
 from files_app.sources import PageData
 
 API_PREFIX: Final[str] = "/__files/api"
@@ -69,6 +70,7 @@ _FILE_VERBS: Final[dict[str, str]] = {
 }
 ROUTE_TABLE: RouteTable = {
     ("GET", f"{API_PREFIX}/connections"): RouteModels(response_model=Connections),
+    ("GET", f"{API_PREFIX}/stamps"): RouteModels(response_model=FolderStamps),
     ("GET", f"{ASSETS_PREFIX}/{{name}}"): SchemalessRoute(reason="a file of the frontend's build"),
     **{
         (method, path): SchemalessRoute(reason=reason)
@@ -197,6 +199,13 @@ def create_app(
             return error_response(f"Couldn't read your shares: {error}", 502)
         device_paths.update({device.id: device.has_device_paths for device in listed.devices})
         return model_response(listed)
+
+    @app.get(f"{API_PREFIX}/stamps")
+    def stamps() -> Response:
+        """Where each workspace folder named by a ``path`` param stands: a stamp that moves when anything in it is
+        added, removed or renamed. A page asks every couple of seconds for the folders it shows and lists one again
+        only when its stamp moved, so a file that lands in it shows at once; one stat a folder, nothing held."""
+        return model_response(local.stamps(request.args.getlist("path")))
 
     @app.route(f"{REMOTE_PREFIX}/<device>/", defaults={"path": ""}, methods=_METHODS)
     @app.route(f"{REMOTE_PREFIX}/<device>/<path:path>", methods=_METHODS)

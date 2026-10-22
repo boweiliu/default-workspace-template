@@ -151,6 +151,8 @@ export class FilesModel {
 
   private readonly loads = new Map<string, AbortController>();
   private readonly refreshTimers = new Map<string, number>();
+  /** Each fetched folder's stamp as it was just before it was read. */
+  private readonly listedStamps = new Map<string, string | null>();
 
   constructor(
     private readonly host: FilesHost,
@@ -165,6 +167,7 @@ export class FilesModel {
     });
     if (initial !== undefined) {
       this.folders.set(folder, { status: "ready", exists: initial.exists, entries: initial.entries, error: null });
+      this.listedStamps.set(folder, initial.stamp ?? null);
     }
   }
 
@@ -577,6 +580,7 @@ export class FilesModel {
     }
     try {
       const listing = await server.listFolder(folder, request.signal);
+      this.listedStamps.set(folder, listing.stamp ?? null);
       this.folders.set(folder, { status: "ready", exists: listing.exists, entries: listing.entries, error: null });
     } catch (error) {
       if (isAbort(error)) return;
@@ -608,10 +612,32 @@ export class FilesModel {
   /** Fetch again every folder on screen -- the open one, and in the column view each column's -- for what changed
    *  under it: a synced copy filling in, a file added on the computer. One already being fetched is left to finish. */
   reloadShown(): void {
-    const shown = this.viewMode === "columns" ? this.columnFolders() : [this.folder];
-    for (const folder of shown) {
+    for (const folder of this.shownFolders()) {
       if (!this.loads.has(folder)) void this.load(folder);
     }
+  }
+
+  /** Ask whether anything was added, removed or renamed in a workspace folder on screen since it was fetched, and
+   *  fetch again each one where something was: a file a sync brings in shows within a check. A folder live on a
+   *  computer is left to `reloadShown`, as asking it is a request to the computer. */
+  async reloadChangedShown(): Promise<void> {
+    const folders = this.shownFolders().filter((folder) => !isLiveShared(folder));
+    if (folders.length === 0) return;
+    let stamps: Record<string, string | null>;
+    try {
+      stamps = await server.folderStamps(folders);
+    } catch {
+      return;
+    }
+    for (const folder of folders) {
+      const isChanged = (stamps[folder] ?? null) !== (this.listedStamps.get(folder) ?? null);
+      if (isChanged && !this.loads.has(folder)) void this.load(folder);
+    }
+  }
+
+  /** The folders on screen: the open one, and in the column view each column's. */
+  private shownFolders(): string[] {
+    return this.viewMode === "columns" ? this.columnFolders() : [this.folder];
   }
 
   /** Fetch every column's folder the column view will draw that has not been fetched. */

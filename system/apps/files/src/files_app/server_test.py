@@ -43,6 +43,31 @@ def _page_data(response: TestResponse) -> dict:
     return json.loads(base64.b64decode(response.get_data(as_text=True).split("</script>")[1]))
 
 
+def test_a_folder_stamp_moves_when_something_is_added_to_it_and_not_when_a_file_in_it_is_edited(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "fonts"
+    folder.mkdir()
+    (folder / "Inter.ttf").write_text("a")
+    client = create_app(gateway=None, static_directory=tmp_path, agent_id="agent-main", root=tmp_path).test_client()
+
+    def stamps() -> dict[str, str | None]:
+        return json_of(client.get("/__files/api/stamps?path=/fonts/&path=/fonts/Inter.ttf&path=/missing/"))["stamps"]
+
+    first = stamps()
+    assert first["/fonts/"] is not None
+    # The listing carries the stamp it was read at, for the page to check against.
+    assert json_of(client.get("/fonts/?json"))["stamp"] == first["/fonts/"]
+    assert first["/fonts/Inter.ttf"] is None
+    assert first["/missing/"] is None
+
+    (folder / "Inter.ttf").write_text("edited")
+    assert stamps()["/fonts/"] == first["/fonts/"]
+
+    (folder / "Atkinson.otf").write_text("b")
+    assert stamps()["/fonts/"] != first["/fonts/"]
+
+
 def test_a_folder_is_listed_with_its_entries_kinds_sizes_and_links(tmp_path: Path) -> None:
     client = _app(None, tmp_path)
     root = tmp_path / "root"
