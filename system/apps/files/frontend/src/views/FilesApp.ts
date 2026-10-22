@@ -24,10 +24,13 @@ import {
   shareAt,
   shareBadgeOf,
   type ShareBadge,
-  stuckSyncOf,
+  syncNoticeOf,
+  syncStatusOf,
+  type SyncNotice,
   targetOf,
   type Connections,
   type Share,
+  type ShareTooltip,
 } from "../models/connections";
 import type { SortKey, ViewMode } from "../models/preferences";
 import { folderPathOf, isWithin, segmentsOf } from "../models/paths";
@@ -70,7 +73,7 @@ interface SidebarRow {
   icon: IconName;
   /** A small glyph in the icon's corner: how a shared item reaches the workspace. */
   iconBadge?: ShareBadge;
-  title?: string;
+  tooltip?: ShareTooltip;
   /** Marks after the label, shown only when there is something to say: read-only, stuck, not answering. */
   badges?: m.Children;
   isFaint?: boolean;
@@ -89,7 +92,9 @@ function sidebarRow(app: FilesController, row: SidebarRow, isCurrent: boolean): 
       "data-sidebar-row": row.key,
       [DROP_FOLDER_ATTR]: row.isFile === true ? undefined : row.path,
       "aria-current": isCurrent ? "true" : undefined,
-      ...(row.title === undefined ? {} : hoverTooltipAttrs(row.title, "right", { maxWidth: 260 })),
+      ...(row.tooltip === undefined
+        ? {}
+        : hoverTooltipAttrs(row.tooltip.text, "right", { maxWidth: 260, detail: row.tooltip.detail })),
       class: `flex h-7 w-full shrink-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-(length:--font-size-row) ${
         model.dropTarget === row.path
           ? "bg-accent-light outline-2 -outline-offset-2 outline-accent"
@@ -128,9 +133,9 @@ function mark(kind: string, label: string, body: m.Children, extra: string): m.V
   return m("span.files-share-mark", { "data-mark": kind, "aria-label": label, class: `flex shrink-0 ${extra}` }, body);
 }
 
-/** A filled disc with an exclamation: the share needs a look. */
-function stuckMark(): m.Vnode {
-  return mark("stuck", "Not caught up", m.trust(alertDotIcon(12)), "text-warning");
+/** A filled disc with an exclamation: the share's sync stopped and needs a look. */
+function failedMark(): m.Vnode {
+  return mark("failed", "Sync stopped", m.trust(alertDotIcon(12)), "text-warning");
 }
 
 function readOnlyMark(): m.Vnode {
@@ -148,19 +153,20 @@ function unreachableMark(): m.Vnode {
 
 function shareRow(app: FilesController, connections: Connections, share: Share): SidebarRow {
   const target = targetOf(share);
-  const isUnreachable = !share.is_reachable || share.sync_state === "unknown";
+  const status = syncStatusOf(share);
+  const isUnreachable = !share.is_reachable || status?.kind === "unknown";
   return {
     key: `share:${share.device}:${share.path}`,
     label: labelOf(share),
     path: target,
     icon: share.kind === "file" ? "page" : "folder",
     iconBadge: shareBadgeOf(share),
-    title: describeShare(share, deviceNameOf(connections, share.device)),
+    tooltip: describeShare(share, deviceNameOf(connections, share.device)),
     isFaint: !share.is_reachable && share.synced_copy === null,
     isFile: share.kind === "file",
     badges: [
       share.access === "read" ? readOnlyMark() : null,
-      share.sync_state === "behind" ? stuckMark() : null,
+      status?.kind === "failed" ? failedMark() : null,
       isUnreachable ? unreachableMark() : null,
     ],
     onOpen: share.kind === "file" ? () => app.openPage(target, "view") : undefined,
@@ -432,7 +438,7 @@ function FolderBody(): m.Component<{ app: FilesController }> {
       if (mode === "columns") return m(ColumnView, { app });
       const state = model.folderState(model.folder);
       const entries = model.visibleEntries(model.folder);
-      const stuck = stuckSyncOf(model.connections, model.folder);
+      const notice = syncNoticeOf(model.connections, model.folder);
       let empty: m.Children = null;
       if (state === undefined || (state.status === "loading" && entries.length === 0)) {
         empty = m("div", { class: "flex justify-center pt-16" }, m("div.spinner"));
@@ -440,8 +446,8 @@ function FolderBody(): m.Component<{ app: FilesController }> {
         empty = message("Couldn't open this folder", state.error ?? "", () => void model.load(model.folder));
       } else if (!state.exists) {
         empty = message("This folder doesn't exist", "It may have been moved or deleted.");
-      } else if (stuck !== null && entries.length === 0) {
-        empty = m("div.files-stuck-sync", { role: "status" }, message(stuck.title, stuck.detail));
+      } else if (notice !== null && entries.length === 0) {
+        empty = m("div.files-sync-notice", { role: "status" }, message(notice.title, notice.detail));
       } else if (entries.length === 0) {
         empty = message(
           "This folder is empty",
@@ -449,17 +455,17 @@ function FolderBody(): m.Component<{ app: FilesController }> {
         );
       }
       return m("div", { class: "min-h-full" }, [
-        stuck !== null && entries.length > 0 ? stuckBanner(stuck) : null,
+        notice !== null && !notice.isOnlyWhenEmpty && entries.length > 0 ? syncBanner(notice) : null,
         empty ?? (mode === "icons" ? m(IconView, { app, entries }) : m(ListView, { app, entries })),
       ]);
     },
   };
 }
 
-/** A strip above a copy's entries saying it has fallen behind its computer. */
-export function stuckBanner(stuck: { title: string; detail: string }): m.Vnode {
+/** A strip above a copy's entries saying its sync stopped. */
+export function syncBanner(notice: SyncNotice): m.Vnode {
   return m(
-    "div.files-stuck-sync",
+    "div.files-sync-notice",
     {
       role: "status",
       class: "mx-3 mt-3 flex items-start gap-2 rounded-lg bg-warning-surface/50 px-3 py-2 type-helper",
@@ -467,8 +473,8 @@ export function stuckBanner(stuck: { title: string; detail: string }): m.Vnode {
     [
       m.trust(alertDotIcon(14, "mt-0.5 shrink-0 text-warning")),
       m("div", [
-        m("div", { class: "font-medium text-primary" }, stuck.title),
-        m("div", { class: "text-secondary" }, stuck.detail),
+        m("div", { class: "font-medium text-primary" }, notice.title),
+        m("div", { class: "text-secondary" }, notice.detail),
       ]),
     ],
   );

@@ -5,7 +5,7 @@
   frontend's ``index.html`` with the path's page data filled in, ``?json`` is that data alone, a file's plain GET is
   its bytes, ``?zip`` a folder as a zip, and PUT, MKCOL, MOVE, and DELETE change it.
 - ``/__files/assets/`` is the frontend's build, ``/__files/api/connections`` what the user has shared with the
-  workspace from their computers.
+  workspace from their computers (``connections_cache``).
 - ``/__files/api/schema`` is the OpenAPI document of these routes, built from the url map (``app_schema``); the
   manifest's ``api_schema_path``, which the visiting-agent primer links.
 """
@@ -33,7 +33,7 @@ from app_schema.routes import error_response
 from app_schema.routes import model_response
 from files_app.connections import SYNCED_FOLDERS
 from files_app.connections import Connections
-from files_app.connections import list_connections
+from files_app.connections_cache import ConnectionsCache
 from files_app.device_files import DeviceFiles
 from files_app.gateway import Gateway
 from files_app.local_files import LocalFiles
@@ -102,6 +102,7 @@ def _requested_path() -> str:
 def create_app(
     gateway: Gateway | None,
     static_directory: Path,
+    agent_id: str,
     root: Path = Path("/"),
     synced_root: Path = SYNCED_FOLDERS,
 ) -> Flask:
@@ -114,6 +115,7 @@ def create_app(
     local = LocalFiles(root)
     # Whether each device's file server is reached under its id, as the last listing of the shares found.
     device_paths: dict[str, bool] = {}
+    cache = ConnectionsCache(gateway, agent_id, synced_root)
 
     def page(data: PageData) -> Response:
         encoded = base64.b64encode(json.dumps(data.model_dump()).encode()).decode()
@@ -182,14 +184,12 @@ def create_app(
     def connections() -> Response:
         """The computers connected to this workspace and what each shares with it.
 
-        Each share says how it reaches the workspace (live, or a synced copy and whether the copy has kept up).
-        Nothing is listed while the workspace is not connected to Imbue Studio; a 502 says when Imbue Studio could
-        not be read.
+        Each share says how it reaches the workspace (live, or a synced copy and how Imbue Studio says its sync
+        stands). Pages ask every few seconds, so a read answers every ask for a couple of seconds after it. Nothing is
+        listed while the workspace is not connected to Imbue Studio; a 502 says when Imbue Studio could not be read.
         """
-        if gateway is None:
-            return model_response(Connections(devices=(), shares=()))
         try:
-            listed = list_connections(gateway, synced_root)
+            listed = cache.current()
         except (httpx.HTTPError, ValueError) as error:
             # ValueError: an answer from the gateway that is not the JSON it should be.
             logger.warning("Couldn't read the shares through the gateway: {}", error)

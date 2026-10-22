@@ -14,9 +14,16 @@ import { FilesModel, type HistoryMode } from "../models/FilesModel";
 import { isTextLike } from "../models/fileKinds";
 import { decodePathname, titleOf } from "../models/paths";
 import { sourcesFromFileList } from "../models/uploads";
-import { isLiveShared } from "../models/connections";
+import { isAnySyncMoving, isLiveShared } from "../models/connections";
 import { Dialogs } from "./dialogs";
 import { startDownload } from "./download";
+
+/** How often the shares are read again while the window is on screen: often while a sync is carrying something
+ *  across, so its progress shows as it goes, and otherwise often enough that a change made in Imbue Studio shows
+ *  without coming back to the window. The server reads the computers for every Files window at once, so more windows
+ *  do not mean more requests to them. */
+const CONNECTIONS_MOVING_POLL_MS = 3000;
+const CONNECTIONS_IDLE_POLL_MS = 15000;
 
 /** Below this width the window lays itself out for a phone: one tap opens, and there is no column view. */
 export const NARROW_QUERY = "(max-width: 700px)";
@@ -58,6 +65,9 @@ export class FilesController {
   revealSelection = false;
   /** On a small screen, whether the sidebar is floated open over the folder. */
   isSidebarOpen = false;
+  /** Whether the shell shows this window; a page no shell frames counts as shown. */
+  private isShownByShell = true;
+  private connectionsTimer: number | null = null;
 
   constructor(
     folder: string,
@@ -93,8 +103,35 @@ export class FilesController {
       this.reportLocation(this.model.folder);
     });
     this.reportLocation(folder);
-    // Shares change on the user's computer: read them again whenever the window comes back to the front.
+    // Shares change on the user's computer: read them again whenever the window comes back to the front, and every few
+    // seconds while it is on screen.
     win.addEventListener("focus", () => void this.model.loadConnections());
+    win.document.addEventListener("visibilitychange", () => this.watchConnections());
+    // After the first read, which the model began, so the first wait is the one the listing calls for.
+    void this.model.loadConnections().then(() => this.watchConnections());
+  }
+
+  /** The shell showed or hid the window: a hidden one stops reading the shares, and one shown again reads them now. */
+  setShownByShell(isShown: boolean): void {
+    this.isShownByShell = isShown;
+    if (isShown) void this.model.loadConnections();
+    this.watchConnections();
+  }
+
+  private get isOnScreen(): boolean {
+    return this.isShownByShell && this.win.document.visibilityState !== "hidden";
+  }
+
+  /** Read the shares again after a while, for as long as the window is on screen. */
+  private watchConnections(): void {
+    if (this.connectionsTimer !== null) this.win.clearTimeout(this.connectionsTimer);
+    this.connectionsTimer = null;
+    if (!this.isOnScreen) return;
+    const delay = isAnySyncMoving(this.model.connections) ? CONNECTIONS_MOVING_POLL_MS : CONNECTIONS_IDLE_POLL_MS;
+    this.connectionsTimer = this.win.setTimeout(() => {
+      this.connectionsTimer = null;
+      void this.model.loadConnections().then(() => this.watchConnections());
+    }, delay);
   }
 
   /** The column view needs room for at least a couple of columns. */

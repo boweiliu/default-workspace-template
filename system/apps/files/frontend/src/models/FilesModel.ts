@@ -141,6 +141,7 @@ export class FilesModel {
   /** What the user has shared from their computers; null until it has been read. */
   connections: Connections | null = null;
   connectionsError: string | null = null;
+  private connectionsLoad: Promise<void> | null = null;
   historyIndex = 0;
   historyLength = 1;
   readonly uploads: UploadQueue;
@@ -623,8 +624,13 @@ export class FilesModel {
     this.host.redraw();
   }
 
-  /** Read what is shared from the user's computers again. */
-  async loadConnections(): Promise<void> {
+  /** Read what is shared from the user's computers again; a read already on its way answers a second ask too. */
+  loadConnections(): Promise<void> {
+    this.connectionsLoad ??= this.readConnections().finally(() => (this.connectionsLoad = null));
+    return this.connectionsLoad;
+  }
+
+  private async readConnections(): Promise<void> {
     try {
       this.connections = await fetchConnections();
       this.connectionsError = null;

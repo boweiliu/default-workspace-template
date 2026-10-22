@@ -57,7 +57,13 @@ function bootstrap(): void {
   }
 
   let handshake: ShellHandshake | null = null;
-  const connection = connectToShell({ onHandshake: (received) => (handshake = received) });
+  // The shell's messages come after the window below exists.
+  let filesApp: FilesController | null = null;
+  const connection = connectToShell({
+    onHandshake: (received) => (handshake = received),
+    onShown: () => filesApp?.setShownByShell(true),
+    onHidden: () => filesApp?.setShownByShell(false),
+  });
   window.addEventListener("focus", () => connection.focused());
   const opener = createContextMenuOpener();
   // The pointer hides while text is typed into the editor or a name being changed.
@@ -83,6 +89,7 @@ function bootstrap(): void {
   const initial =
     requested === null ? { exists: true, entries: data.entries.map((record) => entryOf(folder, record)) } : undefined;
   const app = new FilesController(folder, initial, connection);
+  filesApp = app;
 
   installElementContextMenu({
     connection,

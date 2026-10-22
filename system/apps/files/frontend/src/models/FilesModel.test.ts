@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fileEntry, folderEntry, memoryStorage } from "../testing/records";
 import * as server from "./server";
+import type { Connections } from "./connections";
 import { FilesModel, compareEntries, type ConflictChoice, type FilesHost } from "./FilesModel";
 
 vi.mock("./server", async (importOriginal) => {
@@ -294,5 +295,42 @@ describe("uploading", () => {
     replaceAnswer.value = "replace";
     await model.uploadInto(HOME, [{ file: file("b.txt"), relativePath: "b.txt" }]);
     expect(added.mock.calls[0][1].map((source) => source.relativePath)).toEqual(["b.txt"]);
+  });
+});
+
+describe("loadConnections", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("answers a second ask with the read already on its way", async () => {
+    const asked: { url: string; answer: (connections: Connections) => void }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) =>
+            asked.push({
+              url,
+              answer: (connections) =>
+                resolve(
+                  new Response(JSON.stringify(connections), { headers: { "Content-Type": "application/json" } }),
+                ),
+            }),
+          ),
+      ),
+    );
+    // Opening the model starts the first read.
+    const { model } = harness();
+    const second = model.loadConnections();
+    expect(asked.map((ask) => ask.url)).toEqual(["/__files/api/connections"]);
+
+    const listed: Connections = { devices: [{ id: "host-mac", name: "Kims-Mac.local" }], shares: [] };
+    asked[0].answer(listed);
+    await second;
+    expect(model.connections).toEqual(listed);
+    // Once it is in, the next ask reads again.
+    const third = model.loadConnections();
+    expect(asked).toHaveLength(2);
+    asked[1].answer(listed);
+    await third;
   });
 });
