@@ -605,6 +605,15 @@ export class FilesModel {
     );
   }
 
+  /** Fetch again every folder on screen -- the open one, and in the column view each column's -- for what changed
+   *  under it: a synced copy filling in, a file added on the computer. One already being fetched is left to finish. */
+  reloadShown(): void {
+    const shown = this.viewMode === "columns" ? this.columnFolders() : [this.folder];
+    for (const folder of shown) {
+      if (!this.loads.has(folder)) void this.load(folder);
+    }
+  }
+
   /** Fetch every column's folder the column view will draw that has not been fetched. */
   private loadColumns(): void {
     if (this.viewMode !== "columns") return;

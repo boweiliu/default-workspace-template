@@ -375,6 +375,36 @@ def test_the_sidebar_follows_a_share_changed_in_studio_without_the_window_coming
     expect(page.locator('[data-sidebar-row="share:host-mac:/Users/kim/Brand Fonts"]')).to_be_visible()
 
 
+def test_a_file_a_sync_brings_into_the_open_folder_shows_with_nothing_from_the_user(
+    open_files_page: OpenFilesPage, files_root: Path, connections: Any
+) -> None:
+    copy = files_root / "home/user/synced_folders/host-mac/Users/kim/Brand Fonts"
+    copy.mkdir(parents=True)
+    (copy / "Inter.ttf").write_text("font\n")
+    connections.listed = {
+        "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
+        "shares": [
+            {
+                "device": "host-mac",
+                "path": "/Users/kim/Brand Fonts",
+                "access": "write",
+                "kind": "folder",
+                "is_reachable": True,
+                "synced_copy": "/home/user/synced_folders/host-mac/Users/kim/Brand Fonts/",
+                # Moving, so the window reads again every few seconds.
+                "sync": _sync(state="SYNCING", bytes_done=1, bytes_total=4),
+            }
+        ],
+    }
+    folder = "/home/user/synced_folders/host-mac/Users/kim/Brand Fonts/"
+    page = open_files_page(folder)
+    expect(_entry(page, folder + "Inter.ttf")).to_be_visible()
+
+    (copy / "Atkinson.otf").write_text("font\n")
+
+    expect(_entry(page, folder + "Atkinson.otf")).to_be_visible(timeout=10_000)
+
+
 def test_enter_on_a_focused_button_presses_it_rather_than_opening_the_selection(
     open_files_page: OpenFilesPage, files_root: Path
 ) -> None:

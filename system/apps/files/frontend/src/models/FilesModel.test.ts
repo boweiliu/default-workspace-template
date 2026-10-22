@@ -298,6 +298,33 @@ describe("uploading", () => {
   });
 });
 
+describe("reloadShown", () => {
+  it("lists the open folder again, picking up what arrived in it", async () => {
+    const { model } = harness();
+    const arrived = fileEntry(HOME, "from-the-mac.txt", { size: 9, mtime: 4 });
+    vi.mocked(server.listFolder).mockResolvedValue({ exists: true, entries: [...ENTRIES, arrived] });
+
+    model.reloadShown();
+
+    await vi.waitFor(() =>
+      expect(model.visibleEntries(HOME).map((entry) => entry.name)).toContain("from-the-mac.txt"),
+    );
+  });
+
+  it("lists every column's folder again in the column view, and not one already being listed", async () => {
+    const { model } = harness();
+    model.setViewMode("columns");
+    await vi.waitFor(() => expect(model.folderState("/")?.status).toBe("ready"));
+    vi.mocked(server.listFolder).mockClear();
+    vi.mocked(server.listFolder).mockReturnValue(new Promise(() => {}));
+
+    model.reloadShown();
+    model.reloadShown();
+
+    expect(vi.mocked(server.listFolder).mock.calls.map(([folder]) => folder)).toEqual(["/", HOME]);
+  });
+});
+
 describe("loadConnections", () => {
   afterEach(() => vi.unstubAllGlobals());
 

@@ -25,12 +25,12 @@ import { isAnySyncMoving, isLiveShared } from "../models/connections";
 import { Dialogs } from "./dialogs";
 import { startDownload } from "./download";
 
-/** How often the shares are read again while the window is on screen: often while a sync is carrying something
- *  across, so its progress shows as it goes, and otherwise often enough that a change made in Imbue Studio shows
- *  without coming back to the window. The server reads the computers for every Files window at once, so more windows
- *  do not mean more requests to them. */
-const CONNECTIONS_MOVING_POLL_MS = 3000;
-const CONNECTIONS_IDLE_POLL_MS = 15000;
+/** How often the shares, and the folders on screen, are read again while the window is on screen: often while a sync
+ *  is carrying something across, so its progress and what it brings show as they go, and otherwise often enough that
+ *  a change made in Imbue Studio, or a file added on the computer, shows without coming back to the window. The
+ *  server reads the computers for every Files window at once, so more windows do not mean more requests to them. */
+const MOVING_POLL_MS = 3000;
+const IDLE_POLL_MS = 15000;
 
 /** Below this width the window lays itself out for a phone: one tap opens, and there is no column view. */
 export const NARROW_QUERY = "(max-width: 700px)";
@@ -77,7 +77,7 @@ export class FilesController {
   opensLocalFiles = false;
   /** Whether the shell shows this window; a page no shell frames counts as shown. */
   private isShownByShell = true;
-  private connectionsTimer: number | null = null;
+  private pollTimer: number | null = null;
 
   constructor(
     folder: string,
@@ -113,12 +113,12 @@ export class FilesController {
       this.reportLocation(this.model.folder);
     });
     this.reportLocation(folder);
-    // Shares change on the user's computer: read them again whenever the window comes back to the front, and every few
-    // seconds while it is on screen.
-    win.addEventListener("focus", () => void this.model.loadConnections());
-    win.document.addEventListener("visibilitychange", () => this.watchConnections());
+    // Shares and what is in them change on the user's computer: read them again whenever the window comes back to the
+    // front, and every few seconds while it is on screen.
+    win.addEventListener("focus", () => this.readAgain());
+    win.document.addEventListener("visibilitychange", () => this.poll());
     // After the first read, which the model began, so the first wait is the one the listing calls for.
-    void this.model.loadConnections().then(() => this.watchConnections());
+    void this.model.loadConnections().then(() => this.poll());
     // The handshake says it for a window opened after the chrome did; one already open hears the chrome itself.
     setEmbedderMessageHandler(EMBEDDER_CAPABILITIES, (message) =>
       this.setOpensLocalFiles(message.opensLocalFiles === true),
@@ -129,26 +129,32 @@ export class FilesController {
     });
   }
 
-  /** The shell showed or hid the window: a hidden one stops reading the shares, and one shown again reads them now. */
+  /** The shell showed or hid the window: a hidden one stops reading, and one shown again reads now. */
   setShownByShell(isShown: boolean): void {
     this.isShownByShell = isShown;
-    if (isShown) void this.model.loadConnections();
-    this.watchConnections();
+    if (isShown) this.readAgain();
+    this.poll();
+  }
+
+  /** Read the shares and the folders on screen again. */
+  private readAgain(): Promise<void> {
+    this.model.reloadShown();
+    return this.model.loadConnections();
   }
 
   private get isOnScreen(): boolean {
     return this.isShownByShell && this.win.document.visibilityState !== "hidden";
   }
 
-  /** Read the shares again after a while, for as long as the window is on screen. */
-  private watchConnections(): void {
-    if (this.connectionsTimer !== null) this.win.clearTimeout(this.connectionsTimer);
-    this.connectionsTimer = null;
+  /** Read the shares and the folders on screen again after a while, for as long as the window is on screen. */
+  private poll(): void {
+    if (this.pollTimer !== null) this.win.clearTimeout(this.pollTimer);
+    this.pollTimer = null;
     if (!this.isOnScreen) return;
-    const delay = isAnySyncMoving(this.model.connections) ? CONNECTIONS_MOVING_POLL_MS : CONNECTIONS_IDLE_POLL_MS;
-    this.connectionsTimer = this.win.setTimeout(() => {
-      this.connectionsTimer = null;
-      void this.model.loadConnections().then(() => this.watchConnections());
+    const delay = isAnySyncMoving(this.model.connections) ? MOVING_POLL_MS : IDLE_POLL_MS;
+    this.pollTimer = this.win.setTimeout(() => {
+      this.pollTimer = null;
+      void this.readAgain().then(() => this.poll());
     }, delay);
   }
 

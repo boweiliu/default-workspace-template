@@ -59,6 +59,9 @@ the same in Imbue Studio, a plain browser, a phone, or a share link.
 A page reads `/__files/api/connections` every 3 seconds while a sync is
 carrying something across and every 15 otherwise, only while the window is on
 screen, and again at once when it comes to the front or the shell shows it.
+Each time it also lists again the folders on screen (the open one, and each
+column's), so a file a sync brings in, or one added to a live share on the
+computer, shows without leaving the folder.
 The server's `connections_cache.py` answers every ask for 2 seconds after a
 read, so however many windows ask, the computers are asked at most that often,
 and with no window on screen they are not asked at all. A read asks each
