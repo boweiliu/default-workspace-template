@@ -244,6 +244,49 @@ def test_the_sidebar_lists_the_shortcuts_and_every_share_with_how_it_reaches_the
     ).to_have_attribute("data-icon-badge", "synced")
 
 
+_FROM_STUDIO = """(message) => window.postMessage(message, "*")"""
+
+
+def test_connect_shows_only_where_imbue_studio_opens_its_picker_and_the_list_shows_the_new_share(
+    open_files_page: OpenFilesPage, connections: Any
+) -> None:
+    connections.listed = {
+        "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
+        "shares": [],
+    }
+    page = open_files_page("/")
+    expect(page.locator(".files-connected-empty")).to_contain_text("Share a file or folder from Imbue Studio")
+    expect(page.locator('[data-action="connect"]')).to_have_count(0)
+
+    # A page with no frame around it is its own embedder: what it sends lands on itself, and so does Studio's word.
+    page.evaluate("window.sent = []; window.addEventListener('message', (event) => window.sent.push(event.data))")
+    page.evaluate(_FROM_STUDIO, {"type": "minds:embedder-capabilities", "canPopOut": False, "opensLocalFiles": True})
+    connect = page.locator('[data-action="connect"]')
+    expect(connect).to_have_text("Connect a file or folder…")
+    expect(page.locator(".files-connected-empty")).to_have_count(0)
+    connect.click()
+    page.wait_for_function("window.sent.some((message) => message.type === 'minds:open-local-files')")
+
+    # Studio shares the pick before it answers, and the answer has the page read a listing begun after it.
+    connections.listed = {
+        "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
+        "shares": [
+            {
+                "device": "host-mac",
+                "path": "/Users/kim/notes",
+                "access": "read",
+                "kind": "folder",
+                "is_reachable": True,
+                "synced_copy": None,
+                "sync": None,
+            }
+        ],
+    }
+    page.evaluate(_FROM_STUDIO, {"type": "minds:open-local-files-ack", "added": True})
+    expect(page.locator('[data-sidebar-row="share:host-mac:/Users/kim/notes"]')).to_be_visible()
+    assert connections.asked_fresh[-1] is True
+
+
 def test_the_sidebar_follows_a_share_changed_in_studio_without_the_window_coming_back_to_the_front(
     open_files_page: OpenFilesPage, connections: Any
 ) -> None:

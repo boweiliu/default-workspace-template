@@ -333,4 +333,34 @@ describe("loadConnections", () => {
     asked[1].answer(listed);
     await third;
   });
+
+  it("asks afresh past a read on its way, and never lets the slower, older answer replace the newer", async () => {
+    const asked: { url: string; answer: (connections: Connections) => void }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) =>
+            asked.push({
+              url,
+              answer: (connections) =>
+                resolve(
+                  new Response(JSON.stringify(connections), { headers: { "Content-Type": "application/json" } }),
+                ),
+            }),
+          ),
+      ),
+    );
+    const { model } = harness();
+    const first = model.loadConnections();
+    const fresh = model.loadConnections(true);
+    expect(asked.map((ask) => ask.url)).toEqual(["/__files/api/connections", "/__files/api/connections?fresh"]);
+
+    const newer: Connections = { devices: [{ id: "host-mac", name: "Kims-Mac.local" }], shares: [] };
+    asked[1].answer(newer);
+    await fresh;
+    asked[0].answer({ devices: [], shares: [] });
+    await first;
+    expect(model.connections).toEqual(newer);
+  });
 });

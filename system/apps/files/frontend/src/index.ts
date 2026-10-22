@@ -57,10 +57,13 @@ function bootstrap(): void {
   }
 
   let handshake: ShellHandshake | null = null;
-  // The shell's messages come after the window below exists.
+  // The handshake comes as a message, so after the window below exists.
   let filesApp: FilesController | null = null;
   const connection = connectToShell({
-    onHandshake: (received) => (handshake = received),
+    onHandshake: (received) => {
+      handshake = received;
+      filesApp?.setOpensLocalFiles(received.opensLocalFiles);
+    },
     onShown: () => filesApp?.setShownByShell(true),
     onHidden: () => filesApp?.setShownByShell(false),
   });

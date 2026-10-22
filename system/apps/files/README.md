@@ -54,8 +54,7 @@ part of Studio's record of its sync that Files shows (state, failure message,
 progress), checked as it arrives; a copy whose computer did not answer, or
 answered in a shape Files does not read, is listed with no record, which reads
 as "can't check". Because the server asks, not the viewer's browser, this works
-the same in Imbue Studio, a plain browser, a phone, or a share link. Files does
-not ask for new shares: the user makes them in Imbue Studio on their computer.
+the same in Imbue Studio, a plain browser, a phone, or a share link.
 
 A page reads `/__files/api/connections` every 3 seconds while a sync is
 carrying something across and every 15 otherwise, only while the window is on
@@ -69,7 +68,9 @@ memory on the computer, and probes only the shares it has not seen before
 answer), so a quiet listing costs two short requests per computer. A computer
 that does not answer (asleep, Studio closed) has the shares it last granted
 listed as unreachable, and its copies' syncs as unknown, rather than failing
-the listing. A computer that grants per device serves its
+the listing. `?fresh` asks for a read begun after the ask: a page sends it when
+Studio answers `minds:open-local-files` with `added: true`, which it does only
+once the new grant is in place. A computer that grants per device serves its
 files under its id (`/minds-api-proxy/api/v1/files/<device id><path>`, which is
 what its grants match); one that predates that serves them with no id
 (`/minds-api-proxy/api/v1/files<path>`). Either way the device also goes in the
@@ -107,8 +108,14 @@ computer is not answering. Inside a copy, a stopped sync says so above the
 entries (with Studio's reason), and an empty copy that is syncing says how far
 along it is. The row's tooltip says, without repeating
 the name, how it reaches the workspace and how it stands. A synced share opens
-at its copy, the others live. With nothing shared, the section says to share
-from Imbue Studio. Something dragged in from the computer onto a share's row
+at its copy, the others live. Where the Imbue Studio desktop app frames the
+workspace (it says `opensLocalFiles` with `minds:embedder-capabilities`, which
+the shell passes on in each window's handshake), the list ends in "Connect a
+file or folder…": it sends `minds:open-local-files`, Studio opens its own
+picker and then the new share's settings, and its `minds:open-local-files-ack`
+reads the list again when something new was shared. A plain
+browser, a phone or a share visit never shows it; with nothing shared, the
+section there says to share from Imbue Studio. Something dragged in from the computer onto a share's row
 uploads into that share, as onto any folder. The sidebar's width is dragged from
 its edge (double-click puts it back) and kept with the other preferences. Jumping to a sidebar row starts the
 column view afresh there; drilling down into a folder that happens to be a

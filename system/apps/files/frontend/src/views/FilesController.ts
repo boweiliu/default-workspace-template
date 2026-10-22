@@ -6,6 +6,13 @@
 import m from "mithril";
 
 import type { ShellConnection } from "@imbue/workspace-ui/src/app_contract";
+import {
+  EMBEDDER_CAPABILITIES,
+  OPEN_LOCAL_FILES,
+  OPEN_LOCAL_FILES_ACK,
+  sendToEmbedder,
+  setEmbedderMessageHandler,
+} from "@imbue/workspace-ui/src/embed";
 import type { ActionRow, MenuRow } from "@imbue/workspace-ui/src/components/menu";
 import type { IconName } from "@imbue/workspace-ui/src/components/icons";
 
@@ -65,6 +72,9 @@ export class FilesController {
   revealSelection = false;
   /** On a small screen, whether the sidebar is floated open over the folder. */
   isSidebarOpen = false;
+  /** Whether the Imbue Studio chrome around the workspace opens its own file picker to share something from the
+   *  user's computer: only the desktop app does, so a browser, a phone, or a share visit never offers it. */
+  opensLocalFiles = false;
   /** Whether the shell shows this window; a page no shell frames counts as shown. */
   private isShownByShell = true;
   private connectionsTimer: number | null = null;
@@ -109,6 +119,14 @@ export class FilesController {
     win.document.addEventListener("visibilitychange", () => this.watchConnections());
     // After the first read, which the model began, so the first wait is the one the listing calls for.
     void this.model.loadConnections().then(() => this.watchConnections());
+    // The handshake says it for a window opened after the chrome did; one already open hears the chrome itself.
+    setEmbedderMessageHandler(EMBEDDER_CAPABILITIES, (message) =>
+      this.setOpensLocalFiles(message.opensLocalFiles === true),
+    );
+    // Studio answers once the pick is shared, so a read begun now lists it.
+    setEmbedderMessageHandler(OPEN_LOCAL_FILES_ACK, (message) => {
+      if (message.added === true) void this.model.loadConnections(true);
+    });
   }
 
   /** The shell showed or hid the window: a hidden one stops reading the shares, and one shown again reads them now. */
@@ -132,6 +150,18 @@ export class FilesController {
       this.connectionsTimer = null;
       void this.model.loadConnections().then(() => this.watchConnections());
     }, delay);
+  }
+
+  setOpensLocalFiles(opensLocalFiles: boolean): void {
+    if (this.opensLocalFiles === opensLocalFiles) return;
+    this.opensLocalFiles = opensLocalFiles;
+    m.redraw();
+  }
+
+  /** Let the user pick something on their computer to share, in Imbue Studio's own picker; Studio then shows the
+   *  new share's settings and says when it is shared, which reads the list again. */
+  connectLocal(): void {
+    sendToEmbedder(OPEN_LOCAL_FILES);
   }
 
   /** The column view needs room for at least a couple of columns. */

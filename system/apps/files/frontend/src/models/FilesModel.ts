@@ -142,6 +142,9 @@ export class FilesModel {
   connections: Connections | null = null;
   connectionsError: string | null = null;
   private connectionsLoad: Promise<void> | null = null;
+  /** Which read of the shares was asked last, and which the list shows, so a slow answer never replaces a newer one. */
+  private connectionsAsked = 0;
+  private connectionsShown = 0;
   historyIndex = 0;
   historyLength = 1;
   readonly uploads: UploadQueue;
@@ -624,19 +627,27 @@ export class FilesModel {
     this.host.redraw();
   }
 
-  /** Read what is shared from the user's computers again; a read already on its way answers a second ask too. */
-  loadConnections(): Promise<void> {
-    this.connectionsLoad ??= this.readConnections().finally(() => (this.connectionsLoad = null));
+  /** Read what is shared from the user's computers again; a read already on its way answers a second ask too, unless
+   *  `isFresh` asks the server for one begun after this ask. */
+  loadConnections(isFresh = false): Promise<void> {
+    if (isFresh) return this.readConnections(true);
+    this.connectionsLoad ??= this.readConnections(false).finally(() => (this.connectionsLoad = null));
     return this.connectionsLoad;
   }
 
-  private async readConnections(): Promise<void> {
+  private async readConnections(isFresh: boolean): Promise<void> {
+    const asked = ++this.connectionsAsked;
+    let connections: Connections | null = null;
+    let error: string | null = null;
     try {
-      this.connections = await fetchConnections();
-      this.connectionsError = null;
-    } catch (error) {
-      this.connectionsError = messageOf(error);
+      connections = await fetchConnections(isFresh);
+    } catch (thrown) {
+      error = messageOf(thrown);
     }
+    if (asked < this.connectionsShown) return;
+    this.connectionsShown = asked;
+    if (connections !== null) this.connections = connections;
+    this.connectionsError = error;
     this.host.redraw();
   }
 }

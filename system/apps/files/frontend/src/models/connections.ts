@@ -219,8 +219,9 @@ async function failureOf(response: Response, what: string): Promise<ServerError>
   return new ServerError(detail === "" ? `${what} (${response.status})` : detail, response.status);
 }
 
-export async function fetchConnections(): Promise<Connections> {
-  const response = await fetch(CONNECTIONS_API);
+/** The listing; `isFresh` asks the server for one read after the ask, rather than the one it read a moment ago. */
+export async function fetchConnections(isFresh = false): Promise<Connections> {
+  const response = await fetch(isFresh ? `${CONNECTIONS_API}?fresh` : CONNECTIONS_API);
   if (!response.ok) throw await failureOf(response, "Couldn't read your connections");
   return (await response.json()) as Connections;
 }

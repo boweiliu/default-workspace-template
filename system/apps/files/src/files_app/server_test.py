@@ -408,6 +408,16 @@ def test_a_sleeping_computer_is_listed_without_failing_the_listing(tmp_path: Pat
     }
 
 
+def test_fresh_asks_for_a_read_begun_after_the_ask(tmp_path: Path) -> None:
+    computer = FakeComputer(permissions=[], folders={})
+    client = _app(computer, tmp_path)
+    client.get("/__files/api/connections")
+    computer.permissions = ["minds-file-server-read-/Users/kim/Atkinson"]
+    assert json_of(client.get("/__files/api/connections"))["shares"] == []
+    (share,) = json_of(client.get("/__files/api/connections?fresh"))["shares"]
+    assert share["path"] == "/Users/kim/Atkinson"
+
+
 def test_a_shared_folder_with_no_copy_is_listed_live_as_a_workspace_folder_is(tmp_path: Path) -> None:
     computer = FakeComputer(
         permissions=["minds-file-server-read-/Users/kim/Atkinson"],

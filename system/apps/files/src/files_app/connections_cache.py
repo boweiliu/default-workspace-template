@@ -55,12 +55,14 @@ class ConnectionsCache:
         self._computers: dict[str, Computer] = {}
         self._probed: dict[ProbeKey, Share] = {}
 
-    def current(self) -> Connections:
-        """The listing, read again unless the last read is recent. Raises ``httpx.HTTPError`` or ``ValueError`` when
-        the gateway could not be read."""
+    def current(self, is_fresh: bool = False) -> Connections:
+        """The listing, read again unless the last read is recent, or, with ``is_fresh``, unless it began after this
+        ask. Raises ``httpx.HTTPError`` or ``ValueError`` when the gateway could not be read."""
         asked_at = self._clock()
         with self._lock:
-            if self._listing is None or asked_at - self._read_at >= self._max_age_seconds:
+            is_recent = self._read_at >= asked_at if is_fresh else asked_at - self._read_at < self._max_age_seconds
+            if self._listing is None or not is_recent:
+                # Dated from its start, so a fresh ask is never answered by a read begun before it.
                 started_at = self._clock()
                 self._listing = self._read()
                 self._read_at = started_at

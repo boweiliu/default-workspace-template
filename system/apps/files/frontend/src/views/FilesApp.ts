@@ -230,8 +230,12 @@ function Sidebar(): m.Component<{ app: FilesController; floating: boolean }> {
       if (shareRows.length > 0) {
         connectedBody = shareRows.map((row) => sidebarRow(app, row, row.key === current));
       } else {
-        const empty = model.connectionsError ?? (connections === null ? "Looking…" : NOTHING_CONNECTED);
-        connectedBody = m("div.files-connected-empty", { class: "px-2 py-1 type-helper text-faint" }, empty);
+        // With the connect entry below, an empty list needs no word on how to share.
+        const empty =
+          model.connectionsError ??
+          (connections === null ? "Looking…" : app.opensLocalFiles ? null : NOTHING_CONNECTED);
+        connectedBody =
+          empty === null ? null : m("div.files-connected-empty", { class: "px-2 py-1 type-helper text-faint" }, empty);
       }
       return m(
         "nav.files-sidebar",
@@ -259,6 +263,25 @@ function Sidebar(): m.Component<{ app: FilesController; floating: boolean }> {
                 ),
               ]),
               connectedBody,
+              app.opensLocalFiles
+                ? m(
+                    "button.files-connect",
+                    {
+                      type: "button",
+                      "data-action": "connect",
+                      class:
+                        "flex h-7 w-full shrink-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-(length:--font-size-row) text-faint hover:bg-fill-hover hover:text-primary",
+                      onclick: () => {
+                        app.isSidebarOpen = false;
+                        app.connectLocal();
+                      },
+                    },
+                    [
+                      m.trust(icon("plus", { size: 16, className: "shrink-0" })),
+                      m("span", { class: "truncate" }, "Connect a file or folder…"),
+                    ],
+                  )
+                : null,
             ]),
           ]),
           resizeHandle(app),
