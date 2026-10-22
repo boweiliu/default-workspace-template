@@ -307,7 +307,7 @@ describe("the window menu's Theming submenu", () => {
   });
 
   it("drafts requests that name the app, and the theme for re-imagining it", () => {
-    expect(restyleAppPrompt("Notes")).toContain("Restyle the Notes app");
+    expect(restyleAppPrompt("Notes")).toContain("Make the Notes app themeable");
     expect(reimagineAppPrompt("Notes", "Classic Mac")).toContain("Re-imagine the Notes app for the Classic Mac theme");
   });
 });

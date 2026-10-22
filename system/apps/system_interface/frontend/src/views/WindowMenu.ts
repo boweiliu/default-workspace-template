@@ -44,8 +44,13 @@ const THEME_LEVEL_TOOLTIPS: Readonly<Record<ThemeLevel, string>> = {
 /** The chat request "Restyle with AI..." drafts: the app rewritten onto the design tokens and controls. */
 export function restyleAppPrompt(appName: string): string {
   return (
-    `Restyle the ${appName} app so it follows the workspace's theme: take its colors, fonts, and controls from ` +
-    "the design tokens and the shared parts, and keep how it works. Show me before keeping the change."
+    `Make the ${appName} app themeable, so it follows whichever workspace theme is on, now and after every ` +
+    "switch. In its styles, replace each color, font, corner radius, and shadow it sets with the matching workspace " +
+    "design token, written with today's value as the fallback, like var(--c-accent, #3366cc), so it looks the same " +
+    "with theming off. The tokens are listed in docs/system/blueprint/workspace-themes/plan-workspace-themes.md, " +
+    "section 4.1. Never copy the current theme's own values into the app. Leave its app.toml without a [theming] " +
+    "table: the workspace puts the theme into its pages from outside (section 7.1 of that plan). Keep how it works, " +
+    "check it under two different themes, and show me before keeping the change."
   );
 }
 
