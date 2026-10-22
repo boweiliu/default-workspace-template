@@ -1,4 +1,4 @@
-The shared icon set gains the glyphs Files draws its chrome with: layout-grid, list, columns, plus, upload, ellipsis, folder, house, inbox, file-plus, copy, info, panel-left, and link.
+The shared icon set gains the glyphs Files draws its chrome with: layout-grid, list, columns, plus, upload, ellipsis, folder, house, inbox, file-plus, copy, info, panel-left, link, and laptop-off (a laptop struck through, for a computer that is not answering).
 
 `alertDotIcon()` is a filled disc with a white exclamation in the current colour.
 
