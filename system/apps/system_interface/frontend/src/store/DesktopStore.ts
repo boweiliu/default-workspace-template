@@ -64,7 +64,7 @@ import type {
   WindowRecord,
   WindowState,
 } from "../model/records";
-import { isSameCell, isSameWindowPaths, shortcutKey } from "../model/records";
+import { THEME_LEVEL_LABELS, THEME_LEVELS, isSameCell, isSameWindowPaths, shortcutKey } from "../model/records";
 import { ToastQueue } from "@imbue/workspace-ui/src/models/toasts";
 import { OwnIdMinter, PAGE_ID_PREFIX, REPORT_ID_PREFIX, SAVE_ID_PREFIX, mintHex } from "../model/ownIds";
 import { isPreviewShell } from "../model/PreviewShell";
@@ -1019,6 +1019,40 @@ export class DesktopStore {
   /** Set how far the theme reaches an app's pages; every client reloads them when the app list says so. */
   async setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
     await this.deps.api.setAppThemeLevel(app, level);
+  }
+
+  /** A Theming key's next or previous theme (the embed contract's ``minds:step-theming``): the desktop on screen
+   *  moves to the neighbouring available theme, wrapping round, as its own choice when it has one and as the
+   *  workspace's default otherwise, and the user is told which it wears now. */
+  async stepShownTheme(step: 1 | -1): Promise<void> {
+    const desktop = activeDesktop(this.state);
+    if (desktop === null || !this.hasThemeCatalog) return;
+    const themes = this.themeCatalog.themes.filter((theme) => theme.available);
+    if (themes.length === 0) return;
+    const shownIndex = themes.findIndex((theme) => theme.id === this.shownTheme().id);
+    const next = themes[(Math.max(shownIndex, 0) + step + themes.length) % themes.length];
+    if (desktop.theme !== null) await this.setDesktopTheme(desktop.id, next.id);
+    else await this.setDefaultTheme(next.id);
+    this.toast(`Theme: ${next.name}`);
+  }
+
+  /** A Theming key's more or less theming for the focused window's app: its level moves one step, stopping at none
+   *  and heavy, and the user is told where it is now. An app that wears the workspace's theme itself has no level. */
+  async stepFocusedAppThemeLevel(step: 1 | -1): Promise<void> {
+    const focused =
+      this.soloWindowId ??
+      (this.isPhoneLayout() ? (shownWindowOf(this.state)?.id ?? null) : activeFocusedWindowId(this.state));
+    const window = focused === null ? null : findWindow(this.state, focused)?.window;
+    const app = window === undefined || window === null ? undefined : appByName(this.state, window.app);
+    if (app === undefined) return;
+    if (app.theme_level === null) {
+      this.toast(`${app.display_name} wears the workspace's theme itself`);
+      return;
+    }
+    const index = THEME_LEVELS.indexOf(app.theme_level);
+    const level = THEME_LEVELS[Math.min(Math.max(index + step, 0), THEME_LEVELS.length - 1)];
+    if (level !== app.theme_level) await this.setAppThemeLevel(app.name, level);
+    this.toast(`${app.display_name}: ${THEME_LEVEL_LABELS[level]} theming`);
   }
 
   private takePresence(users: PresentUser[]): void {

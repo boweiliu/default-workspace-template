@@ -2821,6 +2821,45 @@ describe("themes", () => {
     expect(heard).toEqual(["ink", "ink"]);
   });
 
+  it("steps the theme on screen through the available ones, wrapping round, as the default or the desktop's own", async () => {
+    const store = await startedStore();
+    await settle();
+
+    await store.stepShownTheme(1);
+    expect(api.calls).toContain("setDefaultTheme:standard");
+    expect(store.shownTheme().id).toBe("standard");
+    // Back past the start, the unavailable theme skipped.
+    await store.stepShownTheme(-1);
+    expect(store.shownTheme().id).toBe("ink");
+
+    await store.setDesktopTheme("home", "paper");
+    await store.stepShownTheme(1);
+    expect(api.calls).toContain("setDesktopTheme:home:ink");
+    expect(store.shownTheme().id).toBe("ink");
+    expect(notices()).toEqual(["Theme: Standard", "Theme: Ink", "Theme: Ink"]);
+  });
+
+  it("steps the focused app's theme level, stopping at the ends, and not for an app that themes itself", async () => {
+    api.apps = [appRecord("docs", { theme_level: "light" }), appRecord("notes")];
+    const store = await startedStore();
+    await settle();
+
+    await store.stepFocusedAppThemeLevel(1);
+    expect(api.calls).toContain("setAppThemeLevel:docs:medium");
+
+    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
+    await store.stepFocusedAppThemeLevel(1);
+    socket.deliver().onAppsUpdated([appRecord("docs"), appRecord("notes")]);
+    await store.stepFocusedAppThemeLevel(-1);
+
+    expect(api.calls.filter((call) => call.startsWith("setAppThemeLevel"))).toEqual(["setAppThemeLevel:docs:medium"]);
+    expect(notices()).toEqual([
+      "Docs: Medium theming",
+      "Docs: Heavy theming",
+      "Docs wears the workspace's theme itself",
+    ]);
+  });
+
   it("takes a new workspace default at once, without reading the catalog again", async () => {
     const store = await startedStore();
     await settle();

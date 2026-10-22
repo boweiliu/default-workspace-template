@@ -92,6 +92,9 @@ export const OPEN_LINK: "minds:open-link" = "OPEN_LINK" in embedContract ? embed
 // for an external link that embedder handed over with OPEN_LINK.
 export const OPEN_EXTERNAL: "minds:open-external" =
   "OPEN_EXTERNAL" in embedContract ? embedContract.OPEN_EXTERNAL : "minds:open-external";
+// Embedder -> workspace (contract v9): a Theming key was pressed. Payload: { axis: "theme" | "level", step: 1 | -1 }.
+export const STEP_THEMING: "minds:step-theming" =
+  "STEP_THEMING" in embedContract ? embedContract.STEP_THEMING : "minds:step-theming";
 
 type EmbedderMessageHandler = (message: ContractMessage) => void;
 
@@ -111,6 +114,7 @@ const EMBEDDER_TO_WORKSPACE_TYPES: readonly string[] = [
   TEAR_OUT,
   PROVIDER_SIGN_IN_ACK,
   OPEN_LINK,
+  STEP_THEMING,
 ];
 
 // One replaceable handler per embedder->workspace type, registered by the

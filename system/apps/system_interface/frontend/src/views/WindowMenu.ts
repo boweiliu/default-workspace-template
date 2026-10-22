@@ -15,7 +15,7 @@ import type { MenuRow, SubmenuChildRow } from "@imbue/workspace-ui/src/component
 import { OPEN_SHARE_SETTINGS, sendToEmbedder } from "@imbue/workspace-ui/src/embed";
 import { windowSizeSubmenuRow } from "./WindowSizeRow";
 import type { WindowSizeActions } from "./WindowSizeRow";
-import { THEME_LEVELS } from "../model/records";
+import { THEME_LEVEL_LABELS, THEME_LEVELS } from "../model/records";
 import type { AppRecord, EntryMode, PinStyle, ThemeLevel } from "../model/records";
 import type { EntryLook } from "../reducers/desktopState";
 
@@ -33,13 +33,6 @@ export interface WindowThemeActions {
   /** Draft a request to re-imagine the app for the theme into the chat; null with no chat to draft into. */
   readonly reimagine: (() => void) | null;
 }
-
-const THEME_LEVEL_LABELS: Readonly<Record<ThemeLevel, string>> = {
-  none: "None",
-  light: "Light",
-  medium: "Medium",
-  heavy: "Heavy",
-};
 
 const THEME_LEVEL_TOOLTIPS: Readonly<Record<ThemeLevel, string>> = {
   none: "Leave the app as it was built",
@@ -78,7 +71,12 @@ function themeSubmenuRow(actions: WindowThemeActions): MenuRow {
     chatRows.push({ kind: "action", key: "theme-restyle", label: "Restyle with AI...", onSelect: actions.restyle });
   }
   if (actions.reimagine !== null) {
-    chatRows.push({ kind: "action", key: "theme-reimagine", label: "Re-imagine with AI...", onSelect: actions.reimagine });
+    chatRows.push({
+      kind: "action",
+      key: "theme-reimagine",
+      label: "Re-imagine with AI...",
+      onSelect: actions.reimagine,
+    });
   }
   return {
     kind: "submenu",

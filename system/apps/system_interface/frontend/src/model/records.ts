@@ -191,6 +191,14 @@ export type ThemeLevel = "none" | "light" | "medium" | "heavy";
 
 export const THEME_LEVELS: readonly ThemeLevel[] = ["none", "light", "medium", "heavy"];
 
+/** What the user reads for each level. */
+export const THEME_LEVEL_LABELS: Readonly<Record<ThemeLevel, string>> = {
+  none: "None",
+  light: "Light",
+  medium: "Medium",
+  heavy: "Heavy",
+};
+
 function parseThemeLevel(raw: unknown): ThemeLevel | null {
   return THEME_LEVELS.find((level) => level === raw) ?? null;
 }

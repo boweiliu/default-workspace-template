@@ -13,6 +13,7 @@ import {
   WINDOW_DRAG_STARTED,
   announceReadyToEmbedder,
   sendToEmbedder,
+  STEP_THEMING,
   setEmbedderMessageHandler,
   setEmbedderMessageObserver,
 } from "@imbue/workspace-ui/src/embed";
@@ -141,6 +142,12 @@ function bootstrap(): void {
   // shell side of the app contract.
   initEmbedderRelay();
   setEmbedderMessageHandler(CLOSE_ACTIVE_TAB, () => void desktopStore.closeFocusedWindow());
+  // The Theming keys: Option-Command-Right and -Left step the theme on screen, -Up and -Down the focused app's level.
+  setEmbedderMessageHandler(STEP_THEMING, (message) => {
+    const step = message.step === -1 ? -1 : 1;
+    if (message.axis === "theme") void desktopStore.stepShownTheme(step);
+    else if (message.axis === "level") void desktopStore.stepFocusedAppThemeLevel(step);
+  });
   // A phone's page sleeps while it is out of sight; coming back, the store reads the shell's word again.
   document.addEventListener("visibilitychange", () =>
     desktopStore.onVisibilityChange(document.visibilityState === "visible"),
