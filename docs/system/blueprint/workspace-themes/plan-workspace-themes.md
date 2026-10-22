@@ -332,8 +332,9 @@ The agent makes a theme from a description or a picture:
 2. The agent writes the tokens, the chrome slots, and the part styles, drawing on a CSS library where one fits (section 4.5). The theme wears its base's icons for now.
 3. `workspace-themes validate <id>` checks the folder against sections 3 and 4.
 4. It looks at the theme gallery under the theme, and fixes what reads badly.
-5. It shows the user the theme with the live preview in Desktop settings, and asks whether they want new icons in its style for every app.
-6. If they do, it writes the icon guide, adds `[icons]`, and draws the generic program icon (section 6.2) at once in the foreground, since a theme with icons of its own is unavailable until it has that one; then it makes the apps' icons in the background, until `workspace-themes icon missing <id>` names no app.
+5. It shows the user the theme with the live preview in Desktop settings, and asks two things about icons, since an app can use its standard icon in any theme or have one drawn for each: whether to draw one in this theme for each app that has none now, and whether every app built later should get one too, which makes each build cost more and take longer.
+6. A yes to the second adds one line naming the theme to the workspace's `AGENTS.md`, telling app building to draw the new app's icon for it in the background; it is the only thing that tells app building about a theme. With no such line, a new app uses its standard icon under every theme.
+7. A yes to the first writes the icon guide, adds `[icons]`, and draws the generic program icon (section 6.2) at once in the foreground, since a theme with icons of its own is unavailable until it has that one; then it makes the apps' icons in the background, until `workspace-themes icon missing <id>` names no app.
 
 ### 8.2 The theme gallery
 

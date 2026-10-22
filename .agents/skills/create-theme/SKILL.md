@@ -1,6 +1,6 @@
 ---
 name: create-theme
-description: Use when the user wants a new look for their workspace -- a theme made from a description ("make it look like BeOS", "a dark solarized theme"), a picture, or an existing theme to start from. Lays out a theme folder, writes its colors, type, window chrome, and part styles against the theme contract, checks it, judges it in the theme gallery, lets the user try it in Desktop settings, and then offers to draw its icons.
+description: Use when the user wants a new look for their workspace -- a theme made from a description ("make it look like BeOS", "a dark solarized theme"), a picture, or an existing theme to start from. Lays out a theme folder, writes its colors, type, window chrome, and part styles against the theme contract, checks it, judges it in the theme gallery, lets the user try it in Desktop settings, and then asks whether to draw its icons for the apps there now and for apps built later.
 metadata:
   author: imbue
 ---
@@ -104,9 +104,26 @@ which previews it live before they keep it, and can put it on one desktop or mak
 workspace default, which every desktop without a theme of its own wears.
 Do not switch their desktop to it yourself unless they asked you to.
 
-Then ask whether they want new icons in the theme's style for every app, drawn in the
-background. Until then the theme wears its base's icons: the standard ones, or those of the theme
-it builds on. Make them (step 7) only when they say yes.
+Then ask about icons, in one message, with both questions in it. Start from what icons are:
+"Apps can use their standard theme icon in any theme, or each app can have a new icon drawn for
+each theme." Until an app has one drawn, the theme wears its base's icon for it: the standard one,
+or that of the theme it builds on. Then ask:
+
+- **The apps they have now:** should each app without an icon in this theme get one drawn,
+  in the background?
+- **Apps they build later:** should every new app also get an icon drawn in this theme? Say
+  plainly that this makes each new app cost more and take longer to finish.
+
+Make the icons for the apps they have (step 7) only when they say yes to the first. When they say
+yes to the second, add this line to the end of `AGENTS.md`, with the theme's id, and commit it:
+
+```markdown
+- When you build a new app, also draw its icon for the `<id>` workspace theme with the `make-theme-icon` skill, in the background once the app works, so the user does not wait for it (they asked for this when they made the theme).
+```
+
+That line is the only thing that ever tells app building about a theme; without it, a new app
+uses its standard icon under every theme. Take it out again if they change their mind or the
+theme is removed.
 
 ## 7. Make the icons, when the user wants them
 
