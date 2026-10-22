@@ -73,3 +73,11 @@ Fix each, or leave it only where the app keeps a fixed look on purpose.
 
 Then show the user the app in its window, and tell them they can step through the themes with
 Option-Command-Right and -Left while they look.
+
+## Ask about the app's icons
+
+Once the user is happy with the app, ask whether they also want its icon drawn for each theme that
+has an icon style of its own (`uv run workspace-themes icon missing` names those themes and the
+apps they have no icon for). Say plainly that each icon takes time to draw and costs tokens, and
+that without one the app keeps its standard icon, or one derived from it, under those themes.
+Draw them only when they say yes, with the `make-theme-icon` skill, in the background.
