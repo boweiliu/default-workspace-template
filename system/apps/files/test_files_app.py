@@ -306,7 +306,7 @@ def test_a_long_reason_for_a_stopped_sync_is_cut_to_two_lines_in_the_tooltip_and
 _FROM_STUDIO = """(message) => window.postMessage(message, "*")"""
 
 
-def test_connect_shows_only_where_imbue_studio_opens_its_picker_and_the_list_shows_the_new_share(
+def test_manage_connected_files_shows_only_inside_imbue_studio_and_asks_it_for_its_local_files_settings(
     open_files_page: OpenFilesPage, connections: Any
 ) -> None:
     connections.listed = {
@@ -315,18 +315,18 @@ def test_connect_shows_only_where_imbue_studio_opens_its_picker_and_the_list_sho
     }
     page = open_files_page("/")
     expect(page.locator(".files-connected-empty")).to_contain_text("Share a file or folder from Imbue Studio")
-    expect(page.locator('[data-action="connect"]')).to_have_count(0)
+    expect(page.locator('[data-action="manage-connected"]')).to_have_count(0)
 
     # A page with no frame around it is its own embedder: what it sends lands on itself, and so does Studio's word.
     page.evaluate("window.sent = []; window.addEventListener('message', (event) => window.sent.push(event.data))")
     page.evaluate(_FROM_STUDIO, {"type": "minds:embedder-capabilities", "canPopOut": False, "opensLocalFiles": True})
-    connect = page.locator('[data-action="connect"]')
-    expect(connect).to_have_text("Connect a file or folder…")
+    manage = page.locator('[data-action="manage-connected"]')
+    expect(manage).to_have_text("Manage connected files")
     expect(page.locator(".files-connected-empty")).to_have_count(0)
-    connect.click()
+    manage.click()
     page.wait_for_function("window.sent.some((message) => message.type === 'minds:open-local-files')")
 
-    # Studio shares the pick before it answers, and the answer has the page read a listing begun after it.
+    # The user shares something in Studio's settings, and coming back to the window lists it.
     connections.listed = {
         "devices": [{"id": "host-mac", "name": "Kims-Mac.local", "has_device_paths": True}],
         "shares": [
@@ -341,9 +341,8 @@ def test_connect_shows_only_where_imbue_studio_opens_its_picker_and_the_list_sho
             }
         ],
     }
-    page.evaluate(_FROM_STUDIO, {"type": "minds:open-local-files-ack", "added": True})
-    expect(page.locator('[data-sidebar-row="share:host-mac:/Users/kim/notes"]')).to_be_visible()
-    assert connections.asked_fresh[-1] is True
+    page.evaluate("window.dispatchEvent(new Event('focus'))")
+    expect(page.locator('[data-sidebar-row="share:host-mac:/Users/kim/notes"]')).to_be_visible(timeout=2_000)
 
 
 def test_the_sidebar_follows_a_share_changed_in_studio_without_the_window_coming_back_to_the_front(

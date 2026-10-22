@@ -368,7 +368,7 @@ describe("the contract", () => {
     ]);
   });
 
-  it("tells a page in its handshake whether the embedder opens its own file picker", () => {
+  it("tells a page in its handshake whether the embedder opens its settings for the files shared from the computer", () => {
     store.setOpensLocalFiles(true);
     const spy = spyOnFrame("win-1");
     load("win-1");

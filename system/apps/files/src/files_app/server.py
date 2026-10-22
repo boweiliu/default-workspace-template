@@ -187,12 +187,11 @@ def create_app(
         """The computers connected to this workspace and what each shares with it.
 
         Each share says how it reaches the workspace (live, or a synced copy and how Imbue Studio says its sync
-        stands). Pages ask every few seconds, so a read answers every ask for a couple of seconds after it; ``?fresh``
-        asks for one begun after the ask, as a page does once Imbue Studio says it shared something new. Nothing is
+        stands). Pages ask every few seconds, so a read answers every ask for a couple of seconds after it. Nothing is
         listed while the workspace is not connected to Imbue Studio; a 502 says when Imbue Studio could not be read.
         """
         try:
-            listed = cache.current(is_fresh="fresh" in request.args)
+            listed = cache.current()
         except (httpx.HTTPError, ValueError) as error:
             # ValueError: an answer from the gateway that is not the JSON it should be.
             logger.warning("Couldn't read the shares through the gateway: {}", error)

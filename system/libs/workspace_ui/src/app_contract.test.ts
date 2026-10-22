@@ -120,7 +120,7 @@ describe("connectToShell", () => {
     });
   });
 
-  it("reads whether the embedder opens its file picker, and anything but true as no", () => {
+  it("reads whether the embedder opens its shared-files settings, and anything but true as no", () => {
     const parent = framed();
     const onHandshake = vi.fn();
     connection = connectToShell({ onHandshake });

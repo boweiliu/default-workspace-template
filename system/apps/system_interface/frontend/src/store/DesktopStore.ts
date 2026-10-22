@@ -422,7 +422,7 @@ export class DesktopStore {
   private canPopOut = false;
   /** Whether the embedder opens external links outside the workspace for it; off until it says so. */
   private canOpenLinksOutside = false;
-  /** Whether the embedder opens its own file picker to share something with the workspace; off until it says so. */
+  /** Whether the embedder opens its settings for the files shared from the user's computer; off until it says so. */
   private opensLocalFiles = false;
   /** The detached set as last reported to the embedder, serialized, so a redraw reports nothing new. */
   private lastReportedDetached: string | null = null;
@@ -481,13 +481,13 @@ export class DesktopStore {
     this.canOpenLinksOutside = canOpenLinksOutside;
   }
 
-  /** Whether the embedder opens its own file picker to share something with the workspace, which each page is told in
-   *  its handshake. */
+  /** Whether the embedder opens its settings for the files shared from the user's computer, which each page is told
+   *  in its handshake. */
   getOpensLocalFiles(): boolean {
     return this.opensLocalFiles;
   }
 
-  /** The embedder said whether it opens its file picker for the workspace (``minds:embedder-capabilities``). Pages
+  /** The embedder said whether it opens its settings for shared files (``minds:embedder-capabilities``). Pages
    *  already greeted hear it as the shell's rebroadcast of that message. */
   setOpensLocalFiles(opensLocalFiles: boolean): void {
     this.opensLocalFiles = opensLocalFiles;

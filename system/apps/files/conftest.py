@@ -14,7 +14,6 @@ from urllib.parse import quote
 
 import pytest
 from flask import Response
-from flask import request
 from playwright.sync_api import Browser
 from playwright.sync_api import BrowserContext
 from playwright.sync_api import Page
@@ -32,8 +31,6 @@ class Connections:
 
     def __init__(self) -> None:
         self.listed: dict[str, Any] = {"devices": [], "shares": []}
-        # Whether each read the pages made asked for a fresh listing.
-        self.asked_fresh: list[bool] = []
 
 
 @pytest.fixture
@@ -67,7 +64,6 @@ def files_origin(files_root: Path, connections: Connections) -> Iterator[str]:
     app = create_app(gateway=None, static_directory=STATIC_DIRECTORY, agent_id="agent-main", root=files_root)
 
     def listed_connections() -> Response:
-        connections.asked_fresh.append("fresh" in request.args)
         # Through the route's model, as the real view answers: the route table refuses a hand-built JSON answer.
         return model_response(ConnectionsListing.model_validate(connections.listed))
 

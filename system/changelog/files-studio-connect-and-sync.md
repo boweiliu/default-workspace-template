@@ -1,1 +1,1 @@
-The desktop-interface contracts (`docs/system/blueprint/desktop-interface/contracts.md`, section 7) list `opensLocalFiles` in `shell:handshake`: whether the Imbue Studio chrome opens its own file picker to share something with the workspace.
+The desktop-interface contracts (`docs/system/blueprint/desktop-interface/contracts.md`, section 7) list `opensLocalFiles` in `shell:handshake`: whether the Imbue Studio chrome opens its settings for the files shared from the user's computer (`minds:open-local-files`).

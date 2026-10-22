@@ -50,22 +50,6 @@ def test_a_read_answers_every_ask_for_a_while_and_a_later_ask_reads_again(tmp_pa
     assert len(_probes(computer)) == 1
 
 
-def test_a_fresh_ask_is_answered_only_by_a_read_begun_after_it(tmp_path: Path) -> None:
-    computer = FakeComputer(permissions=[], folders={"/Users/kim/notes": []})
-    clock = _Clock()
-    cache = _cache(computer, tmp_path, clock)
-    cache.current()
-
-    computer.permissions = ["minds-file-server-read-/Users/kim/notes"]
-    clock.now += 0.5
-    assert cache.current().shares == ()
-    (notes,) = cache.current(is_fresh=True).shares
-    assert notes.path == "/Users/kim/notes"
-    # Read at the same moment as the ask, it answers the next ask without reading again.
-    assert cache.current().shares == (notes,)
-    assert len(computer.asked("/devices")) == 2
-
-
 def test_a_new_share_is_probed_and_a_revoked_one_is_dropped(tmp_path: Path) -> None:
     computer = FakeComputer(
         permissions=["minds-file-server-read-/Users/kim/notes"],

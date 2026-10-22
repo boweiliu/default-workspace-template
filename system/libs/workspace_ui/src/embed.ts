@@ -94,14 +94,11 @@ export const OPEN_LINK: "minds:open-link" = "OPEN_LINK" in embedContract ? embed
 export const OPEN_EXTERNAL: "minds:open-external" =
   "OPEN_EXTERNAL" in embedContract ? embedContract.OPEN_EXTERNAL : "minds:open-external";
 
-// Workspace -> embedder (contract v9): let the user pick a file or folder on their computer to share with this
-// workspace, with the chrome's own file picker. Payload: {}. Sent only to an embedder that said ``opensLocalFiles``
-// with EMBEDDER_CAPABILITIES.
+// Workspace -> embedder (contract v9): open the chrome's settings for the files shared from the user's computer
+// (its Permissions pane, at Local files). Payload: {}. Sent only to an embedder that said ``opensLocalFiles`` with
+// EMBEDDER_CAPABILITIES.
 export const OPEN_LOCAL_FILES: "minds:open-local-files" =
   "OPEN_LOCAL_FILES" in embedContract ? embedContract.OPEN_LOCAL_FILES : "minds:open-local-files";
-// Embedder -> workspace (contract v9): the picker closed. Payload: { added } (whether a share was added).
-export const OPEN_LOCAL_FILES_ACK: "minds:open-local-files-ack" =
-  "OPEN_LOCAL_FILES_ACK" in embedContract ? embedContract.OPEN_LOCAL_FILES_ACK : "minds:open-local-files-ack";
 
 type EmbedderMessageHandler = (message: ContractMessage) => void;
 
@@ -118,7 +115,6 @@ const EMBEDDER_TO_WORKSPACE_TYPES: readonly string[] = [
   TEAR_OUT,
   PROVIDER_SIGN_IN_ACK,
   OPEN_LINK,
-  OPEN_LOCAL_FILES_ACK,
 ];
 
 // One replaceable handler per embedder->workspace type, registered by the

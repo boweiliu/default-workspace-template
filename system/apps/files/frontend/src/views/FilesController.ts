@@ -9,7 +9,6 @@ import type { ShellConnection } from "@imbue/workspace-ui/src/app_contract";
 import {
   EMBEDDER_CAPABILITIES,
   OPEN_LOCAL_FILES,
-  OPEN_LOCAL_FILES_ACK,
   sendToEmbedder,
   setEmbedderMessageHandler,
 } from "@imbue/workspace-ui/src/embed";
@@ -80,8 +79,8 @@ export class FilesController {
   revealSelection = false;
   /** On a small screen, whether the sidebar is floated open over the folder. */
   isSidebarOpen = false;
-  /** Whether the Imbue Studio chrome around the workspace opens its own file picker to share something from the
-   *  user's computer: only the desktop app does, so a browser, a phone, or a share visit never offers it. */
+  /** Whether the Imbue Studio chrome around the workspace opens its settings for the files shared from the user's
+   *  computer: a plain browser, a phone, or a share visit has no such chrome, so never offers it. */
   opensLocalFiles = false;
   /** Whether the shell shows this window; a page no shell frames counts as shown. */
   private isShownByShell = true;
@@ -138,10 +137,6 @@ export class FilesController {
     setEmbedderMessageHandler(EMBEDDER_CAPABILITIES, (message) =>
       this.setOpensLocalFiles(message.opensLocalFiles === true),
     );
-    // Studio answers once the pick is shared, so a read begun now lists it.
-    setEmbedderMessageHandler(OPEN_LOCAL_FILES_ACK, (message) => {
-      if (message.added === true) void this.model.loadConnections(true);
-    });
   }
 
   /** The shell showed or hid the window: a hidden one stops reading, and one shown again reads now. */
@@ -196,9 +191,9 @@ export class FilesController {
     m.redraw();
   }
 
-  /** Let the user pick something on their computer to share, in Imbue Studio's own picker; Studio then shows the
-   *  new share's settings and says when it is shared, which reads the list again. */
-  connectLocal(): void {
+  /** Open Imbue Studio's settings for what is shared from the user's computer (its Permissions pane, at Local
+   *  files), where they share more, stop sharing, or turn syncing on. Coming back to the window reads the list again. */
+  manageConnected(): void {
     sendToEmbedder(OPEN_LOCAL_FILES);
   }
 

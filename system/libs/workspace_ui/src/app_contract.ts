@@ -115,7 +115,7 @@ export function hasWorkspaceCoordinate(host: string): boolean {
 /**
  * What the shell says about the frame it created: the client, the window, its desktop, the app
  * the window belongs to, the path the window is at, and whether the Imbue Studio chrome around the
- * shell opens its own file picker to share something from the user's computer (desktop-interface
+ * shell opens its settings for the files shared from the user's computer (desktop-interface
  * contracts.md section 7). The client id is required; a text field the shell does not send, a page
  * reads as "", and a flag it does not send, as false.
  */
