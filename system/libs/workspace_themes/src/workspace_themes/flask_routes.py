@@ -130,6 +130,7 @@ def register_injected_theme_routes(
     read_kit_script: Callable[[], str],
     read_kit_stylesheet: Callable[[], str],
     level_of_app: Callable[[str | None], ThemeLevel],
+    default_theme_id: Callable[[], str | None] = lambda: None,
 ) -> None:
     """Serve ``/__workspace_theme/``: what an app's page needs when the theme is put into it from outside.
 
@@ -149,10 +150,12 @@ def register_injected_theme_routes(
         )
 
     def kit() -> Response:
-        """The page kit's script, carrying the app's theme level; empty at none."""
+        """The page kit's script, carrying the app's theme level and the workspace's default theme; empty at none."""
         level = level_of_app(request.headers.get(INJECTED_APP_HEADER))
+        theme_id = default_theme_id()
+        default_theme = None if theme_id is None else load_catalog().find_available(theme_id)
         return _text_response(
-            injected_kit_script(read_kit_script(), level),
+            injected_kit_script(read_kit_script(), level, default_theme),
             "text/javascript",
             INJECTED_KIT_FILE_NAME,
         )

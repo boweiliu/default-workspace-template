@@ -105,6 +105,11 @@ def set_app_theme_level(app_name: str) -> ResponseReturnValue:
     return model_response(AppThemeLevelResponse(app=app_name, level=str(body.level)))
 
 
+def _default_theme_id() -> str | None:
+    default = _shell().desktops.read_theme_choices().default
+    return None if default is None else str(default)
+
+
 def _kit_file_text(file_name: str) -> str:
     return (get_state().static_directory / "_static" / file_name).read_text(encoding="utf-8")
 
@@ -149,4 +154,5 @@ def register_theme_routes(application: Flask) -> None:
         lambda: _kit_file_text(KIT_SCRIPT_FILENAME),
         lambda: _kit_file_text(KIT_STYLESHEET_FILENAME),
         lambda app_name: _shell().theme_level_of_app(app_name),
+        lambda: _default_theme_id(),
     )

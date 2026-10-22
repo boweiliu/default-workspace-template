@@ -13,6 +13,7 @@ At none nothing is put in; under the standard theme the page kit puts nothing on
 """
 
 import itertools
+import json
 import re
 from collections.abc import Sequence
 from typing import Final
@@ -51,6 +52,9 @@ INJECTED_KIT_FILE_NAME: Final[str] = "kit.js"
 INJECTED_LAYERS_FILE_NAME: Final[str] = "layers.css"
 # The global the page kit reads its level from, set ahead of the kit's own script.
 KIT_LEVEL_GLOBAL: Final[str] = "__WORKSPACE_THEME_LEVEL__"
+# The workspace's default theme, ``{"id", "revision"}``, which a page wears first when its origin remembers none: a
+# page the shell does not frame itself (an app inside a preview) never hears ``shell:theme``.
+KIT_DEFAULT_THEME_GLOBAL: Final[str] = "__WORKSPACE_THEME_DEFAULT__"
 _ROOT_SELECTOR: Final[str] = ":root"
 _PART_ATTRIBUTE_SELECTOR: Final[re.Pattern[str]] = re.compile(
     r"\[\s*data-part\s*=\s*([\"']?)([A-Za-z0-9._-]+)\1\s*\]"
@@ -255,8 +259,16 @@ def parse_theme_level(value: str | None) -> ThemeLevel:
 
 
 @pure
-def injected_kit_script(kit_script: str, level: ThemeLevel) -> str:
-    """The page kit's script for an app at ``level``: nothing at none, else the kit with its level set ahead of it."""
+def injected_kit_script(kit_script: str, level: ThemeLevel, default_theme: ThemeEntry | None = None) -> str:
+    """The page kit's script for an app at ``level``: nothing at none, else the kit with its level, and the workspace's
+    default theme when it has one, set ahead of it."""
     if level == ThemeLevel.NONE:
         return ""
-    return f'self.{KIT_LEVEL_GLOBAL} = "{level}";\n{kit_script}'
+    default = (
+        ""
+        if default_theme is None
+        else f"self.{KIT_DEFAULT_THEME_GLOBAL} = "
+        + json.dumps({"id": str(default_theme.id), "revision": str(default_theme.revision)})
+        + ";\n"
+    )
+    return f'self.{KIT_LEVEL_GLOBAL} = "{level}";\n{default}{kit_script}'

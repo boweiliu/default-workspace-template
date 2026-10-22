@@ -13,6 +13,9 @@ import { rememberedTheme, wearTheme, wearThemeFromMessage, type ThemeRef } from 
 
 const INJECTED_THEMES_PREFIX = "/__workspace_theme/themes/";
 const level = (globalThis as { __WORKSPACE_THEME_LEVEL__?: unknown }).__WORKSPACE_THEME_LEVEL__;
+// The workspace's default theme, which the shell sets ahead of the kit: what a page wears first when its origin
+// remembers none, since a page the shell does not frame itself (an app inside a preview) never hears `shell:theme`.
+const workspaceDefault = (globalThis as { __WORKSPACE_THEME_DEFAULT__?: ThemeRef }).__WORKSPACE_THEME_DEFAULT__;
 
 if (typeof level === "string") {
   const bundleUrl = (theme: ThemeRef): string | null => {
@@ -21,8 +24,9 @@ if (typeof level === "string") {
     return `${INJECTED_THEMES_PREFIX}${encodeURIComponent(theme.id)}/theme.css?${revision}level=${encodeURIComponent(level)}`;
   };
   const remembered = rememberedTheme();
+  const first = remembered.id === STANDARD_THEME_ID && workspaceDefault !== undefined ? workspaceDefault : remembered;
   // Put on while <head> is still being read, so holding the first frame until it loads costs no flash.
-  if (remembered.id !== STANDARD_THEME_ID) void wearTheme(remembered, document, { isRenderBlocking: true, bundleUrl });
+  if (first.id !== STANDARD_THEME_ID) void wearTheme(first, document, { isRenderBlocking: true, bundleUrl });
   followShellTheme(
     (theme, revision, isPreview) => void wearThemeFromMessage({ theme, revision, isPreview }, { bundleUrl }),
   );
