@@ -54,7 +54,9 @@ export type SyncStatus =
   | { kind: "syncing"; percent: number | null }
   | { kind: "current" }
   | { kind: "failed"; message: string | null }
-  | { kind: "paused" }
+  /** Imbue Studio still has it switched on, but nothing is running and it cannot say why. A switched-off sync never
+   *  gets here: Files reads only the syncs Studio has on, so a folder whose sync was switched off is a live share. */
+  | { kind: "stalled" }
   | { kind: "unknown" };
 
 /** Whether any share's copy is carrying something across. */
@@ -74,7 +76,7 @@ export function syncStatusOf(share: Share): SyncStatus | null {
     case "UNKNOWN":
     case "DEACTIVATING":
     case "DISCARDING":
-      return { kind: "paused" };
+      return { kind: "stalled" };
     case "SYNCED":
       return { kind: "current" };
     case "STARTING":
@@ -145,6 +147,8 @@ export interface ShareTooltip {
   detail: string | null;
 }
 
+const STALLED_REASON = "Imbue Studio can't say why";
+
 export function describeShare(share: Share, device: string): ShareTooltip {
   const status = syncStatusOf(share);
   if (status === null) {
@@ -157,8 +161,8 @@ export function describeShare(share: Share, device: string): ShareTooltip {
       return { text: `Up to date with ${device}`, detail: null };
     case "failed":
       return { text: `Sync with ${device} stopped`, detail: status.message?.replace(/\.$/, "") ?? null };
-    case "paused":
-      return { text: `Not syncing with ${device}`, detail: null };
+    case "stalled":
+      return { text: `Sync with ${device} isn't running`, detail: STALLED_REASON };
     case "unknown":
       return { text: `${device} isn't answering`, detail: null };
   }
@@ -192,6 +196,14 @@ export function syncNoticeOf(connections: Connections | null, folder: string): S
       tone: "warning",
       title: `Sync with ${device} stopped`,
       detail: `${status.message === null ? "" : `${status.message} `}Retry it in Imbue Studio on your computer.`,
+      isOnlyWhenEmpty: false,
+    };
+  }
+  if (status?.kind === "stalled") {
+    return {
+      tone: "warning",
+      title: `Sync with ${device} isn't running`,
+      detail: `${STALLED_REASON}. Retry it in Imbue Studio on your computer.`,
       isOnlyWhenEmpty: false,
     };
   }

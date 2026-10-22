@@ -71,7 +71,11 @@ describe("describeShare", () => {
       tip("Sync with Kims-Mac stopped", "Unison exited with code 3"),
     );
     expect(describeShare(synced({ state: "FAILED" }), MAC)).toEqual(tip("Sync with Kims-Mac stopped"));
-    expect(describeShare(synced({ state: "STOPPED" }), MAC)).toEqual(tip("Not syncing with Kims-Mac"));
+    // Studio has it switched on, yet nothing runs.
+    expect(describeShare(synced({ state: "STOPPED" }), MAC)).toEqual(
+      tip("Sync with Kims-Mac isn't running", "Imbue Studio can't say why"),
+    );
+    expect(describeShare(synced({ state: "UNKNOWN" }), MAC).text).toBe("Sync with Kims-Mac isn't running");
   });
 });
 
@@ -98,6 +102,15 @@ describe("syncNoticeOf", () => {
       tone: "warning",
       title: "Sync with Kims-Mac stopped",
       detail: "Disk full. Retry it in Imbue Studio on your computer.",
+      isOnlyWhenEmpty: false,
+    });
+  });
+
+  it("says inside a copy that its sync isn't running though Imbue Studio has it on", () => {
+    expect(syncNoticeOf(listed(synced({ state: "UNKNOWN" })), COPY)).toEqual({
+      tone: "warning",
+      title: "Sync with Kims-Mac isn't running",
+      detail: "Imbue Studio can't say why. Retry it in Imbue Studio on your computer.",
       isOnlyWhenEmpty: false,
     });
   });
