@@ -151,10 +151,10 @@ shared by every window.
   show their progress in a panel at the bottom right, which goes away a moment
   after the last one lands and stays up when one failed.
 
-Under 700px of the frame's own width the window lays itself out for a phone:
-the sidebar floats over the folder from a button at the toolbar's start, there
-is no column view, one tap opens, and every
-entry carries a "..." button with its menu.
+Under 520px of the frame's own width the window lays itself out for a phone:
+the sidebar floats over the folder from a button at the toolbar's start, one
+tap opens, and every entry carries a "..." button with its menu. The column
+view needs more room beside the sidebar, and is offered only from 700px.
 
 ## Opening a folder or a file
 

@@ -406,7 +406,7 @@ function Toolbar(): m.Component<{ app: FilesController }> {
           onToggle: () => model.toggleHidden(),
         },
       ];
-      const modes = VIEW_MODES.filter((view) => !(app.isNarrow && view.mode === "columns"));
+      const modes = VIEW_MODES.filter((view) => app.hasRoomForColumns || view.mode !== "columns");
       const viewSwitch = m(SegmentedControl<ViewMode>, {
         label: "View",
         segments: modes.map((view) => ({

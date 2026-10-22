@@ -609,6 +609,18 @@ def test_a_phone_lists_entries_and_opens_one_with_a_tap(
     expect(page).to_have_url(page.url.split("/projects")[0] + "/projects/app/main.py?view")
 
 
+def test_a_narrow_desktop_window_keeps_its_sidebar_beside_the_folder_without_the_column_view(
+    open_files_page: OpenFilesPage,
+) -> None:
+    page = open_files_page("/", 600, 600)
+    expect(page.locator(".files-sidebar")).to_be_visible()
+    expect(page.locator('[data-action="sidebar"]')).to_have_count(0)
+    page.locator('[data-view-mode="list"]').click()
+    # A desktop window: no "..." button on every entry, as on a phone.
+    expect(page.locator(".files-entry-menu-button")).to_have_count(0)
+    expect(page.locator('[data-view-mode="columns"]')).to_have_count(0)
+
+
 def test_a_text_file_is_edited_and_saved_from_its_page(open_files_page: OpenFilesPage, files_root: Path) -> None:
     page = open_files_page("/notes.txt?view")
     editor = page.locator(".files-editor")

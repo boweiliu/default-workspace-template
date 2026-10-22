@@ -32,8 +32,11 @@ import { startDownload } from "./download";
 const MOVING_POLL_MS = 3000;
 const IDLE_POLL_MS = 15000;
 
-/** Below this width the window lays itself out for a phone: one tap opens, and there is no column view. */
-export const NARROW_QUERY = "(max-width: 700px)";
+/** Below this width the window lays itself out for a phone: the sidebar floats over the folder, and one tap opens. A
+ *  desktop window this narrow is rare; one a little wider keeps its sidebar beside the folder. */
+export const NARROW_QUERY = "(max-width: 520px)";
+/** Below this width there is no column view: beside the sidebar there is no room for a couple of columns. */
+export const NO_COLUMNS_QUERY = "(max-width: 700px)";
 
 /** One verb on entries or a folder, drawn as a row of whichever menu offers it. */
 export interface FilesAction {
@@ -68,6 +71,7 @@ export class FilesController {
   readonly model: FilesModel;
   readonly dialogs = new Dialogs();
   isNarrow: boolean;
+  hasRoomForColumns: boolean;
   /** Set when the keyboard moved the selection, so the next draw scrolls it into view. */
   revealSelection = false;
   /** On a small screen, whether the sidebar is floated open over the folder. */
@@ -89,6 +93,12 @@ export class FilesController {
     this.isNarrow = narrowQuery.matches;
     narrowQuery.addEventListener("change", (event) => {
       this.isNarrow = event.matches;
+      m.redraw();
+    });
+    const noColumnsQuery = win.matchMedia(NO_COLUMNS_QUERY);
+    this.hasRoomForColumns = !noColumnsQuery.matches;
+    noColumnsQuery.addEventListener("change", (event) => {
+      this.hasRoomForColumns = !event.matches;
       m.redraw();
     });
     this.model = new FilesModel(
@@ -173,7 +183,7 @@ export class FilesController {
   /** The column view needs room for at least a couple of columns. */
   get viewMode(): FilesModel["viewMode"] {
     const mode = this.model.viewMode;
-    return mode === "columns" && this.isNarrow ? "list" : mode;
+    return mode === "columns" && !this.hasRoomForColumns ? "list" : mode;
   }
 
   get isFramed(): boolean {
