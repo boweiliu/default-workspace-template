@@ -168,7 +168,7 @@ def register_injected_theme_routes(
 
     def themes(asset_path: str) -> Response:
         """A theme's bundle or style file, at the level in the query, or a file the theme serves."""
-        level = _request_level()
+        level = None if request.args.get("level") is None else _request_level()
         try:
             asset = resolve_injected_theme_asset(load_catalog(), asset_path, level)
         except ThemeFileNotFoundError as error:

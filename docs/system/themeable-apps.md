@@ -38,6 +38,11 @@ Pick each token by what the value means, not by matching colors: the app's own a
 `--c-accent`, its page background `--c-bg`. Never copy the current theme's values into the app;
 the point is that the app changes when the theme does.
 
+Never define a workspace token yourself (no `--c-*`, `--font-*`, or `--radius-*` declared in the
+app's own CSS, on `:root` or anywhere else). The theme defines them, and the app's stylesheet comes
+after the theme's, so a definition of the app's own wins and every theme looks the same. The
+fallback inside `var()` is the only place today's value belongs.
+
 An app that defines its own variables (`--accent: #d26645;`) can keep them, defined from the
 tokens: `--accent: var(--c-accent, #d26645);`.
 

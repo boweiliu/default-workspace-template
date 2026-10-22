@@ -219,16 +219,19 @@ def injected_bundle_css(entry: ThemeEntry, level: ThemeLevel) -> str:
 
 
 def resolve_injected_theme_asset(
-    catalog: ThemeCatalog, request_path: str, level: ThemeLevel
+    catalog: ThemeCatalog, request_path: str, level: ThemeLevel | None
 ) -> ThemeAsset:
-    """The answer to ``GET /__workspace_theme/themes/<request_path>?level=<level>``; raises ThemeFileNotFoundError
-    when there is none."""
+    """The answer to ``GET /__workspace_theme/themes/<request_path>[?level=<level>]``; raises ThemeFileNotFoundError
+    when there is none. Only the bundle and a style file are cut to a level, so only they need one: a file a style
+    file names by a relative ``url()`` (a library's button picture) is fetched with no query at all."""
     entry, relative = find_theme_file(catalog, request_path)
-    if relative == BUNDLE_FILE_NAME:
-        return ThemeBundle(css=injected_bundle_css(entry, level))
-    path = theme_file_path(entry, relative)
-    if path.suffix.lower() != STYLE_FILE_SUFFIX:
+    path = None if relative == BUNDLE_FILE_NAME else theme_file_path(entry, relative)
+    if path is not None and path.suffix.lower() != STYLE_FILE_SUFFIX:
         return ThemeFile(path=path)
+    if level is None:
+        raise ThemeFileNotFoundError(f"{request_path} is cut to a level, and the request names none")
+    if path is None:
+        return ThemeBundle(css=injected_bundle_css(entry, level))
     served = style_text_to_serve(
         read_theme_style_file(path),
         str(entry.id),
