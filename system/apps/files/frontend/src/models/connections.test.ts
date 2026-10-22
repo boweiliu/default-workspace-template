@@ -71,11 +71,9 @@ describe("describeShare", () => {
       tip("Sync with Kims-Mac stopped", "Unison exited with code 3"),
     );
     expect(describeShare(synced({ state: "FAILED" }), MAC)).toEqual(tip("Sync with Kims-Mac stopped"));
-    // Studio has it switched on, yet nothing runs.
-    expect(describeShare(synced({ state: "STOPPED" }), MAC)).toEqual(
-      tip("Sync with Kims-Mac isn't running", "Imbue Studio can't say why"),
-    );
-    expect(describeShare(synced({ state: "UNKNOWN" }), MAC).text).toBe("Sync with Kims-Mac isn't running");
+    // Studio has it switched on, yet nothing runs: said plainly, as it mostly passes in a moment.
+    expect(describeShare(synced({ state: "STOPPED" }), MAC)).toEqual(tip("Not syncing with Kims-Mac right now"));
+    expect(describeShare(synced({ state: "UNKNOWN" }), MAC)).toEqual(tip("Not syncing with Kims-Mac right now"));
   });
 });
 
@@ -106,15 +104,6 @@ describe("syncNoticeOf", () => {
     });
   });
 
-  it("says inside a copy that its sync isn't running though Imbue Studio has it on", () => {
-    expect(syncNoticeOf(listed(synced({ state: "UNKNOWN" })), COPY)).toEqual({
-      tone: "warning",
-      title: "Sync with Kims-Mac isn't running",
-      detail: "Imbue Studio can't say why. Retry it in Imbue Studio on your computer.",
-      isOnlyWhenEmpty: false,
-    });
-  });
-
   it("stands in for an empty copy while it syncs, and only while it is empty", () => {
     const moving = synced({ state: "SYNCING", bytes_done: 2_000, bytes_total: 5_000 });
     expect(syncNoticeOf(listed(moving), COPY)).toEqual({
@@ -126,8 +115,9 @@ describe("syncNoticeOf", () => {
     expect(syncNoticeOf(listed(synced({ state: "STARTING" })), COPY)?.detail).toBe("Files appear here as they arrive");
   });
 
-  it("has nothing to say about a copy that is up to date, or one whose computer didn't say", () => {
+  it("has nothing to say about a copy that is up to date, not syncing for now, or one whose computer didn't say", () => {
     expect(syncNoticeOf(listed(synced({})), COPY)).toBeNull();
+    expect(syncNoticeOf(listed(synced({ state: "STOPPED" })), COPY)).toBeNull();
     expect(syncNoticeOf(listed(share({ synced_copy: COPY })), COPY)).toBeNull();
   });
 });

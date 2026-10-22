@@ -138,7 +138,7 @@ function mark(kind: string, label: string, body: m.Children, extra: string): m.V
   return m("span.files-share-mark", { "data-mark": kind, "aria-label": label, class: `flex shrink-0 ${extra}` }, body);
 }
 
-/** A filled disc with an exclamation: the share's sync stopped, or isn't running, and needs a look. */
+/** A filled disc with an exclamation: the share's sync stopped and needs a look. */
 function failedMark(): m.Vnode {
   return mark("failed", "Sync stopped", m.trust(alertDotIcon(12)), "text-warning");
 }
@@ -164,10 +164,7 @@ function shareRow(app: FilesController, connections: Connections, share: Share):
     tooltip: describeShare(share, deviceNameOf(connections, share.device)),
     isFaint: !share.is_reachable || status?.kind === "unknown",
     isFile: share.kind === "file",
-    badges: [
-      share.access === "read" ? readOnlyMark() : null,
-      status?.kind === "failed" || status?.kind === "stalled" ? failedMark() : null,
-    ],
+    badges: [share.access === "read" ? readOnlyMark() : null, status?.kind === "failed" ? failedMark() : null],
     onOpen: share.kind === "file" ? () => app.openPage(target, "view") : undefined,
   };
 }

@@ -54,8 +54,9 @@ export type SyncStatus =
   | { kind: "syncing"; percent: number | null }
   | { kind: "current" }
   | { kind: "failed"; message: string | null }
-  /** Imbue Studio still has it switched on, but nothing is running and it cannot say why. A switched-off sync never
-   *  gets here: Files reads only the syncs Studio has on, so a folder whose sync was switched off is a live share. */
+  /** Imbue Studio has it switched on but nothing is running: mostly for a moment, as Studio starts and brings its syncs
+   *  back up (one it cannot bring back is a failure, with the reason). A switched-off sync never gets here: Files reads
+   *  only the syncs Studio has on, so a folder whose sync was switched off is a live share. */
   | { kind: "stalled" }
   | { kind: "unknown" };
 
@@ -147,8 +148,6 @@ export interface ShareTooltip {
   detail: string | null;
 }
 
-const STALLED_REASON = "Imbue Studio can't say why";
-
 export function describeShare(share: Share, device: string): ShareTooltip {
   const status = syncStatusOf(share);
   if (status === null) {
@@ -162,7 +161,7 @@ export function describeShare(share: Share, device: string): ShareTooltip {
     case "failed":
       return { text: `Sync with ${device} stopped`, detail: status.message?.replace(/\.$/, "") ?? null };
     case "stalled":
-      return { text: `Sync with ${device} isn't running`, detail: STALLED_REASON };
+      return { text: `Not syncing with ${device} right now`, detail: null };
     case "unknown":
       return { text: `${device} isn't answering`, detail: null };
   }
@@ -196,14 +195,6 @@ export function syncNoticeOf(connections: Connections | null, folder: string): S
       tone: "warning",
       title: `Sync with ${device} stopped`,
       detail: `${status.message === null ? "" : `${status.message} `}Retry it in Imbue Studio on your computer.`,
-      isOnlyWhenEmpty: false,
-    };
-  }
-  if (status?.kind === "stalled") {
-    return {
-      tone: "warning",
-      title: `Sync with ${device} isn't running`,
-      detail: `${STALLED_REASON}. Retry it in Imbue Studio on your computer.`,
       isOnlyWhenEmpty: false,
     };
   }
