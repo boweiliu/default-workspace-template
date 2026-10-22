@@ -335,7 +335,7 @@ The shell answers at the level the user set for that app (`app_theme_levels.json
 
 `layers.css` declares `@layer theme, base, workspace-theme, components, utilities;` before any of the page's own stylesheets, so with Tailwind 4 the theme sits above its reset and below its components and utilities; Tailwind 3's reset is unlayered, so there `medium` fills in less.
 `kit.js` is `self.__WORKSPACE_THEME_LEVEL__ = "<level>";` and the page kit's script, which wears the theme from `/__workspace_theme/base.css?level=` and `/__workspace_theme/themes/<id>/theme.css?v=&level=`; under the standard theme it adds nothing.
-The window menu's Theming submenu sets the level, and every open page of the app reloads when it changes. Two more choices there go further than a stylesheet can, and draft a request to the agent in the main chat instead: "Restyle with AI..." rewrites the app on the design tokens, and "Re-imagine with AI..." redesigns it, assets included, to fit the theme.
+The window menu's Theming submenu sets the level, and every open page of the app reloads when it changes. Two more choices there go further than a stylesheet can, and draft a request to the agent in the main chat instead: "Restyle with AI..." makes the app themeable, following `docs/system/themeable-apps.md` (every color, font, radius, and shadow from a token with today's value as the fallback, controls left plain), and "Re-imagine with AI..." redesigns it, assets included, to fit the theme.
 A workspace whose shell predates this answers the prefix with its own page, which the browser refuses as either file (the proxy marks it `nosniff`), so its apps' pages stay as they were. A share's gateway does not put the theme into apps yet.
 
 ## 8. Making themes

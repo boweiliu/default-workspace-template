@@ -1,0 +1,1 @@
+New `docs/system/themeable-apps.md`: how to make an app the workspace themes from outside follow every theme (tokens with today's values as fallbacks, plain controls, no `[theming]` table, `lint-app` to check). Only "Restyle with AI..." points agents at it; app building does not read it.

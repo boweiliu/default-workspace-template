@@ -11,9 +11,10 @@ from pydantic import Field
 LINTED_SUFFIXES: Final[frozenset[str]] = frozenset(
     {".ts", ".tsx", ".js", ".css", ".html", ".py"}
 )
-# Built output, dependencies, and tests carry literals that never reach a themed page.
+# Built output, dependencies, and tests carry literals that never reach a themed page. An app's own `assets/` is
+# not skipped: build-app keeps a page's hand-written CSS and scripts there.
 SKIPPED_DIRECTORY_NAMES: Final[frozenset[str]] = frozenset(
-    {"node_modules", "static", "dist", "build", "assets"}
+    {"node_modules", "static", "dist", "build"}
 )
 SKIPPED_FILE_SUFFIXES: Final[tuple[str, ...]] = (
     ".test.ts",
