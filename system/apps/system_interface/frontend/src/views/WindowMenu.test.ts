@@ -270,7 +270,7 @@ describe("the pull-out row", () => {
   });
 });
 
-describe("the window menu's Theme submenu", () => {
+describe("the window menu's Theming submenu", () => {
   it("offers the levels with the app's own checked, and the chat's two requests where a chat can take them", () => {
     const setLevel = vi.fn();
     const restyle = vi.fn();
@@ -285,7 +285,8 @@ describe("the window menu's Theme submenu", () => {
     });
     expect(keysOf(rows)).toEqual(["size", "|", "theme", "|", "close"]);
     const theme = rows.find((row) => row.kind === "submenu" && row.key === "theme");
-    if (theme?.kind !== "submenu" || theme.rows === undefined) throw new Error("no Theme submenu");
+    if (theme?.kind !== "submenu" || theme.rows === undefined) throw new Error("no Theming submenu");
+    expect(theme.label).toBe("Theming");
     expect(theme.value).toBe("Light");
     const children = theme.rows();
     expect(children.map((row) => (row.kind === "divider" ? "|" : "key" in row ? row.key : ""))).toEqual([

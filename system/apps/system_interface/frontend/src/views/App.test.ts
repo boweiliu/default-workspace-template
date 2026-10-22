@@ -487,7 +487,7 @@ describe("the avatar chooser", () => {
   });
 });
 
-describe("the window menu's Theme submenu", () => {
+describe("the window menu's Theming submenu", () => {
   it("drafts Restyle with AI... into the main chat, not the chat on screen", async () => {
     offerApps(api, socket, [appRecord("docs", { theme_level: "light" }), buddy]);
     api.postLaunchAnswer = "/?chat=agent-1";

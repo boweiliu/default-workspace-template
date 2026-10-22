@@ -1,6 +1,6 @@
 Apps whose manifest declares no `[theming]` now take the workspace's theme from outside, at a level set per app.
 
-- The window menu has a Theme submenu with None, Light (the default: only unstyled controls), Medium (fills in only what the app left unset), and Heavy (the theme's values win). Changing the level reloads the app's open pages.
+- The window menu has a Theming submenu with None, Light (the default: only unstyled controls), Medium (fills in only what the app left unset), and Heavy (the theme's values win). Changing the level reloads the app's open pages.
 
 - "Restyle with AI..." and "Re-imagine with AI..." in the same submenu draft a request in the pinned chat: one rewrites the app on the design tokens, the other redesigns it, assets included, for the theme.
 

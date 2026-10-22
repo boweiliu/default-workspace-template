@@ -23,7 +23,7 @@ import type { EntryLook } from "../reducers/desktopState";
  *  a card. */
 export const MENU_MIN_WIDTH = 176;
 
-/** What the window menu's Theme submenu offers, for an app the theme is put into from outside (workspace-themes
+/** What the window menu's Theming submenu offers, for an app the theme is put into from outside (workspace-themes
  *  plan section 7.2). */
 export interface WindowThemeActions {
   readonly level: ThemeLevel;
@@ -83,7 +83,7 @@ function themeSubmenuRow(actions: WindowThemeActions): MenuRow {
   return {
     kind: "submenu",
     key: "theme",
-    label: "Theme",
+    label: "Theming",
     value: THEME_LEVEL_LABELS[actions.level],
     rows: () => (chatRows.length === 0 ? levelRows : [...levelRows, { kind: "divider" }, ...chatRows]),
   };
