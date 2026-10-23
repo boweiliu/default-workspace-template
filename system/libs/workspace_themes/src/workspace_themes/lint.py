@@ -31,7 +31,7 @@ _CSS_WIDE_KEYWORDS: Final[str] = r"inherit|initial|unset|revert"
 _LITERAL_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (
         re.compile(
-            r"(?<![\w&/-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})\b"
+            r"(?<![\w&/-])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})(?![\w-])"
         ),
         "a literal color; use a color token (text-primary, bg-surface, var(--c-...))",
     ),

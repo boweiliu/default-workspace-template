@@ -10,4 +10,4 @@ Serves the theme to an app's page that does not load it itself, at a level (`doc
 
 - `kit.js` carries the workspace's default theme (`register_injected_theme_routes`' `default_theme_id`), which a page wears first when its origin remembers none; a theme's plain files (a library's button picture) are served to injected pages with no level.
 
-- `workspace-themes lint-app` lints outside-mode apps too, and takes a token's `var(--token, fallback)` fallback as the look the app keeps with no theme, not as a literal.
+- `workspace-themes lint-app` lints outside-mode apps too, and takes a token's `var(--token, fallback)` fallback as the look the app keeps with no theme, not as a literal. An id selector that starts like a hex color (`#add-form`) is no longer read as one.
