@@ -6,9 +6,7 @@ import json
 import re
 import tomllib
 from collections import defaultdict
-from collections.abc import Iterable
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Final
 

@@ -28,20 +28,16 @@ import re
 import secrets
 import tomllib
 import unicodedata
-from collections.abc import Generator
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_ssh_public_key
 
-from share_gateway.grants import toml_string
-from share_gateway.grants import write_text_atomic
+from share_gateway.grants import toml_string, write_text_atomic
 from share_gateway.json_values import is_json_object
 
 AGENT_ACCESS_DIR = Path("data/.secrets/agent_access")

@@ -16,19 +16,22 @@ from imbue.imbue_common.pure import pure
 from loguru import logger
 from pydantic import Field
 
-from app_manifest.errors import ManifestLoadError
-from app_manifest.errors import ScopeComputationError
-from app_manifest.manifest import APPS_DIRECTORY_PARTS
-from app_manifest.manifest import MANIFEST_FILENAME
-from app_manifest.manifest import AppManifest
-from app_manifest.manifest import AppReference
-from app_manifest.manifest import app_package_directory
-from app_manifest.manifest import load_manifest
-from app_manifest.primitives import ExcludeGlob
-from app_manifest.primitives import ReferenceNote
-from app_manifest.primitives import ReferencePath
-from app_manifest.primitives import RepoRelativePath
-from app_manifest.primitives import is_path_covered_by
+from app_manifest.errors import ManifestLoadError, ScopeComputationError
+from app_manifest.manifest import (
+    APPS_DIRECTORY_PARTS,
+    MANIFEST_FILENAME,
+    AppManifest,
+    AppReference,
+    app_package_directory,
+    load_manifest,
+)
+from app_manifest.primitives import (
+    ExcludeGlob,
+    ReferenceNote,
+    ReferencePath,
+    RepoRelativePath,
+    is_path_covered_by,
+)
 
 # The shared wiring files where supervised apps have their blocks: the main config and
 # the drop-in directory its ``[include]`` glob names. The template declares its programs

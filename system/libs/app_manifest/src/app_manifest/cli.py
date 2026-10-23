@@ -8,20 +8,22 @@ from pydantic import Field
 
 from app_manifest.errors import AppManifestError
 from app_manifest.manifest import load_manifest
-from app_manifest.primitives import ReferenceNote
-from app_manifest.primitives import ReferencePath
-from app_manifest.primitives import RepoRelativePath
-from app_manifest.scope import CreationScope
-from app_manifest.scope import ManifestReferenceMatch
-from app_manifest.scope import compute_app_scope
-from app_manifest.scope import compute_skill_scope
-from app_manifest.scope import find_referencing_manifests
-from app_manifest.scope import render_scope_file
-from app_manifest.scope import with_diff_against_base
-from app_manifest.selection import render_selection
-from app_manifest.selection import render_selection_json
-from app_manifest.selection import select_tests_for_diff
-from app_manifest.selection import select_tests_for_paths
+from app_manifest.primitives import ReferenceNote, ReferencePath, RepoRelativePath
+from app_manifest.scope import (
+    CreationScope,
+    ManifestReferenceMatch,
+    compute_app_scope,
+    compute_skill_scope,
+    find_referencing_manifests,
+    render_scope_file,
+    with_diff_against_base,
+)
+from app_manifest.selection import (
+    render_selection,
+    render_selection_json,
+    select_tests_for_diff,
+    select_tests_for_paths,
+)
 
 
 class ReferenceLookupRow(FrozenModel):

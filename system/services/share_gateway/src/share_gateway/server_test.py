@@ -1,37 +1,33 @@
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
-from pathlib import Path
-from urllib.parse import parse_qs
-from urllib.parse import urlsplit
-
 import base64
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from flask import Flask
 from flask.testing import FlaskClient
 
-from share_gateway.caddyfile import RegisteredApp
-from share_gateway.caddyfile import build_label_to_name
+from share_gateway.caddyfile import RegisteredApp, build_label_to_name
 from share_gateway.grants import load_grants
-from share_gateway.handoff import JwksCache
-from share_gateway.handoff import SingleUseJtiRegistry
-from share_gateway.identity import IDENTITY_HEADER
-from share_gateway.identity import RequesterIdentity
+from share_gateway.handoff import JwksCache, SingleUseJtiRegistry
+from share_gateway.identity import IDENTITY_HEADER, RequesterIdentity
 from share_gateway.materials import ShareMaterials
-from share_gateway.server import PAGE_CONTENT_SECURITY_POLICY
-from share_gateway.server import PendingLoginRegistry
-from share_gateway.server import build_gateway_app
-from share_gateway.server import forwarded_client_ip
-from share_gateway.session_cookie import PARTITIONED_SESSION_COOKIE_NAME
-from share_gateway.session_cookie import SESSION_COOKIE_NAME
-from share_gateway.session_cookie import mint_session_cookie_value
+from share_gateway.server import (
+    PAGE_CONTENT_SECURITY_POLICY,
+    PendingLoginRegistry,
+    build_gateway_app,
+    forwarded_client_ip,
+)
+from share_gateway.session_cookie import (
+    PARTITIONED_SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    mint_session_cookie_value,
+)
 from share_gateway.testing import set_cookies_by_name
-
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 _DOMAIN = "host-" + "a" * 32 + "." + "b" * 32 + ".us1.imbueminds.com"
 _BROKER_URL = "https://accounts.example.com"

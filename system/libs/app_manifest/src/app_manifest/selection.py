@@ -17,13 +17,9 @@ it. Any other path belongs to no declared unit, so it runs the full root suite.
 import json
 import shlex
 from collections import defaultdict
-from collections.abc import Iterable
-from collections.abc import Mapping
-from collections.abc import Sequence
-from collections.abc import Set
+from collections.abc import Iterable, Mapping, Sequence, Set
 from enum import auto
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Final
 
 from imbue.imbue_common.enums import LowerCaseStrEnum
@@ -33,36 +29,38 @@ from imbue.imbue_common.pure import pure
 from loguru import logger
 from pydantic import Field
 
-from app_manifest.errors import ScopeComputationError
-from app_manifest.errors import SuiteSelectionError
+from app_manifest.errors import ScopeComputationError, SuiteSelectionError
 from app_manifest.manifest import app_package_directory
-from app_manifest.primitives import RepoRelativePath
-from app_manifest.primitives import is_path_covered_by
+from app_manifest.primitives import RepoRelativePath, is_path_covered_by
 from app_manifest.registry import SHELL_MODULE_PATHS
-from app_manifest.scope import LoadedManifest
-from app_manifest.scope import find_wiring_sections
-from app_manifest.scope import list_changed_files
-from app_manifest.scope import list_tracked_files
-from app_manifest.scope import list_uncommitted_paths
-from app_manifest.scope import load_app_manifests
-from app_manifest.scope import match_referencing_manifests
-from app_manifest.scope import read_file_at_revision
-from app_manifest.scope import resolve_commit
-from app_manifest.workspace_graph import NPM_ROOT
-from app_manifest.workspace_graph import NPM_ROOT_MANIFEST
-from app_manifest.workspace_graph import ROOT_DIRECTORY
-from app_manifest.workspace_graph import LockfileChange
-from app_manifest.workspace_graph import NpmPackage
-from app_manifest.workspace_graph import PythonMember
-from app_manifest.workspace_graph import classify_lockfile_change
-from app_manifest.workspace_graph import npm_consumers
-from app_manifest.workspace_graph import python_consumers
-from app_manifest.workspace_graph import read_coverage_measured_units
-from app_manifest.workspace_graph import read_npm_packages
-from app_manifest.workspace_graph import read_own_root_units
-from app_manifest.workspace_graph import read_python_members
-from app_manifest.workspace_graph import read_root_dependencies
-from app_manifest.workspace_graph import read_root_ignored_directories
+from app_manifest.scope import (
+    LoadedManifest,
+    find_wiring_sections,
+    list_changed_files,
+    list_tracked_files,
+    list_uncommitted_paths,
+    load_app_manifests,
+    match_referencing_manifests,
+    read_file_at_revision,
+    resolve_commit,
+)
+from app_manifest.workspace_graph import (
+    NPM_ROOT,
+    NPM_ROOT_MANIFEST,
+    ROOT_DIRECTORY,
+    LockfileChange,
+    NpmPackage,
+    PythonMember,
+    classify_lockfile_change,
+    npm_consumers,
+    python_consumers,
+    read_coverage_measured_units,
+    read_npm_packages,
+    read_own_root_units,
+    read_python_members,
+    read_root_dependencies,
+    read_root_ignored_directories,
+)
 
 _APPS_DIRECTORY: Final[str] = "system/apps"
 _PACKAGE_PARENT_DIRECTORIES: Final[tuple[str, ...]] = (

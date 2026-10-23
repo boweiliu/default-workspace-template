@@ -1,5 +1,4 @@
-from share_gateway.hostnames import service_for_host
-from share_gateway.hostnames import workspace_origins_allow
+from share_gateway.hostnames import service_for_host, workspace_origins_allow
 
 _DOMAIN = "host-" + "a" * 32 + "." + "b" * 32 + ".us1.imbueminds.com"
 _AUTH_LABEL = "auth-x7k9q2w1"

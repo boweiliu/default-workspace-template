@@ -5,32 +5,32 @@ import pytest
 from loguru import logger
 
 from app_manifest.errors import ScopeComputationError
-from app_manifest.manifest import AppManifest
-from app_manifest.manifest import load_manifest
-from app_manifest.primitives import ReferencePath
-from app_manifest.primitives import RepoRelativePath
-from app_manifest.primitives import is_path_covered_by
-from app_manifest.scope import BUILT_IN_EXCLUDES
-from app_manifest.scope import CreationScope
-from app_manifest.scope import CreationType
-from app_manifest.scope import ReferenceKind
-from app_manifest.scope import compute_app_scope
-from app_manifest.scope import compute_skill_scope
-from app_manifest.scope import find_referencing_manifests
-from app_manifest.scope import find_wiring_sections
-from app_manifest.scope import reference_kind_for_path
-from app_manifest.scope import render_scope_file
-from app_manifest.scope import with_diff_against_base
-from app_manifest.testing import NEWS_MANIFEST
-from app_manifest.testing import build_news_workspace
-from app_manifest.testing import commit_everything
-from app_manifest.testing import init_git_repository
-from app_manifest.testing import run_git
-from app_manifest.testing import write_app_manifest
-from app_manifest.testing import write_repo_file
-from app_manifest.testing import write_supervisord_conf
-from app_manifest.testing import write_supervisord_dropin
-
+from app_manifest.manifest import AppManifest, load_manifest
+from app_manifest.primitives import ReferencePath, RepoRelativePath, is_path_covered_by
+from app_manifest.scope import (
+    BUILT_IN_EXCLUDES,
+    CreationScope,
+    CreationType,
+    ReferenceKind,
+    compute_app_scope,
+    compute_skill_scope,
+    find_referencing_manifests,
+    find_wiring_sections,
+    reference_kind_for_path,
+    render_scope_file,
+    with_diff_against_base,
+)
+from app_manifest.testing import (
+    NEWS_MANIFEST,
+    build_news_workspace,
+    commit_everything,
+    init_git_repository,
+    run_git,
+    write_app_manifest,
+    write_repo_file,
+    write_supervisord_conf,
+    write_supervisord_dropin,
+)
 
 # --- the news workspace every case below is built on ----------------------------
 

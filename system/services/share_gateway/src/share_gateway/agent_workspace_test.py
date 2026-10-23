@@ -3,10 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from share_gateway.agent_workspace import WorkspaceCoordinates
-from share_gateway.agent_workspace import app_origins_for
-from share_gateway.agent_workspace import exec_origin_for
-from share_gateway.agent_workspace import read_workspace_coordinates
+from share_gateway.agent_workspace import (
+    WorkspaceCoordinates,
+    app_origins_for,
+    exec_origin_for,
+    read_workspace_coordinates,
+)
 from share_gateway.caddyfile import RegisteredApp
 
 _APPS = [

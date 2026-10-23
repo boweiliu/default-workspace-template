@@ -15,13 +15,10 @@ import os
 import re
 import subprocess
 from collections.abc import Sequence
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR
-from share_gateway.agent_grants import WORKSPACE_SCOPE
+from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR, WORKSPACE_SCOPE
 from share_gateway.caddyfile import RegisteredApp
 from share_gateway.log import log
 

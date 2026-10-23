@@ -1,20 +1,19 @@
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 
 import jwt
-from flask import Flask
-from flask import Response
+from flask import Flask, Response
 
 from share_gateway.identity import RequesterIdentity
-from share_gateway.session_cookie import PARTITIONED_SESSION_COOKIE_NAME
-from share_gateway.session_cookie import SESSION_COOKIE_NAME
-from share_gateway.session_cookie import SESSION_LIFETIME_SECONDS
-from share_gateway.session_cookie import mint_session_cookie_value
-from share_gateway.session_cookie import set_session_cookie
-from share_gateway.session_cookie import strip_session_cookie
-from share_gateway.session_cookie import verify_session_cookie_value
-from share_gateway.session_cookie import verify_session_from_cookies
+from share_gateway.session_cookie import (
+    PARTITIONED_SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    SESSION_LIFETIME_SECONDS,
+    mint_session_cookie_value,
+    set_session_cookie,
+    strip_session_cookie,
+    verify_session_cookie_value,
+    verify_session_from_cookies,
+)
 from share_gateway.testing import set_cookies_by_name
 
 _DOMAIN = "host-aaaa.bbbb.us1.imbueminds.com"

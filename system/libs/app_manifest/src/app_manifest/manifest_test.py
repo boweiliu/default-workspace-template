@@ -19,9 +19,7 @@ from app_manifest.manifest import (
     scaffold_preview_spec,
 )
 from app_manifest.primitives import AppName
-from app_manifest.testing import APP_ICON_MARKUP
-from app_manifest.testing import write_app_manifest
-from app_manifest.testing import write_repo_file
+from app_manifest.testing import APP_ICON_MARKUP, write_app_manifest, write_repo_file
 
 
 def _launch_path_params() -> list[dict[str, object]]:

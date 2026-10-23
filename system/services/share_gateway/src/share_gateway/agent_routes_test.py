@@ -1,8 +1,6 @@
 import hashlib
 import json
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -12,24 +10,19 @@ from flask import Flask
 from flask.testing import FlaskClient
 from werkzeug.test import TestResponse
 
-from share_gateway.agent_access import AgentAccessPaths
-from share_gateway.agent_access import LastSeenStore
-from share_gateway.agent_access import mint_invite
+from share_gateway.agent_access import AgentAccessPaths, LastSeenStore, mint_invite
 from share_gateway.agent_grants import load_agent_grants
-from share_gateway.agent_orientation import HELPER_PATH
-from share_gateway.agent_orientation import helper_source_url
-from share_gateway.agent_orientation import template_ref
-from share_gateway.agent_routes import AgentAccessContext
-from share_gateway.agent_routes import JoinRateLimiter
+from share_gateway.agent_orientation import HELPER_PATH, helper_source_url, template_ref
+from share_gateway.agent_routes import AgentAccessContext, JoinRateLimiter
 from share_gateway.agent_workspace import WorkspaceCoordinates
 from share_gateway.caddyfile import RegisteredApp
-from share_gateway.identity import IDENTITY_HEADER
-from share_gateway.identity import RequesterIdentity
-from share_gateway.session_cookie import SESSION_COOKIE_NAME
-from share_gateway.session_cookie import mint_session_cookie_value
-from share_gateway.testing import build_agent_test_app
-from share_gateway.testing import make_workspace_repo
-from share_gateway.testing import new_ed25519_public_key_line
+from share_gateway.identity import IDENTITY_HEADER, RequesterIdentity
+from share_gateway.session_cookie import SESSION_COOKIE_NAME, mint_session_cookie_value
+from share_gateway.testing import (
+    build_agent_test_app,
+    make_workspace_repo,
+    new_ed25519_public_key_line,
+)
 
 _DOMAIN = "alpha.7f3a.us1.example.com"
 _AUTH_LABEL = "auth-x7k9q2w1"

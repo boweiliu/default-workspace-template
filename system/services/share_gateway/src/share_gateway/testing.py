@@ -8,22 +8,17 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.hazmat.primitives.serialization import PublicFormat
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from flask import Flask
 from werkzeug.serving import make_server
-from werkzeug.wrappers import Request
-from werkzeug.wrappers import Response
+from werkzeug.wrappers import Request, Response
 
-from share_gateway.agent_routes import AgentAccessContext
-from share_gateway.agent_routes import register_agent_routes
+from share_gateway.agent_routes import AgentAccessContext, register_agent_routes
 from share_gateway.caddyfile import RegisteredApp
-from share_gateway.handoff import JwksCache
-from share_gateway.handoff import SingleUseJtiRegistry
+from share_gateway.handoff import JwksCache, SingleUseJtiRegistry
 from share_gateway.materials import ShareMaterials
 from share_gateway.runner import build_agent_admitter
-from share_gateway.server import PendingLoginRegistry
-from share_gateway.server import build_gateway_app
+from share_gateway.server import PendingLoginRegistry, build_gateway_app
 
 
 def set_cookies_by_name(response: Response) -> dict[str, str]:

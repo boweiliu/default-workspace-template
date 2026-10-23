@@ -17,25 +17,24 @@ import shutil
 import socket
 import subprocess
 import threading
-from collections.abc import Generator
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 import pytest
-from share_gateway.agent_access import AgentAccessPaths
-from share_gateway.agent_access import LastSeenStore
-from share_gateway.agent_access import mint_invite
-from share_gateway.agent_access import revoke
+from share_gateway.agent_access import (
+    AgentAccessPaths,
+    LastSeenStore,
+    mint_invite,
+    revoke,
+)
 from share_gateway.agent_orientation import HELPER_PATH
 from share_gateway.agent_routes import AgentAccessContext
 from share_gateway.agent_workspace import WorkspaceCoordinates
 from share_gateway.caddyfile import RegisteredApp
-from share_gateway.testing import build_agent_test_app
-from share_gateway.testing import make_workspace_repo
+from share_gateway.testing import build_agent_test_app, make_workspace_repo
 from werkzeug.serving import make_server
 
 _DOMAIN = "alpha.7f3a.us1.example.test"

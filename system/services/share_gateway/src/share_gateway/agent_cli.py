@@ -34,43 +34,52 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from share_gateway import materials as materials_module
-from share_gateway.agent_access import InvalidGrantLifetimeError
-from share_gateway.agent_access import LastSeenStore
-from share_gateway.agent_access import RevokeRefusedError
-from share_gateway.agent_access import default_agent_access_paths
-from share_gateway.agent_access import describe_grant
-from share_gateway.agent_access import grant_lifetime_from_days
-from share_gateway.agent_access import list_grants
-from share_gateway.agent_access import mint_invite
-from share_gateway.agent_access import reconcile
-from share_gateway.agent_access import revoke
+from share_gateway.agent_access import (
+    InvalidGrantLifetimeError,
+    LastSeenStore,
+    RevokeRefusedError,
+    default_agent_access_paths,
+    describe_grant,
+    grant_lifetime_from_days,
+    list_grants,
+    mint_invite,
+    reconcile,
+    revoke,
+)
 from share_gateway.agent_audit import events_dir_from_environ
-from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR
-from share_gateway.agent_grants import AgentGrantsError
-from share_gateway.agent_grants import AgentScopeError
-from share_gateway.agent_grants import WORKSPACE_SCOPE
-from share_gateway.agent_grants import utc_now
-from share_gateway.agent_grants import validate_scope
-from share_gateway.agent_orientation import HELPER_PATH
-from share_gateway.agent_orientation import SKILLS_INDEX_CACHE_PATH
-from share_gateway.agent_orientation import build_changes_feed
-from share_gateway.agent_orientation import cached_skills_index
-from share_gateway.agent_orientation import default_changes_since
-from share_gateway.agent_orientation import file_sha256
-from share_gateway.agent_orientation import helper_source_url
-from share_gateway.agent_orientation import parse_since
-from share_gateway.agent_orientation import render_instruction_block
-from share_gateway.agent_orientation import render_primer
-from share_gateway.agent_orientation import summarize_connected_accounts
-from share_gateway.agent_orientation import template_ref
-from share_gateway.agent_workspace import HOST_KEY_PUBLIC_PATH
-from share_gateway.agent_workspace import app_origins_for
-from share_gateway.agent_workspace import read_workspace_coordinates
-from share_gateway.caddyfile import APPS_TOML_PATH
-from share_gateway.caddyfile import build_grantable_service_names
-from share_gateway.caddyfile import read_registered_apps
-from share_gateway.materials import load_or_create_auth_label
-from share_gateway.materials import read_share_materials
+from share_gateway.agent_grants import (
+    AGENT_ACCESS_STATE_DIR,
+    WORKSPACE_SCOPE,
+    AgentGrantsError,
+    AgentScopeError,
+    utc_now,
+    validate_scope,
+)
+from share_gateway.agent_orientation import (
+    HELPER_PATH,
+    SKILLS_INDEX_CACHE_PATH,
+    build_changes_feed,
+    cached_skills_index,
+    default_changes_since,
+    file_sha256,
+    helper_source_url,
+    parse_since,
+    render_instruction_block,
+    render_primer,
+    summarize_connected_accounts,
+    template_ref,
+)
+from share_gateway.agent_workspace import (
+    HOST_KEY_PUBLIC_PATH,
+    app_origins_for,
+    read_workspace_coordinates,
+)
+from share_gateway.caddyfile import (
+    APPS_TOML_PATH,
+    build_grantable_service_names,
+    read_registered_apps,
+)
+from share_gateway.materials import load_or_create_auth_label, read_share_materials
 
 _EXIT_REFUSED = 2
 _EXIT_MISCONFIGURED = 3
