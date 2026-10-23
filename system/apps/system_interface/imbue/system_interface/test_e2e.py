@@ -2053,11 +2053,12 @@ def test_the_avatar_wears_the_mood_of_the_agents_file_and_the_chooser_changes_ev
             assert "design my own desktop avatar" in draft
             (posted,) = _posted_launches(server.pinned_url)
             assert posted["path"] == f"/{_PINNED_DRAFT_LAUNCH_ID}"
+            # "Design your own..." withholds the window's page, so the draft goes to the main chat rather than the
+            # chat the pinned window shows.
             assert posted["body"] == {
                 _PINNED_TEXT_PARAM: draft,
                 "client_id": client_id,
                 "desktop_id": _HOME_DESKTOP_ID,
-                "window_path": _PINNED_HOME_PATH,
             }
             expect(_window(page, pinned_id)).to_be_visible(timeout=15000)
             # The page itself is moved there (the following step, as for an agent's navigate), and only here: the
