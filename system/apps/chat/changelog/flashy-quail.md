@@ -1,0 +1,1 @@
+Turning a chat over to its terminal no longer says "Starting agent..." when the agent is already running: the terminal opens at once. A stopped agent still waits for its start, and the line that says so now reads "Starting the agent..." in the terminal's own colors, font and padding, so the terminal that replaces it looks like the same surface.
