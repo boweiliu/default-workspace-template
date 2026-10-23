@@ -102,23 +102,30 @@ export function AgentTerminalPanel(): m.Component<AgentTerminalPanelAttrs> {
         }
         return m(
           "div",
-          { class: "agent-terminal-stopped flex h-full w-full flex-col items-center justify-center gap-3 bg-surface" },
+          {
+            class:
+              "agent-terminal-stopped flex h-full w-full flex-col items-center justify-center gap-3 bg-surface px-6",
+          },
           [
             m("div", { class: "text-[15px] font-medium text-primary" }, chat.name),
-            m(
-              "div",
-              { class: "text-(length:--font-size-row) text-faint" },
-              "This agent is stopped, so its terminal has nothing to attach to.",
-            ),
-            // A failed start leaves the agent dead, which lands back on this face --
-            // without this line the Start button would appear to silently do nothing.
-            startError === null
-              ? null
-              : m(
-                  "div",
-                  { class: "agent-terminal-start-error text-(length:--font-size-row) text-danger" },
-                  `Could not start agent: ${startError}`,
-                ),
+            // The explanation sets the column's width and the error wraps inside it (a zero
+            // width that grows to the column's), so a long error stays under the line it follows.
+            m("div", { class: "flex w-fit max-w-full flex-col items-center gap-3 text-center" }, [
+              m(
+                "div",
+                { class: "text-(length:--font-size-row) text-faint" },
+                "This agent is stopped, so its terminal has nothing to attach to.",
+              ),
+              // A failed start leaves the agent dead, which lands back on this face --
+              // without this line the Start button would appear to silently do nothing.
+              startError === null
+                ? null
+                : m(
+                    "div",
+                    { class: "agent-terminal-start-error w-0 min-w-full text-(length:--font-size-row) text-danger" },
+                    `Could not start agent: ${startError}`,
+                  ),
+            ]),
             m(
               "button",
               {
