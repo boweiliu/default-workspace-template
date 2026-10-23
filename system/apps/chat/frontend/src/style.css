@@ -394,6 +394,21 @@
   border: none;
   border-radius: var(--radius-lg);
 }
+/* What the back face shows while a stopped agent starts: the frame's box and corner, in ttyd's
+   own default theme and type (the terminal app passes ttyd no theme), so the terminal that
+   replaces it lands on the same surface. */
+.agent-terminal-starting {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 5px;
+  border-radius: var(--radius-lg);
+  background: #2b2b2b;
+  color: #d2d2d2;
+  font-family: Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-size: 13px;
+  line-height: 1.2;
+}
 
 /* A 600ms rotation is exactly what this asks to be spared. The faces still swap; only the
    turning goes away. */
