@@ -2031,8 +2031,9 @@ def test_the_avatar_wears_the_mood_of_the_agents_file_and_the_chooser_changes_ev
                 error_message="the windows never drew the chosen design",
             )
             # "Design your own..." drafts into this client's pinned window rather than opening a chat: the app's
-            # draft launch path is posted the prompt with this client's view of the window as the envelope's
-            # ``window_path``, the window is pointed at the page it answers and shown, and no window is opened.
+            # draft launch path is posted the prompt with no ``window_path`` (the text is not about the page the
+            # window shows, so it goes to the main chat), the window is pointed at the page it answers and shown,
+            # and no window is opened.
             chooser.locator(".avatar-design-own").click()
             expect(chooser).to_have_count(0)
             pinned_id = _pinned_window(server.base_url)["id"]
@@ -2053,8 +2054,6 @@ def test_the_avatar_wears_the_mood_of_the_agents_file_and_the_chooser_changes_ev
             assert "design my own desktop avatar" in draft
             (posted,) = _posted_launches(server.pinned_url)
             assert posted["path"] == f"/{_PINNED_DRAFT_LAUNCH_ID}"
-            # "Design your own..." withholds the window's page, so the draft goes to the main chat rather than the
-            # chat the pinned window shows.
             assert posted["body"] == {
                 _PINNED_TEXT_PARAM: draft,
                 "client_id": client_id,
