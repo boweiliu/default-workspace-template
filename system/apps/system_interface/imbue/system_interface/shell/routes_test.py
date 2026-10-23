@@ -20,6 +20,7 @@ from workspace_themes.testing import write_test_theme
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import state_of
 from imbue.system_interface.shell.app_lifecycle import WAKE_BUDGET_COUNT
+from imbue.system_interface.shell.app_theme_levels import APP_THEME_LEVELS_FILENAME
 from imbue.system_interface.shell.app_theme_levels import AppThemeLevelStore
 from imbue.system_interface.shell.errors import LaunchUnavailableError
 from imbue.system_interface.shell.identity import RequestIdentity
@@ -2885,3 +2886,8 @@ def test_a_themeable_app_turns_its_theming_on_and_off_and_its_kit_carries_that(
     assert notes_kit.get_data(as_text=True).startswith('self.__WORKSPACE_THEME_LEVEL__ = "light";')
     for app in ("todo", "chat", "ttyd"):
         assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": app}).data == b""
+    # A level stored before theming was only on or off reads as on.
+    (tmp_path / "state" / APP_THEME_LEVELS_FILENAME).write_text(
+        '{"version": 1, "apps": {"notes": "medium"}}', encoding="utf-8"
+    )
+    assert theming()["notes"] == ("light", True)

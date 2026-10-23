@@ -46,11 +46,11 @@ def is_themeable(row: RegistryRow) -> bool:
 
 @pure
 def theme_level_of(row: RegistryRow | None, level_by_app: Mapping[AppName, ThemeLevel]) -> ThemeLevel:
-    """The level the theme is put into an app's pages at: for a themeable app, the user's choice for it, on (light) by
-    default; none for every other app and for a service the registry does not know."""
-    if row is None or not is_themeable(row):
+    """The level the theme is put into an app's pages at: for a themeable app, off (none) when the user turned it off
+    and on (light) otherwise; none for every other app and for a service the registry does not know."""
+    if row is None or not is_themeable(row) or level_by_app.get(row.name) == ThemeLevel.NONE:
         return ThemeLevel.NONE
-    return level_by_app.get(row.name, DEFAULT_THEME_LEVEL)
+    return DEFAULT_THEME_LEVEL
 
 
 class AppThemeLevelStore(MutableModel):

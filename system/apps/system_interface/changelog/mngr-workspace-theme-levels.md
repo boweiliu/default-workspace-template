@@ -7,3 +7,5 @@ An app the workspace built can be made themeable and then take the workspace's t
 - Imbue Studio's Theming keys: Option-Command-Right and -Left step the theme on screen, -Up and -Down turn the focused app's theming on and off, each with a notice saying where it is now.
 
 - `POST /api/apps/<app>/theme-level` takes `light` (on) or `none` (off) for a themeable app, kept in `app_theme_levels.json`. The inventory carries each app's `theme_level` and `is_themeable`, and the shell serves the theme files under `/__workspace_theme/` that Imbue Studio's proxy puts into a themeable app's pages, with the workspace's default theme set in `kit.js` for a page the shell does not frame itself.
+
+- A themeable app's theming is either on (light) or off (none): a level stored by an earlier build (medium or heavy) reads as on.
