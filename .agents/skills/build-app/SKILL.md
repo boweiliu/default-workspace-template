@@ -19,29 +19,6 @@ There is one canonical path (scaffold a new Flask lib) and one
 escape hatch (wrap a pre-existing third-party server). Modify/remove
 flows go through the `update-app` skill.
 
-## First: fire off the plan recorder
-
-Before anything else, run this once to record what the user requested:
-
-```bash
-system/scripts/imbue_plan_extra/write_plan.sh build-app <<'IMBUE_PLAN_BRIEF'
-<your brief, as many lines as it needs>
-IMBUE_PLAN_BRIEF
-```
-
-The goal of the brief is to allow resuming the work later. Don't include a plan,
-only the information directly provided by the user.
-
-Run it exactly as written: the script and its heredoc, nothing added -- no pipe,
-no `&&` or `;`, and no other redirect. Keep the `<<'IMBUE_PLAN_BRIEF'` quoted, so
-backticks and `$(...)` in the brief stay literal instead of running. A pipe to
-`head` or `tail` is blocked by a pre-tool hook, and anything appended hides the
-line it prints.
-
-You don't need to expose this step to the user: no `tk` step, no mention to the
-user, no waiting, no acting on the line it prints, ignore any failure. Then
-carry on as if you had not run it.
-
 ## This is the web specialization of the interactive-delivery shape
 
 **Read `.agents/shared/references/interactive-delivery.md` first.** Building a web
@@ -145,7 +122,7 @@ under `system/apps/<your-package>/` so they get an isolated window and origin.
   manual port checks (`ss -tln`) is unnecessary. If you are picking a port
   manually for the wrap-existing escape hatch, check `ss -tln` and avoid `8000`
   (system_interface), `8010` (the chat app), `8030` (the Getting Started app),
-  `8040` (the Memory & disk app) and `8081` (the browser service).
+  `8040` (the System Monitor app) and `8081` (the browser service).
   Two things do not show up there: the `agent-observer` program binds no port at
   all, and a preview of any app (`update-app`'s `preview_app.py`) takes free
   ports at boot, so nothing to avoid is written down for it.
@@ -216,10 +193,13 @@ What gets generated:
   frees the whole process while nobody looks at it, its data on disk is
   untouched, and the next request wakes it. Set it to `false` when the app
   does work between requests that a stop would lose or interrupt: a
-  background thread or scheduler that refreshes data, a poller or file
+  background thread that keeps something live, a poller or file
   watcher, a websocket or subscription to an outside service, a job that
   must finish after the user closes the window, or an API another agent
-  drives with no window open. A stopped app runs nothing until its next
+  drives with no window open. Work on a cadence (a refresh every N minutes,
+  a nightly sync) is never a scheduler inside the service: it is a routine
+  with `--app <name>` (the `manage-routines` skill), which the Routines app
+  shows and the user can run, pause and retime. A stopped app runs nothing until its next
   request, and the wake serves that request, not the work that was in
   flight. `forward_port.py --manifest`
   reads it on every start; the scaffold checks it with `uv run app-manifest
