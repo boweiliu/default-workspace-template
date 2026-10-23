@@ -1495,7 +1495,11 @@ def test_a_create_that_fails_keeps_the_window_with_the_reason_and_a_retry(
         # The composer stays under the notice: a message held through the failure is back in it.
         expect(chat.locator(".message-input-textbox")).to_be_visible()
         # The instance stays listed, in the error state, so the window survives a reload.
-        _wait_for_chat_window_path(server, lambda path: path.startswith("/?chat="), "a path selecting a chat")
+        _wait_for_chat_window_path(
+            server,
+            lambda path: path.startswith("/?chat=") and path != _FIXTURE_ROOT_PATH,
+            "a path selecting the new chat",
+        )
         page.reload()
         chat = _shown_chat(page)
         expect(chat.locator(".message-list-create-failed")).to_be_visible(timeout=15000)
