@@ -935,6 +935,19 @@ _MESSAGE_OFFSETS_JS = """
 }
 """
 
+# Whether the messages a wheel tick started from have moved by at least ``minMotionPx`` (their median motion, as
+# the test measures it), or none of them is still shown.
+_WHEEL_TICK_LANDED_JS = f"""
+([before, minMotionPx]) => {{
+  const after = ({_MESSAGE_OFFSETS_JS.strip()})();
+  const motions = Object.keys(after)
+    .filter((key) => key in before)
+    .map((key) => after[key] - before[key])
+    .sort((a, b) => a - b);
+  return motions.length === 0 || motions[Math.floor(motions.length / 2)] >= minMotionPx;
+}}
+"""
+
 
 @pytest.mark.timeout(240, func_only=False)
 def test_wheeling_up_as_a_long_chat_opens_moves_the_view_one_tick_at_a_time(tmp_path: Path, page: Page) -> None:
@@ -970,7 +983,9 @@ def test_wheeling_up_as_a_long_chat_opens_moves_the_view_one_tick_at_a_time(tmp_
             before = frame.evaluate(_MESSAGE_OFFSETS_JS)
             for tick in range(30):
                 page.mouse.wheel(0, -wheel_px)
-                page.wait_for_timeout(50)
+                # The tick reaches the page only once its main thread is free, and measuring the rest of the history
+                # can hold that thread for a few hundred ms on a slow machine, so wait for the motion to land.
+                frame.wait_for_function(_WHEEL_TICK_LANDED_JS, arg=[before, wheel_px / 2], timeout=5000)
                 after = frame.evaluate(_MESSAGE_OFFSETS_JS)
                 shared = sorted(after[key] - before[key] for key in set(before) & set(after))
                 assert shared, (
