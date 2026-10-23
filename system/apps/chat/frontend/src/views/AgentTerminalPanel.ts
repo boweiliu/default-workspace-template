@@ -66,7 +66,7 @@ export function AgentTerminalPanel(): m.Component<AgentTerminalPanelAttrs> {
       if (starting) {
         // Drawn as the terminal's first line of output, in its colors and type, so the
         // terminal that replaces it reads as the same surface.
-        return m("div", { class: "agent-terminal-starting" }, "Starting the agent...");
+        return m("div", { class: "agent-terminal-starting terminal-placeholder" }, "Starting the agent...");
       }
 
       // A dead agent has no tmux session, so a mounted ttyd client reconnect-loops

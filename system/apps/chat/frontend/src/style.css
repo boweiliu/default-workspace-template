@@ -394,10 +394,24 @@
   border: none;
   border-radius: var(--radius-lg);
 }
-/* What the back face shows while a stopped agent starts: the frame's box and corner, in ttyd's
-   own default theme and type (the terminal app passes ttyd no theme), so the terminal that
-   replaces it lands on the same surface. */
-.agent-terminal-starting {
+/* The frame's loading line sits under it, and the frame stays hidden (at its full size) until it
+   has loaded, so the wait shows the terminal's surface rather than the card's. */
+.terminal-frame-box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.terminal-frame-loading {
+  position: absolute;
+  inset: 0;
+}
+.terminal-frame-pending {
+  visibility: hidden;
+}
+/* A line drawn the way the terminal draws its output: the frame's box and corner, in ttyd's own
+   default theme and type (the terminal app passes ttyd no theme), so the terminal that replaces
+   it lands on the same surface. */
+.terminal-placeholder {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
