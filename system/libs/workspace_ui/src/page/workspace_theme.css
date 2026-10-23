@@ -4,7 +4,8 @@
 
    The tokens are the standard theme's values, the same as system/libs/workspace_ui/src/base.css declares
    (a test keeps the two equal). Style your own elements with var(--c-...) and the type tokens, never a literal,
-   and mark the elements below with their contract part so a theme can dress them.
+   and use plain controls (<button>, text <input>, <textarea>, <select>), which a theme dresses as its parts; mark
+   the other elements below with their contract part so a theme can dress them too.
 
    The element and part rules sit in a layer, as the shared library's look does, so a theme's unlayered rules
    beat them whatever their specificity: [data-part="button"] in a theme restyles a primary button too. */
@@ -101,9 +102,10 @@
     border-radius: var(--radius-sm);
   }
 
-  /* A push button: <button data-part="button" data-variant="primary|secondary|ghost|destructive" data-shape="text">;
-     a button that is only an icon is data-shape="icon". */
-  [data-part="button"] {
+  /* A push button: <button>, or <button data-variant="primary|secondary|ghost|destructive"> for emphasis; a button
+     that is only an icon is data-shape="icon". */
+  [data-part="button"],
+  button:not([data-part]) {
     font: inherit;
     padding: 6px 14px;
     border: 1px solid var(--c-border);
@@ -112,37 +114,55 @@
     color: var(--c-text-primary);
     cursor: pointer;
   }
-  [data-part="button"]:not(:disabled):hover {
+  [data-part="button"]:not(:disabled):hover,
+  button:not([data-part]):not(:disabled):hover {
     background: var(--c-fill-hover);
   }
-  [data-part="button"]:disabled {
+  [data-part="button"]:disabled,
+  button:not([data-part]):disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
-  [data-part="button"][data-variant="primary"] {
+  [data-part="button"][data-variant="primary"],
+  button:not([data-part])[data-variant="primary"] {
     border-color: var(--c-accent);
     background: var(--c-accent);
     color: var(--c-text-on-accent);
   }
-  [data-part="button"][data-variant="primary"]:not(:disabled):hover {
+  [data-part="button"][data-variant="primary"]:not(:disabled):hover,
+  button:not([data-part])[data-variant="primary"]:not(:disabled):hover {
     background: var(--c-accent-hover);
   }
-  [data-part="button"][data-variant="ghost"] {
+  [data-part="button"][data-variant="ghost"],
+  button:not([data-part])[data-variant="ghost"] {
     border-color: transparent;
     background: transparent;
   }
-  [data-part="button"][data-variant="destructive"] {
+  [data-part="button"][data-variant="destructive"],
+  button:not([data-part])[data-variant="destructive"] {
     border-color: var(--c-danger);
     background: var(--c-danger);
     color: var(--c-text-on-accent);
   }
-  [data-part="button"][data-variant="destructive"]:not(:disabled):hover {
+  [data-part="button"][data-variant="destructive"]:not(:disabled):hover,
+  button:not([data-part])[data-variant="destructive"]:not(:disabled):hover {
     border-color: var(--c-danger-hover);
     background: var(--c-danger-hover);
   }
 
-  /* A text field or text area: <input data-part="field">, <textarea data-part="field">. */
-  [data-part="field"] {
+  /* A text field or text area: a text <input>, a <textarea>. */
+  [data-part="field"],
+  input:not([data-part]):is(
+      [type="text"],
+      [type="search"],
+      [type="email"],
+      [type="url"],
+      [type="password"],
+      [type="number"],
+      [type="tel"],
+      :not([type])
+    ),
+  textarea:not([data-part]) {
     font: inherit;
     padding: 6px 10px;
     border: 1px solid var(--c-border-strong);

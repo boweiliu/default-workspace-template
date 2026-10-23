@@ -137,8 +137,7 @@ class RegistryRow(FrozenModel):
     theming_mode: ThemingMode | None = Field(
         default=None,
         description="How the app takes part in workspace themes, when its manifest declares [theming]; absent means "
-        "the app does not wear them itself, and the theme is put into its pages from outside at the level the user "
-        "chose for it",
+        "the app does not wear them yet and can be made themeable",
     )
 
 

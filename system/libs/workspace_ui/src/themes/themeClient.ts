@@ -164,9 +164,6 @@ export interface WearThemeOptions {
   /** Remember the theme for this origin's next load (the default); false for a page that only shows a theme, like
    *  the theme gallery, which shares the shell's origin. */
   readonly isRemembered?: boolean;
-  /** Where the theme's bundle is, for a page that does not load it from `/_static/themes/` (the page kit, put into an
-   *  app's page from outside, which names its level); null for a theme that puts nothing on the page. */
-  readonly bundleUrl?: (theme: ThemeRef) => string | null;
 }
 
 /**
@@ -179,7 +176,7 @@ export function wearTheme(theme: ThemeRef, doc: Document = document, options: We
   adoptBootedThemeOnce(doc);
   const isRemembered = options.isRemembered !== false;
   const isSame = theme.id === current.id && theme.revision === current.revision;
-  const url = (options.bundleUrl ?? themeBundleUrl)(theme);
+  const url = themeBundleUrl(theme);
   if (isSame && (url === null) === (themeLinks(doc).length === 0)) {
     // The theme stays; only whether it is remembered may change (a previewed theme saved as it is).
     if (isRemembered !== isCurrentRemembered) {
@@ -226,17 +223,14 @@ export function onThemeChanged(listener: ThemeListener): () => void {
 
 /** Wear the theme a `shell:theme` message names, remembering it unless it is a preview; a malformed message changes
  *  nothing. */
-export function wearThemeFromMessage(
-  message: {
-    theme?: unknown;
-    revision?: unknown;
-    isPreview?: unknown;
-  },
-  options: Pick<WearThemeOptions, "bundleUrl"> = {},
-): Promise<void> {
+export function wearThemeFromMessage(message: {
+  theme?: unknown;
+  revision?: unknown;
+  isPreview?: unknown;
+}): Promise<void> {
   const theme = { id: message.theme, revision: message.revision ?? "" };
   if (!isThemeRef(theme)) return Promise.resolve();
-  return wearTheme(theme, document, { ...options, isRemembered: message.isPreview !== true });
+  return wearTheme(theme, document, { isRemembered: message.isPreview !== true });
 }
 
 /**

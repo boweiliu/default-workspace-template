@@ -10,11 +10,7 @@ from workspace_themes.contract import (
     THEME_MANIFEST_FILENAME,
 )
 from workspace_themes.data_types import ThemeCatalog
-from workspace_themes.flask_routes import (
-    register_injected_theme_routes,
-    register_theme_static_route,
-)
-from workspace_themes.primitives import ThemeLevel
+from workspace_themes.flask_routes import register_theme_static_route
 from workspace_themes.testing import write_standard_theme, write_test_theme
 
 
@@ -120,66 +116,3 @@ def test_a_style_file_with_a_relative_url_in_a_token_is_sent_rewritten_as_css(
     assert b'url("/_static/themes/paper/assets/mark.svg")' in style.data
     assert style.headers["X-Content-Type-Options"] == "nosniff"
     assert again.status_code == 304
-
-
-def test_the_injected_routes_serve_the_layer_order_the_kit_at_the_app_s_level_and_the_theme_at_a_level(
-    tmp_path: Path,
-) -> None:
-    write_standard_theme(tmp_path)
-    write_test_theme(
-        tmp_path / BUILTIN_THEMES_DIRECTORY,
-        "paper",
-        '[data-part="button"] { color: red; }\n',
-    )
-    catalog = read_theme_catalog(
-        default_theme_roots(tmp_path), {}, tmp_path / GENERATED_ICONS_DIRECTORY
-    )
-    kit_script = tmp_path / "workspace_theme.js"
-    kit_script.write_text("wearKit();\n", encoding="utf-8")
-    kit_stylesheet = tmp_path / "workspace_theme.css"
-    kit_stylesheet.write_text(
-        '@layer workspace-page-kit { [data-part="field"] { color: red; } }\n',
-        encoding="utf-8",
-    )
-    levels = {"notes": ThemeLevel.MEDIUM, "browser": ThemeLevel.NONE}
-    application = Flask(__name__)
-    register_injected_theme_routes(
-        application,
-        lambda: catalog,
-        lambda: kit_script.read_text(encoding="utf-8"),
-        lambda: kit_stylesheet.read_text(encoding="utf-8"),
-        lambda app: levels.get(app or "", ThemeLevel.LIGHT),
-    )
-    client = application.test_client()
-
-    layers = client.get("/__workspace_theme/layers.css")
-    notes_kit = client.get(
-        "/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"}
-    )
-    browser_kit = client.get(
-        "/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "browser"}
-    )
-    base = client.get("/__workspace_theme/base.css?level=light")
-    bundle = client.get("/__workspace_theme/themes/paper/theme.css?level=heavy")
-
-    assert layers.mimetype == "text/css"
-    assert (
-        layers.data == b"@layer theme, base, workspace-theme, components, utilities;\n"
-    )
-    assert notes_kit.mimetype == "text/javascript"
-    assert notes_kit.data == b'self.__WORKSPACE_THEME_LEVEL__ = "medium";\nwearKit();\n'
-    assert browser_kit.data == b""
-    assert (
-        client.get(
-            "/__workspace_theme/layers.css", headers={"X-Mngr-Forward-Service": "browser"}
-        ).data
-        == b""
-    )
-    assert b":is(textarea):not([class]):not([style])" in base.data
-    assert b"base.css?level=heavy" in bundle.data
-    assert layers.headers["X-Content-Type-Options"] == "nosniff"
-    assert client.get("/__workspace_theme/base.css").status_code == 404
-    assert (
-        client.get("/__workspace_theme/themes/paper/theme.css?level=none").status_code
-        == 404
-    )

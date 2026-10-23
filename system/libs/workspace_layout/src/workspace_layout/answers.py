@@ -23,6 +23,7 @@ from pydantic import Field
 from pydantic import ValidationError
 
 from workspace_layout.errors import ShellAnswerMalformedError
+from workspace_layout.primitives import AppTheming
 from workspace_layout.primitives import ClientId
 from workspace_layout.primitives import DesktopId
 from workspace_layout.primitives import LayoutOp
@@ -128,15 +129,10 @@ class InventoryApp(FrozenModel):
     share_url: str | None = Field(
         description="The app's address on the domain the workspace was last shared under; None when it never was"
     )
-    theme_level: str | None = Field(
+    theming: AppTheming | None = Field(
         default=None,
-        description="How far the workspace's theme is put into the app's pages from outside: light when the user has "
-        "theming on, none when off or when the app is not themeable yet; None for an app that wears the theme itself, "
-        "or declares that it is not themed",
-    )
-    is_themeable: bool = Field(
-        default=False,
-        description="Whether the app is written to take the theme from outside, so its theming can be turned on and off",
+        description="Where the app's Theming submenu stands: on or off for a themeable app, unthemed for an app that "
+        "can be made themeable; None for an app that wears the workspace's theme itself or is not themed",
     )
 
 

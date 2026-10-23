@@ -72,12 +72,11 @@ def test_the_registry_read_lists_every_app_with_its_launch_paths(
         "message_handlers",
         "is_running",
         "share_url",
-        "theme_level",
-        "is_themeable",
+        "theming",
     }
     assert serialized[1]["pin"] is None
-    # Neither app declares [theming], so neither is themeable yet and neither takes a theme.
-    assert [(app["theme_level"], app["is_themeable"]) for app in serialized] == [("none", False), ("none", False)]
+    # Neither app declares [theming], so each offers to be made themeable.
+    assert [app["theming"] for app in serialized] == ["unthemed", "unthemed"]
     # One broadcast for the read; the liveness probe that found everything running adds none.
     assert [message["type"] for message in drain_messages(client_queue)] == ["apps_updated"]
     assert inventory.is_registry_read is True

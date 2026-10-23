@@ -33,7 +33,6 @@ import type {
   Layout,
   MessageRelay,
   Placement,
-  ThemeLevel,
   Wallpaper,
   WallpaperListing,
   WindowRecord,
@@ -82,9 +81,9 @@ export async function fetchThemes(): Promise<ThemeCatalog> {
   return parseThemeCatalog(await getJson(apiUrl("/api/themes")));
 }
 
-/** How far the workspace's theme is put into an app's pages, for an app that does not wear it itself. */
-export async function setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
-  await postJson<unknown>(apiUrl(`/api/apps/${encodeURIComponent(app)}/theme-level`), { level });
+/** Turn a themeable app's theming on or off. */
+export async function setAppTheming(app: string, isOn: boolean): Promise<void> {
+  await postJson<unknown>(apiUrl(`/api/apps/${encodeURIComponent(app)}/theming`), { is_on: isOn });
 }
 
 /** The workspace's default theme; null wears the standard one. */

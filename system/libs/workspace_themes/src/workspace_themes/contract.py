@@ -227,19 +227,12 @@ ALLOWED_AT_RULES: Final[frozenset[str]] = frozenset(
 # The at-rules whose block holds further rules rather than declarations or keyframes.
 GROUPING_AT_RULES: Final[frozenset[str]] = frozenset({"media", "supports", "container"})
 
-# Where an app's page reaches the page kit and the workspace's themes when they are put into it from outside: the
-# proxy in front of the app sends this prefix to the shell, naming the app in INJECTED_APP_HEADER.
-INJECTED_ROUTE_PREFIX: Final[str] = "/__workspace_theme/"
-INJECTED_APP_HEADER: Final[str] = "X-Mngr-Forward-Service"
-# The cascade layer an injected theme sits in at the medium and heavy levels, declared before any of the page's own
-# stylesheets: above Tailwind's reset (base), below its components and utilities, so the app's own styles win.
-INJECTED_THEME_LAYER: Final[str] = "workspace-theme"
-INJECTED_LAYER_ORDER: Final[str] = (
-    f"@layer theme, base, {INJECTED_THEME_LAYER}, components, utilities;\n"
-)
-# An element the app left unstyled: no class and no style of its own (the light level reaches only these).
-UNSTYLED_ELEMENT_GUARD: Final[str] = ":not([class]):not([style])"
-# The bare elements that take each control part's styles on a page a theme is put into from outside.
+# The attribute the page kit's script sets on <html>: a page built as plain HTML, whose bare controls take their
+# parts' styles (section 5.3).
+PAGE_KIT_ROOT_ATTRIBUTE: Final[str] = "data-page-kit"
+# The bare elements on a page-kit page that take each part's styles, as selectors of zero specificity beyond the
+# element itself: an app's own class rules still win over the theme's, and a widget's own controls keep their look
+# wherever its stylesheet says otherwise.
 _TEXT_INPUT_TYPES: Final[str] = (
     '[type="text"], [type="search"], [type="email"], [type="url"], [type="password"], [type="number"], '
     '[type="tel"], :not([type])'

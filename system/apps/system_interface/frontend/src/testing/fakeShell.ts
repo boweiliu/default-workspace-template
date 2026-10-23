@@ -27,7 +27,6 @@ import type {
   MessageDelivery,
   MessageRelay,
   StoredWindowPath,
-  ThemeLevel,
   Wallpaper,
   WindowRecord,
 } from "../model/records";
@@ -219,8 +218,8 @@ export class FakeDesktopApi implements DesktopApi {
     this.themeCatalog = { ...this.themeCatalog, default: theme };
   }
 
-  async setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
-    this.calls.push(`setAppThemeLevel:${app}:${level}`);
+  async setAppTheming(app: string, isOn: boolean): Promise<void> {
+    this.calls.push(`setAppTheming:${app}:${isOn ? "on" : "off"}`);
     this.refuse();
   }
 

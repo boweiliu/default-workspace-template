@@ -22,12 +22,12 @@ import type { EntryLook } from "../reducers/desktopState";
  *  a card. */
 export const MENU_MIN_WIDTH = 176;
 
-/** What the window menu's Theming submenu offers, for an app the theme is put into from outside (workspace-themes
- *  plan section 7.1): On and Off once the app is themeable, and Enable theming until it is. */
+/** What the window menu's Theming submenu offers (docs/system/themeable-apps.md): On and Off once the app is
+ *  themeable, and Enable theming until it is. */
 export interface WindowThemeActions {
-  /** Whether the app is written to take the theme from outside; until it is, On and Off are greyed. */
+  /** Whether the app is written to wear the theme over its own look; until it is, On and Off are greyed. */
   readonly isThemeable: boolean;
-  /** Whether the theme is put into the app's pages now. */
+  /** Whether the app's pages wear the workspace's theme now. */
   readonly isOn: boolean;
   readonly setOn: (isOn: boolean) => void;
   /** Draft the request that makes the app themeable into the main chat; null with no chat to draft into. */

@@ -59,7 +59,6 @@ import type {
   Placement,
   PresentUser,
   ShortcutMode,
-  ThemeLevel,
   Wallpaper,
   WindowRecord,
   WindowState,
@@ -171,8 +170,8 @@ export interface DesktopApi {
   /** The workspace's themes and its default (workspace-themes plan section 5.2). */
   fetchThemes(): Promise<ThemeCatalog>;
   setDefaultTheme(theme: string | null): Promise<void>;
-  /** How far the theme reaches an app themed from outside (workspace-themes plan section 7.2). */
-  setAppThemeLevel(app: string, level: ThemeLevel): Promise<void>;
+  /** Turn a themeable app's theming on or off (workspace-themes plan section 7.1). */
+  setAppTheming(app: string, isOn: boolean): Promise<void>;
   deleteDesktop(desktopId: string): Promise<string>;
   setDesktopShortcut(desktopId: string, shortcut: DesktopShortcut): Promise<Desktop>;
   moveDesktopShortcut(desktopId: string, app: string, launch: string, cell: GridCell): Promise<Desktop>;
@@ -225,6 +224,8 @@ export interface PageDriver {
   reload(windowId: string): void;
   /** Reload every page of an app. */
   reloadApp(appName: string): void;
+  /** Send every page of an app the theme it wears again (its theming was turned on or off). */
+  resendTheme(appName: string): void;
   /** Send the page ``shell:close-request`` (the Imbue Studio close chord). */
   requestClose(windowId: string): void;
   /** Whether the window's page declared it owns the close chord (``closeChord: true``). */
@@ -1006,60 +1007,19 @@ export class DesktopStore {
   }
 
   private takeApps(apps: readonly AppRecord[]): void {
-    const levelBefore = new Map(this.state.apps.map((app) => [app.name, app.theme_level]));
+    const themingBefore = new Map(this.state.apps.map((app) => [app.name, app.theming]));
     this.dispatch({ type: "apps_updated", apps });
     this.markAppsLoaded();
-    // The page kit takes its level when the page loads, so every page of an app whose level changed loads again.
     for (const app of apps) {
-      const before = levelBefore.get(app.name);
-      if (before !== undefined && before !== app.theme_level) this.pageDriver?.reloadApp(app.name);
+      const before = themingBefore.get(app.name);
+      if (before !== undefined && before !== app.theming) this.pageDriver?.resendTheme(app.name);
     }
   }
 
-  /** Set how far the theme reaches an app's pages; every client reloads them when the app list says so. */
-  async setAppThemeLevel(app: string, level: ThemeLevel): Promise<void> {
-    await this.deps.api.setAppThemeLevel(app, level);
-  }
-
-  /** A Theming key's next or previous theme (the embed contract's ``minds:step-theming``): the desktop on screen
-   *  moves to the neighbouring available theme, wrapping round, as its own choice when it has one and as the
-   *  workspace's default otherwise, and the user is told which it wears now. */
-  async stepShownTheme(step: 1 | -1): Promise<void> {
-    const desktop = activeDesktop(this.state);
-    if (desktop === null || !this.hasThemeCatalog) return;
-    const themes = this.themeCatalog.themes.filter((theme) => theme.available);
-    if (themes.length === 0) return;
-    const shownIndex = themes.findIndex((theme) => theme.id === this.shownTheme().id);
-    const next = themes[(Math.max(shownIndex, 0) + step + themes.length) % themes.length];
-    if (desktop.theme !== null) await this.setDesktopTheme(desktop.id, next.id);
-    else await this.setDefaultTheme(next.id);
-    this.toast(`Theme: ${next.name}`);
-  }
-
-  /** Turn the theme on or off in a themeable app's pages; every client reloads them when the app list says so. */
+  /** Turn a themeable app's theming on or off; every client sends its pages the theme again when the app list says
+   *  so. */
   async setAppTheming(app: string, isOn: boolean): Promise<void> {
-    await this.setAppThemeLevel(app, isOn ? "light" : "none");
-  }
-
-  /** A Theming key's on or off for the focused window's app, and the user is told where it is now. An app that wears
-   *  the workspace's theme itself, or is not themeable yet, is left as it is. */
-  async setFocusedAppTheming(isOn: boolean): Promise<void> {
-    const focused =
-      this.soloWindowId ??
-      (this.isPhoneLayout() ? (shownWindowOf(this.state)?.id ?? null) : activeFocusedWindowId(this.state));
-    const window = focused === null ? null : findWindow(this.state, focused)?.window;
-    const app = window === undefined || window === null ? undefined : appByName(this.state, window.app);
-    if (app === undefined) return;
-    if (app.theme_level === null) {
-      this.toast(`${app.display_name} wears the workspace's theme itself`);
-      return;
-    }
-    if (!app.is_themeable) {
-      this.toast(`${app.display_name} is not themeable yet: choose Enable theming in its window menu`);
-      return;
-    }
-    if ((app.theme_level !== "none") !== isOn) await this.setAppTheming(app.name, isOn);
-    this.toast(`${app.display_name}: theming ${isOn ? "on" : "off"}`);
+    await this.deps.api.setAppTheming(app, isOn);
   }
 
   private takePresence(users: PresentUser[]): void {

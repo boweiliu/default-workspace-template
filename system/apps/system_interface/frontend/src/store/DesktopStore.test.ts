@@ -700,6 +700,7 @@ describe("windows", () => {
     store.setPageDriver({
       reload: () => undefined,
       reloadApp: () => undefined,
+      resendTheme: () => undefined,
       requestClose: (id) => void requested.push(id),
       ownsCloseChord: () => false,
     });
@@ -716,6 +717,7 @@ describe("windows", () => {
     store.setPageDriver({
       reload: () => undefined,
       reloadApp: () => undefined,
+      resendTheme: () => undefined,
       requestClose: (id) => void requested.push(id),
       ownsCloseChord: () => false,
     });
@@ -730,6 +732,7 @@ describe("windows", () => {
     store.setPageDriver({
       reload: () => undefined,
       reloadApp: () => undefined,
+      resendTheme: () => undefined,
       requestClose: (id) => void requested.push(id),
       ownsCloseChord: (id) => id === "win-1",
     });
@@ -774,6 +777,7 @@ describe("windows", () => {
     store.setPageDriver({
       reload: (id) => void reloaded.push(`window:${id}`),
       reloadApp: (app) => void reloaded.push(`app:${app}`),
+      resendTheme: () => undefined,
       requestClose: () => undefined,
       ownsCloseChord: () => false,
     });
@@ -784,20 +788,21 @@ describe("windows", () => {
     expect(reloads).toBe(1);
   });
 
-  it("loads an app's pages again when its theme level changes, and leaves the other apps' pages alone", async () => {
+  it("sends an app's pages the theme again when its theming is turned on or off, and leaves other apps alone", async () => {
     const store = await startedStore();
-    const reloaded: string[] = [];
+    const resent: string[] = [];
     store.setPageDriver({
-      reload: (id) => void reloaded.push(`window:${id}`),
-      reloadApp: (app) => void reloaded.push(`app:${app}`),
+      reload: () => undefined,
+      reloadApp: () => undefined,
+      resendTheme: (app) => void resent.push(app),
       requestClose: () => undefined,
       ownsCloseChord: () => false,
     });
-    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "light" }), appRecord("notes")]);
-    reloaded.length = 0;
-    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
-    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "heavy" }), appRecord("notes")]);
-    expect(reloaded).toEqual(["app:docs"]);
+    socket.deliver().onAppsUpdated([appRecord("docs", { theming: "on" }), appRecord("notes")]);
+    resent.length = 0;
+    socket.deliver().onAppsUpdated([appRecord("docs", { theming: "off" }), appRecord("notes")]);
+    socket.deliver().onAppsUpdated([appRecord("docs", { theming: "off" }), appRecord("notes")]);
+    expect(resent).toEqual(["docs"]);
   });
 
   it("follows a pushed desktop switch without re-reporting a previous desktop", async () => {
@@ -2715,6 +2720,7 @@ describe("the phone layout", () => {
     store.setPageDriver({
       reload: (id) => void reloaded.push(id),
       reloadApp: () => undefined,
+      resendTheme: () => undefined,
       requestClose: () => undefined,
       ownsCloseChord: () => false,
     });
@@ -2819,45 +2825,6 @@ describe("themes", () => {
     socket.deliver().onThemesChanged(structuredClone(store.getThemeCatalog()));
 
     expect(heard).toEqual(["ink", "ink"]);
-  });
-
-  it("steps the theme on screen through the available ones, wrapping round, as the default or the desktop's own", async () => {
-    const store = await startedStore();
-    await settle();
-
-    await store.stepShownTheme(1);
-    expect(api.calls).toContain("setDefaultTheme:standard");
-    expect(store.shownTheme().id).toBe("standard");
-    // Back past the start, the unavailable theme skipped.
-    await store.stepShownTheme(-1);
-    expect(store.shownTheme().id).toBe("ink");
-
-    await store.setDesktopTheme("home", "paper");
-    await store.stepShownTheme(1);
-    expect(api.calls).toContain("setDesktopTheme:home:ink");
-    expect(store.shownTheme().id).toBe("ink");
-    expect(notices()).toEqual(["Theme: Standard", "Theme: Ink", "Theme: Ink"]);
-  });
-
-  it("turns the focused app's theming on and off, and leaves alone an app that is not themeable or themes itself", async () => {
-    api.apps = [appRecord("docs", { theme_level: "light", is_themeable: true }), appRecord("notes")];
-    const store = await startedStore();
-    await settle();
-
-    await store.setFocusedAppTheming(false);
-    expect(api.calls).toContain("setAppThemeLevel:docs:none");
-
-    socket.deliver().onAppsUpdated([appRecord("docs", { theme_level: "none" }), appRecord("notes")]);
-    await store.setFocusedAppTheming(true);
-    socket.deliver().onAppsUpdated([appRecord("docs"), appRecord("notes")]);
-    await store.setFocusedAppTheming(true);
-
-    expect(api.calls.filter((call) => call.startsWith("setAppThemeLevel"))).toEqual(["setAppThemeLevel:docs:none"]);
-    expect(notices()).toEqual([
-      "Docs: theming off",
-      "Docs is not themeable yet: choose Enable theming in its window menu",
-      "Docs wears the workspace's theme itself",
-    ]);
   });
 
   it("takes a new workspace default at once, without reading the catalog again", async () => {

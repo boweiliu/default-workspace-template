@@ -181,20 +181,17 @@ export interface AppRecord {
   readonly is_running: boolean;
   /** The app's address on the domain the workspace was last shared under, or null when it never was. */
   readonly share_url: string | null;
-  /** How far the workspace's theme is put into the app's pages from outside (workspace-themes plan section 7.2);
-   *  null for an app that wears the theme itself, or declares that it is not themed. */
-  readonly theme_level: ThemeLevel | null;
-  /** Whether the app is written to take the theme from outside, so its theming can be turned on and off. */
-  readonly is_themeable: boolean;
+  /** Where the app's Theming submenu stands (docs/system/themeable-apps.md): on or off for a themeable app,
+   *  unthemed for an app that can be made themeable, null for an app that wears the theme itself or is not themed. */
+  readonly theming: AppTheming | null;
 }
 
-/** How far a theme reaches into an app that does not wear it itself. */
-export type ThemeLevel = "none" | "light" | "medium" | "heavy";
+export type AppTheming = "on" | "off" | "unthemed";
 
-export const THEME_LEVELS: readonly ThemeLevel[] = ["none", "light", "medium", "heavy"];
+const APP_THEMINGS: readonly AppTheming[] = ["on", "off", "unthemed"];
 
-function parseThemeLevel(raw: unknown): ThemeLevel | null {
-  return THEME_LEVELS.find((level) => level === raw) ?? null;
+function parseAppTheming(raw: unknown): AppTheming | null {
+  return APP_THEMINGS.find((theming) => theming === raw) ?? null;
 }
 
 /** Where a client keeps a floating entry: the top-left corner of its box, in fractions of the backdrop. */
@@ -532,8 +529,7 @@ export function parseAppRecord(raw: unknown): AppRecord {
     message_handlers: asArray(record.message_handlers ?? [], "app.message_handlers").map(parseMessageHandler),
     is_running: record.is_running === true,
     share_url: typeof record.share_url === "string" && record.share_url !== "" ? record.share_url : null,
-    theme_level: parseThemeLevel(record.theme_level),
-    is_themeable: record.is_themeable === true,
+    theming: parseAppTheming(record.theming),
   };
 }
 

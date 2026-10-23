@@ -1,1 +1,1 @@
-`[theming] mode = "outside"`: the app is written on the design tokens and takes the workspace's theme from outside, which the user turns on and off from its window menu. `RegistryRow.theming_mode` records the manifest's mode; it is absent for an app that declares none.
+`[theming] mode = "outside"`: the app has a look of its own, written on the design tokens with that look as their fallbacks, and loads the page kit; the user turns its theming on and off from its window menu. `RegistryRow.theming_mode` records the manifest's mode; it is absent for an app that declares none.

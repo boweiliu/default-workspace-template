@@ -489,7 +489,7 @@ describe("the avatar chooser", () => {
 
 describe("the window menu's Theming submenu", () => {
   it("drafts Enable theming into the main chat, not the chat on screen", async () => {
-    offerApps(api, socket, [appRecord("docs", { theme_level: "none" }), buddy]);
+    offerApps(api, socket, [appRecord("docs", { theming: "unthemed" }), buddy]);
     api.postLaunchAnswer = "/?chat=agent-1";
     api.desktops = [
       desktopRecord("home", {

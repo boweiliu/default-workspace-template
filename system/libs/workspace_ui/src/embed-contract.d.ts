@@ -38,8 +38,6 @@ declare module "@minds/embed-contract" {
   // The link a popup was turned into, and an external one the workspace hands back (contract v8). Probed like the
   // ones above.
   export const OPEN_LINK: "minds:open-link";
-  // The Theming keys (contract v9). Probed like the ones above.
-  export const STEP_THEMING: "minds:step-theming";
   export const OPEN_EXTERNAL: "minds:open-external";
   export const MAX_OPEN_LINK_URL_LENGTH: number;
 

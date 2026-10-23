@@ -20,8 +20,7 @@ from workspace_themes.testing import write_test_theme
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.app_context import state_of
 from imbue.system_interface.shell.app_lifecycle import WAKE_BUDGET_COUNT
-from imbue.system_interface.shell.app_theme_levels import APP_THEME_LEVELS_FILENAME
-from imbue.system_interface.shell.app_theme_levels import AppThemeLevelStore
+from imbue.system_interface.shell.app_theming import AppThemingStore
 from imbue.system_interface.shell.errors import LaunchUnavailableError
 from imbue.system_interface.shell.identity import RequestIdentity
 from imbue.system_interface.shell.inventory import AppInventory
@@ -2845,9 +2844,7 @@ def test_a_theme_bundle_imports_its_chain_and_its_files_are_served_from_this_ori
     assert client.get("/_static/themes/nowhere/theme.css").status_code == 404
 
 
-def test_a_themeable_app_turns_its_theming_on_and_off_and_its_kit_carries_that(
-    tmp_path: Path, broadcaster: WebSocketBroadcaster
-) -> None:
+def test_a_themeable_app_turns_its_theming_on_and_off(tmp_path: Path, broadcaster: WebSocketBroadcaster) -> None:
     registry_path = write_registry(
         tmp_path / "apps.toml",
         registry_row_toml("notes", "http://localhost:7001", theming_mode="outside"),
@@ -2855,39 +2852,18 @@ def test_a_themeable_app_turns_its_theming_on_and_off_and_its_kit_carries_that(
         registry_row_toml("chat", "http://localhost:8010", theming_mode="parts"),
     )
     inventory = build_inventory(
-        registry_path, broadcaster, theme_levels=AppThemeLevelStore(state_directory=tmp_path / "state").read
+        registry_path, broadcaster, theming_off=AppThemingStore(state_directory=tmp_path / "state").read
     )
     client = shell_application(tmp_path, inventory, broadcaster).test_client()
-    kit_directory = tmp_path / "static" / "_static"
-    kit_directory.mkdir(parents=True)
-    (kit_directory / "workspace_theme.js").write_text("wearKit();\n", encoding="utf-8")
-    (kit_directory / "workspace_theme.css").write_text("", encoding="utf-8")
 
-    def theming() -> dict[str, tuple[str | None, bool]]:
-        return {
-            app["name"]: (app["theme_level"], app["is_themeable"])
-            for app in client.get("/api/inventory").get_json()["apps"]
-        }
+    def theming() -> dict[str, str | None]:
+        return {app["name"]: app["theming"] for app in client.get("/api/inventory").get_json()["apps"]}
 
-    # An app not themeable yet takes no theme; a themeable one has it on until the user turns it off.
-    assert theming() == {"notes": ("light", True), "todo": ("none", False), "chat": (None, False)}
-    assert client.post("/api/apps/notes/theme-level", json={"level": "none"}).get_json() == {
-        "app": "notes",
-        "level": "none",
-    }
-    assert theming()["notes"] == ("none", True)
-    assert client.post("/api/apps/notes/theme-level", json={"level": "heavy"}).status_code == 400
-    assert client.post("/api/apps/todo/theme-level", json={"level": "light"}).status_code == 400
-    assert client.post("/api/apps/chat/theme-level", json={"level": "light"}).status_code == 400
-    assert client.post("/api/apps/nowhere/theme-level", json={"level": "light"}).status_code == 400
-    assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"}).data == b""
-    assert client.post("/api/apps/notes/theme-level", json={"level": "light"}).status_code == 200
-    notes_kit = client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": "notes"})
-    assert notes_kit.get_data(as_text=True).startswith('self.__WORKSPACE_THEME_LEVEL__ = "light";')
-    for app in ("todo", "chat", "ttyd"):
-        assert client.get("/__workspace_theme/kit.js", headers={"X-Mngr-Forward-Service": app}).data == b""
-    # A level stored before theming was only on or off reads as on.
-    (tmp_path / "state" / APP_THEME_LEVELS_FILENAME).write_text(
-        '{"version": 1, "apps": {"notes": "medium"}}', encoding="utf-8"
-    )
-    assert theming()["notes"] == ("light", True)
+    # A themeable app has its theming on until the user turns it off; an app with no [theming] can be made themeable.
+    assert theming() == {"notes": "on", "todo": "unthemed", "chat": None}
+    assert client.post("/api/apps/notes/theming", json={"is_on": False}).get_json() == {"app": "notes", "is_on": False}
+    assert theming()["notes"] == "off"
+    assert client.post("/api/apps/notes/theming", json={"is_on": True}).status_code == 200
+    assert theming()["notes"] == "on"
+    for app in ("todo", "chat", "nowhere"):
+        assert client.post(f"/api/apps/{app}/theming", json={"is_on": False}).status_code == 400

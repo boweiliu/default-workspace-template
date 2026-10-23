@@ -15,7 +15,6 @@ import json
 import re
 import threading
 from collections.abc import Callable
-from collections.abc import Mapping
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -29,7 +28,6 @@ from pydantic import Field
 from pydantic import PrivateAttr
 from watchdog.observers.api import BaseObserver
 from workspace_layout.answers import InventoryApp
-from workspace_themes.primitives import ThemeLevel
 
 from imbue.imbue_common.model_update import to_update
 from imbue.imbue_common.mutable_model import MutableModel
@@ -68,13 +66,13 @@ def read_share_domain(path: Path | None) -> str | None:
 
 @pure
 def app_views(
-    entries: Sequence[AppInventoryEntry], share_domain: str | None, level_by_app: Mapping[AppName, ThemeLevel]
+    entries: Sequence[AppInventoryEntry], share_domain: str | None, theming_off: frozenset[AppName]
 ) -> list[InventoryApp]:
-    return [app_view(entry, share_domain, level_by_app) for entry in entries]
+    return [app_view(entry, share_domain, theming_off) for entry in entries]
 
 
-def _no_theme_levels() -> Mapping[AppName, ThemeLevel]:
-    return {}
+def _no_theming_off() -> frozenset[AppName]:
+    return frozenset()
 
 
 class AppInventory(MutableModel):
@@ -95,10 +93,10 @@ class AppInventory(MutableModel):
         frozen=True,
         description="The file naming the domain the workspace was last shared under; None for a shell with no share",
     )
-    theme_levels: Callable[[], Mapping[AppName, ThemeLevel]] = Field(
-        default=_no_theme_levels,
+    theming_off: Callable[[], frozenset[AppName]] = Field(
+        default=_no_theming_off,
         frozen=True,
-        description="Each app's chosen theme level, read for every listing (app_theme_levels.json)",
+        description="The themeable apps whose theming is off, read for every listing (app_theming.json)",
     )
     on_registry_read: Callable[[Sequence[RegistryRow]], None] | None = Field(
         default=None,
@@ -157,7 +155,7 @@ class AppInventory(MutableModel):
             return self._entry_by_name.get(app_name)
 
     def views(self) -> list[InventoryApp]:
-        return app_views(self.entries(), read_share_domain(self.share_domain_path), self.theme_levels())
+        return app_views(self.entries(), read_share_domain(self.share_domain_path), self.theming_off())
 
     @property
     def is_registry_read(self) -> bool:
@@ -289,7 +287,7 @@ class AppInventory(MutableModel):
     # The broadcast
 
     def broadcast_if_changed(self) -> None:
-        """Send every window the apps, when they differ from what was last sent (a theme level changed)."""
+        """Send every window the apps, when they differ from what was last sent (an app's theming was turned on or off)."""
         self._broadcast_if_changed()
 
     def _broadcast_if_changed(self) -> None:

@@ -2,8 +2,6 @@
 themes with the default it wears, the default's route, each theme's icons, and the theme files every app serves
 from its own origin, which the shell serves for its own pages too."""
 
-from typing import Final
-
 from app_schema.routes import model_response
 from app_schema.routes import parse_request_body
 from flask import Flask
@@ -14,33 +12,31 @@ from loguru import logger
 from pydantic import Field
 from workspace_themes.data_types import ThemeCatalog
 from workspace_themes.errors import ThemeFileNotFoundError
-from workspace_themes.flask_routes import register_injected_theme_routes
 from workspace_themes.flask_routes import register_theme_static_route
 from workspace_themes.primitives import ThemeId
-from workspace_themes.primitives import ThemeLevel
 from workspace_themes.serving import resolve_theme_icon
 from workspace_themes.serving import theme_file_security_headers
 
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.system_interface.app_context import get_state
-from imbue.system_interface.shell.app_theme_levels import is_themeable
+from imbue.system_interface.shell.app_theming import is_themeable
 from imbue.system_interface.shell.errors import InvalidShellValueError
 from imbue.system_interface.shell.state import ShellState
 from imbue.system_interface.shell.theme_wire import THEME_ICON_ROUTE
 from imbue.system_interface.shell.theme_wire import theme_catalog_wire
 
 
-class ThemeLevelRequest(FrozenModel):
-    """The body of the app theme level route."""
+class AppThemingRequest(FrozenModel):
+    """The body of the app theming route."""
 
-    level: ThemeLevel = Field(description="light to turn the app's theming on, none to turn it off")
+    is_on: bool = Field(description="Whether the app wears the workspace's theme")
 
 
-class AppThemeLevelResponse(FrozenModel):
-    """What setting an app's theme level answers."""
+class AppThemingResponse(FrozenModel):
+    """What turning an app's theming on or off answers."""
 
-    app: str = Field(description="The app whose level was set")
-    level: str = Field(description="Its level now")
+    app: str = Field(description="The app")
+    is_on: bool = Field(description="Whether its theming is on now")
 
 
 class ThemeChoiceRequest(FrozenModel):
@@ -49,11 +45,6 @@ class ThemeChoiceRequest(FrozenModel):
     theme: ThemeId | None = Field(
         description="The theme to wear; null wears the default (or, for the default, standard)"
     )
-
-
-# The page kit, as the shell's build writes it beside the app contract.
-KIT_SCRIPT_FILENAME: Final[str] = "workspace_theme.js"
-KIT_STYLESHEET_FILENAME: Final[str] = "workspace_theme.css"
 
 
 def _shell() -> ShellState:
@@ -91,29 +82,18 @@ def set_default_theme() -> ResponseReturnValue:
     return model_response(DefaultThemeResponse(default=None if choices.default is None else str(choices.default)))
 
 
-def set_app_theme_level(app_name: str) -> ResponseReturnValue:
-    """Turn theming on (light) or off (none) for a themeable app."""
-    body = parse_request_body(ThemeLevelRequest)
+def set_app_theming(app_name: str) -> ResponseReturnValue:
+    """Turn a themeable app's theming on or off."""
+    body = parse_request_body(AppThemingRequest)
     shell = _shell()
     entry = shell.inventory.entry(app_name)
     if entry is None:
         raise InvalidShellValueError(f"there is no app {app_name!r}")
     if not is_themeable(entry.row):
-        raise InvalidShellValueError(f"{app_name!r} is not written to take the theme from outside")
-    if body.level not in (ThemeLevel.NONE, ThemeLevel.LIGHT):
-        raise InvalidShellValueError("theming is turned on (light) or off (none)")
-    shell.theme_levels.set(entry.row.name, body.level)
+        raise InvalidShellValueError(f"{app_name!r} is not written to wear the workspace's theme over its own look")
+    shell.app_theming.set(entry.row.name, body.is_on)
     shell.inventory.broadcast_if_changed()
-    return model_response(AppThemeLevelResponse(app=app_name, level=str(body.level)))
-
-
-def _default_theme_id() -> str | None:
-    default = _shell().desktops.read_theme_choices().default
-    return None if default is None else str(default)
-
-
-def _kit_file_text(file_name: str) -> str:
-    return (get_state().static_directory / "_static" / file_name).read_text(encoding="utf-8")
+    return model_response(AppThemingResponse(app=app_name, is_on=body.is_on))
 
 
 def serve_theme_icon(theme_id: str, file_name: str) -> ResponseReturnValue:
@@ -132,10 +112,7 @@ def serve_theme_icon(theme_id: str, file_name: str) -> ResponseReturnValue:
 def register_theme_routes(application: Flask) -> None:
     application.add_url_rule("/api/themes", view_func=list_themes, methods=["GET"], endpoint="list_themes")
     application.add_url_rule(
-        "/api/themes/default",
-        view_func=set_default_theme,
-        methods=["POST"],
-        endpoint="set_default_theme",
+        "/api/themes/default", view_func=set_default_theme, methods=["POST"], endpoint="set_default_theme"
     )
     application.add_url_rule(
         THEME_ICON_ROUTE.format(theme_id="<theme_id>", file_name="<file_name>"),
@@ -145,16 +122,5 @@ def register_theme_routes(application: Flask) -> None:
     )
     register_theme_static_route(application, lambda: _shell().themes.load())
     application.add_url_rule(
-        "/api/apps/<app_name>/theme-level",
-        view_func=set_app_theme_level,
-        methods=["POST"],
-        endpoint="set_app_theme_level",
-    )
-    register_injected_theme_routes(
-        application,
-        lambda: _shell().themes.load(),
-        lambda: _kit_file_text(KIT_SCRIPT_FILENAME),
-        lambda: _kit_file_text(KIT_STYLESHEET_FILENAME),
-        lambda app_name: _shell().theme_level_of_app(app_name),
-        lambda: _default_theme_id(),
+        "/api/apps/<app_name>/theming", view_func=set_app_theming, methods=["POST"], endpoint="set_app_theming"
     )

@@ -1,4 +1,6 @@
+import itertools
 import posixpath
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path, PurePath, PurePosixPath
 from typing import Final
@@ -13,8 +15,11 @@ from tinycss2 import ast
 from tinycss2.serializer import serialize_string_value, serialize_url
 
 from workspace_themes.contract import (
+    BARE_CONTROLS_BY_PART,
     BUNDLE_FILE_NAME,
     FALLBACK_ICON_STEM,
+    GROUPING_AT_RULES,
+    PAGE_KIT_ROOT_ATTRIBUTE,
     SERVED_FILE_SUFFIXES,
     STYLE_FILE_SUFFIX,
     URL_FUNCTION_NAMES,
@@ -59,9 +64,7 @@ ThemeAsset = ThemeBundle | ThemeFile | ThemeStyleFile
 
 
 @pure
-def _absolute_url(
-    reference: str, theme_id: str, file_directory: str, route_prefix: str
-) -> str | None:
+def _absolute_url(reference: str, theme_id: str, file_directory: str) -> str | None:
     """A URL relative to a style file in the theme's folder, as a path from the origin; None for any other URL."""
     stripped = reference.strip()
     if (
@@ -73,19 +76,17 @@ def _absolute_url(
     joined = posixpath.normpath(posixpath.join(file_directory, stripped))
     if joined == ".." or joined.startswith("../"):
         return None
-    return f"{route_prefix}{quote(theme_id)}/{joined}"
+    return f"{THEME_STATIC_ROUTE_PREFIX}{quote(theme_id)}/{joined}"
 
 
 def _absolutize_urls(
-    tokens: Iterable[ast.Node], theme_id: str, file_directory: str, route_prefix: str
+    tokens: Iterable[ast.Node], theme_id: str, file_directory: str
 ) -> bool:
     """Rewrite each relative URL among the tokens in place; whether any was."""
     is_changed = False
     for token in tokens:
         if isinstance(token, ast.URLToken):
-            absolute = _absolute_url(
-                token.value, theme_id, file_directory, route_prefix
-            )
+            absolute = _absolute_url(token.value, theme_id, file_directory)
             if absolute is not None:
                 token.value = absolute
                 token.representation = f"url({serialize_url(absolute)})"
@@ -95,9 +96,7 @@ def _absolutize_urls(
                 for argument in token.arguments:
                     if not isinstance(argument, ast.StringToken):
                         continue
-                    absolute = _absolute_url(
-                        argument.value, theme_id, file_directory, route_prefix
-                    )
+                    absolute = _absolute_url(argument.value, theme_id, file_directory)
                     if absolute is not None:
                         argument.value = absolute
                         argument.representation = (
@@ -105,9 +104,7 @@ def _absolutize_urls(
                         )
                         is_changed = True
             is_changed = (
-                _absolutize_urls(
-                    token.arguments, theme_id, file_directory, route_prefix
-                )
+                _absolutize_urls(token.arguments, theme_id, file_directory)
                 or is_changed
             )
         elif isinstance(
@@ -115,8 +112,7 @@ def _absolutize_urls(
             (ast.ParenthesesBlock, ast.SquareBracketsBlock, ast.CurlyBracketsBlock),
         ):
             is_changed = (
-                _absolutize_urls(token.content, theme_id, file_directory, route_prefix)
-                or is_changed
+                _absolutize_urls(token.content, theme_id, file_directory) or is_changed
             )
         else:
             continue
@@ -124,7 +120,7 @@ def _absolutize_urls(
 
 
 def _absolutize_custom_property_urls(
-    rules: Sequence[ast.Node], theme_id: str, file_directory: str, route_prefix: str
+    rules: Sequence[ast.Node], theme_id: str, file_directory: str
 ) -> bool:
     is_changed = False
     for rule in rules:
@@ -133,9 +129,7 @@ def _absolutize_custom_property_urls(
         elif isinstance(rule, ast.AtRule) and rule.content is not None:
             nested = tinycss2.parse_rule_list(rule.content)
             is_changed = (
-                _absolutize_custom_property_urls(
-                    nested, theme_id, file_directory, route_prefix
-                )
+                _absolutize_custom_property_urls(nested, theme_id, file_directory)
                 or is_changed
             )
             continue
@@ -146,27 +140,100 @@ def _absolutize_custom_property_urls(
                 "--"
             ):
                 is_changed = (
-                    _absolutize_urls(
-                        declaration.value, theme_id, file_directory, route_prefix
-                    )
+                    _absolutize_urls(declaration.value, theme_id, file_directory)
                     or is_changed
                 )
     return is_changed
 
 
-def style_text_to_serve(
-    css_text: str, theme_id: str, file_directory: str, route_prefix: str
-) -> str:
-    """A theme's style file as it is sent from ``route_prefix``: a relative URL in a custom property made absolute.
+_PART_ATTRIBUTE_SELECTOR: Final[re.Pattern[str]] = re.compile(
+    r"\[\s*data-part\s*=\s*([\"']?)([A-Za-z0-9._-]+)\1\s*\]"
+)
+# What a bare control's selector adds: only on a page-kit page, and only where the element is no part of its own.
+_BARE_CONTROL_GUARD: Final[str] = (
+    f":where(:root[{PAGE_KIT_ROOT_ATTRIBUTE}] *):where(:not([data-part]))"
+)
+
+
+@pure
+def _bare_control_selectors(selector: str) -> list[str]:
+    """The selector again for each bare control that takes the parts it names; none when it names no such part."""
+    pieces: list[tuple[str, ...]] = []
+    end = 0
+    is_naming_a_control = False
+    for match in _PART_ATTRIBUTE_SELECTOR.finditer(selector):
+        pieces.append((selector[end : match.start()],))
+        controls = BARE_CONTROLS_BY_PART.get(match.group(2))
+        if controls is None:
+            pieces.append((match.group(0),))
+        else:
+            pieces.append(
+                tuple(f"{control}{_BARE_CONTROL_GUARD}" for control in controls)
+            )
+            is_naming_a_control = True
+        end = match.end()
+    if not is_naming_a_control:
+        return []
+    pieces.append((selector[end:],))
+    return ["".join(combination) for combination in itertools.product(*pieces)]
+
+
+def _split_selector_list(prelude: Sequence[ast.Node]) -> list[str]:
+    selectors: list[list[ast.Node]] = [[]]
+    for token in prelude:
+        if isinstance(token, ast.LiteralToken) and token.value == ",":
+            selectors.append([])
+        else:
+            selectors[-1].append(token)
+    return [tinycss2.serialize(selector).strip() for selector in selectors]
+
+
+def _add_bare_control_selectors(rules: Sequence[ast.Node]) -> bool:
+    """Give each rule that styles a control part its bare controls' selectors too; whether any rule changed."""
+    is_changed = False
+    for rule in rules:
+        if isinstance(rule, ast.QualifiedRule):
+            selectors = _split_selector_list(rule.prelude)
+            extra = [
+                bare
+                for selector in selectors
+                for bare in _bare_control_selectors(selector)
+            ]
+            if extra:
+                rule.prelude = tinycss2.parse_component_value_list(
+                    ", ".join([*selectors, *extra]) + " "
+                )
+                is_changed = True
+        elif (
+            isinstance(rule, ast.AtRule)
+            and rule.lower_at_keyword in GROUPING_AT_RULES
+            and rule.content is not None
+        ):
+            nested = tinycss2.parse_rule_list(rule.content)
+            if _add_bare_control_selectors(nested):
+                rule.content = tinycss2.parse_component_value_list(
+                    tinycss2.serialize(nested)
+                )
+                is_changed = True
+        else:
+            continue
+    return is_changed
+
+
+def style_text_to_serve(css_text: str, theme_id: str, file_directory: str) -> str:
+    """A theme's style file as it is sent: relative URLs in custom properties made absolute, and bare controls styled.
 
     A URL in a custom property is resolved where var() puts it, which may be a page's own style (the desktop's
     wallpaper is), so a URL written relative to the style file would be read against the page instead. Every other
     URL is left as written, since the browser resolves it against the style file.
+
+    A rule for the button, field, or select part also takes the bare `<button>`, text `<input>`, `<textarea>`, or
+    `<select>` of a page built on the page kit, so such a page wears the theme without marking its controls.
     """
     rules = tinycss2.parse_stylesheet(css_text)
-    if not _absolutize_custom_property_urls(
-        rules, theme_id, file_directory, route_prefix
-    ):
+    is_url_changed = _absolutize_custom_property_urls(rules, theme_id, file_directory)
+    is_selector_changed = _add_bare_control_selectors(rules)
+    if not (is_url_changed or is_selector_changed):
         return css_text
     return tinycss2.serialize(rules)
 
@@ -194,7 +261,7 @@ def _is_existing_file(path: Path) -> bool:
         return False
 
 
-def theme_file_path(entry: ThemeEntry, relative: str) -> Path:
+def _theme_file_path(entry: ThemeEntry, relative: str) -> Path:
     """A served file in the theme's own folder; raises ThemeFileNotFoundError for anything else."""
     try:
         relative_path = ThemeRelativePath(relative)
@@ -215,9 +282,8 @@ def theme_file_path(entry: ThemeEntry, relative: str) -> Path:
     return path
 
 
-def find_theme_file(catalog: ThemeCatalog, request_path: str) -> tuple[ThemeEntry, str]:
-    """The available theme and the path in its folder that ``<theme id>/<path>`` names; raises
-    ThemeFileNotFoundError when there is no such theme or the path names nothing."""
+def resolve_theme_asset(catalog: ThemeCatalog, request_path: str) -> ThemeAsset:
+    """The answer to ``GET /_static/themes/<request_path>``; raises ThemeFileNotFoundError when there is none."""
     theme_part, separator, relative = request_path.partition("/")
     if not separator or not relative:
         raise ThemeFileNotFoundError(f"{request_path!r} names no file of a theme")
@@ -228,26 +294,14 @@ def find_theme_file(catalog: ThemeCatalog, request_path: str) -> tuple[ThemeEntr
     entry = catalog.find_available(theme_id)
     if entry is None:
         raise ThemeFileNotFoundError(f"there is no available theme {str(theme_id)!r}")
-    return entry, relative
-
-
-def read_theme_style_file(path: Path) -> str:
-    # utf-8-sig drops a leading byte-order mark, as a browser's decoding and the validator do.
-    return path.read_text(encoding="utf-8-sig")
-
-
-def resolve_theme_asset(catalog: ThemeCatalog, request_path: str) -> ThemeAsset:
-    """The answer to ``GET /_static/themes/<request_path>``; raises ThemeFileNotFoundError when there is none."""
-    entry, relative = find_theme_file(catalog, request_path)
     if relative == BUNDLE_FILE_NAME:
         return ThemeBundle(css=build_bundle_css(entry))
-    path = theme_file_path(entry, relative)
+    path = _theme_file_path(entry, relative)
     if path.suffix.lower() != STYLE_FILE_SUFFIX:
         return ThemeFile(path=path)
-    css_text = read_theme_style_file(path)
-    served = style_text_to_serve(
-        css_text, str(entry.id), posixpath.dirname(relative), THEME_STATIC_ROUTE_PREFIX
-    )
+    # utf-8-sig drops a leading byte-order mark, as a browser's decoding and the validator do.
+    css_text = path.read_text(encoding="utf-8-sig")
+    served = style_text_to_serve(css_text, str(theme_id), posixpath.dirname(relative))
     if served == css_text:
         return ThemeFile(path=path)
     return ThemeStyleFile(path=path, css=served)

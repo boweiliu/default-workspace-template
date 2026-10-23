@@ -24,10 +24,10 @@ import { appShortcutOf, launchPathOf } from "../model/launch";
 import { SHELL_APP_NAME } from "../model/UpdateNotice";
 import type {
   AppRecord,
+  AppTheming,
   AvatarDesign,
   Desktop,
   DesktopShortcut,
-  ThemeLevel,
   WallpaperListing,
 } from "../model/records";
 import { shortcutKey } from "../model/records";
@@ -597,16 +597,15 @@ export function App(): m.Component<AppAttrs> {
       quit: app !== undefined && current.canStopApp(app) ? () => void current.quitApp(app.name) : null,
       popOut: current.getCanPopOut() ? () => void current.detachWindow(windowId) : null,
       close: () => void current.closeOrMinimizeWindow(windowId),
-      theme:
-        app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
+      theme: app === undefined || app.theming === null ? null : windowThemeActionsOf(current, app, app.theming),
     });
   }
 
-  function windowThemeActionsOf(current: DesktopStore, app: AppRecord, level: ThemeLevel): WindowThemeActions {
+  function windowThemeActionsOf(current: DesktopStore, app: AppRecord, theming: AppTheming): WindowThemeActions {
     const canDraft = draftTargetOf(current.getState()) !== null;
     return {
-      isThemeable: app.is_themeable,
-      isOn: level !== "none",
+      isThemeable: theming !== "unthemed",
+      isOn: theming === "on",
       setOn: (isOn) => void current.setAppTheming(app.name, isOn),
       enable: canDraft ? () => void current.draftIntoPinnedWindow(enableThemingPrompt(app.display_name), false) : null,
     };

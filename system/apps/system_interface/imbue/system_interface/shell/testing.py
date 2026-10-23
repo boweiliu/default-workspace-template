@@ -38,7 +38,6 @@ from workspace_layout.primitives import WindowTitle
 from workspace_layout.records import Desktop
 from workspace_layout.records import Window
 from workspace_layout.records import WindowPlacement
-from workspace_themes.primitives import ThemeLevel
 
 from imbue.mngr.utils.polling import wait_for
 from imbue.system_interface.server import create_application
@@ -338,7 +337,7 @@ def build_inventory(
     broadcaster: WebSocketBroadcaster,
     prober: Callable[[Sequence[tuple[str, str, str]]], dict[str, bool]] | None = None,
     share_domain_path: Path | None = None,
-    theme_levels: Callable[[], Mapping[AppName, ThemeLevel]] | None = None,
+    theming_off: Callable[[], frozenset[AppName]] | None = None,
 ) -> AppInventory:
     """An inventory that has read the registry and probed liveness once, with no watcher or sweep running."""
     inventory = AppInventory(
@@ -346,7 +345,7 @@ def build_inventory(
         broadcaster=broadcaster,
         liveness_prober=prober if prober is not None else FakeLivenessProber(),
         share_domain_path=share_domain_path,
-        theme_levels=theme_levels if theme_levels is not None else dict,
+        theming_off=theming_off if theming_off is not None else frozenset,
     )
     inventory.reload_registry()
     inventory.refresh_liveness()

@@ -1,1 +1,0 @@
-The page kit's script reads the level the shell gives it (`__WORKSPACE_THEME_LEVEL__`) when it is put into an app's page from outside, and wears the theme from `/__workspace_theme/` at that level. `wearThemeFromMessage` and `WearThemeOptions.bundleUrl` let it choose where the theme comes from. The page kit no longer marks the page's root `data-page-kit`.
