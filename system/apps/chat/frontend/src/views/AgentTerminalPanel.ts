@@ -5,8 +5,8 @@
  * not exist while the agent is STOPPED -- the ttyd dispatch's `tmux attach`
  * fails immediately. So before mounting the terminal iframe this panel POSTs
  * to the agent's start endpoint and waits for it to resolve -- unless the chat
- * already reports the agent alive, when the iframe mounts at once: the start
- * would be a no-op, and waiting on it would announce a start that is not happening.
+ * already reports the agent alive, when the iframe mounts at once and no start
+ * is announced.
  */
 
 import m from "mithril";
