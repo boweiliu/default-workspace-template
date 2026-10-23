@@ -1062,7 +1062,6 @@ export class DesktopStore {
     this.toast(`${app.display_name}: theming ${isOn ? "on" : "off"}`);
   }
 
-
   private takePresence(users: PresentUser[]): void {
     applyPresence(users);
     this.redraw();

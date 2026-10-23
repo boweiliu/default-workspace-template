@@ -64,7 +64,10 @@ function themeSubmenuRow(actions: WindowThemeActions): MenuRow {
     },
   ];
   if (!actions.isThemeable && actions.enable !== null) {
-    rows.push({ kind: "divider" }, { kind: "action", key: "theme-enable", label: "Enable theming", onSelect: actions.enable });
+    rows.push(
+      { kind: "divider" },
+      { kind: "action", key: "theme-enable", label: "Enable theming", onSelect: actions.enable },
+    );
   }
   return {
     kind: "submenu",

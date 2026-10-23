@@ -321,6 +321,8 @@ describe("the window menu's Theming submenu", () => {
   });
 
   it("drafts a request to make the app themeable by the workspace's guide", () => {
-    expect(enableThemingPrompt("Notes")).toContain("Make the Notes app themeable, following docs/system/themeable-apps.md");
+    expect(enableThemingPrompt("Notes")).toContain(
+      "Make the Notes app themeable, following docs/system/themeable-apps.md",
+    );
   });
 });

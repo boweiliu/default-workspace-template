@@ -2860,7 +2860,6 @@ describe("themes", () => {
     ]);
   });
 
-
   it("takes a new workspace default at once, without reading the catalog again", async () => {
     const store = await startedStore();
     await settle();

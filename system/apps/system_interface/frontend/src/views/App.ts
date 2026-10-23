@@ -597,7 +597,8 @@ export function App(): m.Component<AppAttrs> {
       quit: app !== undefined && current.canStopApp(app) ? () => void current.quitApp(app.name) : null,
       popOut: current.getCanPopOut() ? () => void current.detachWindow(windowId) : null,
       close: () => void current.closeOrMinimizeWindow(windowId),
-      theme: app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
+      theme:
+        app === undefined || app.theme_level === null ? null : windowThemeActionsOf(current, app, app.theme_level),
     });
   }
 
