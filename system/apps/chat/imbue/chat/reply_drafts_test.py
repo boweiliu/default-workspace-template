@@ -89,5 +89,18 @@ def test_a_chat_looked_away_from_starts_from_nothing_when_looked_at_again() -> N
     watched.append(("chat-7", "agent-9", reader))
     publisher.publish_once()
 
-    # The page that opened the chat again gets the draft, though it did not change.
-    assert [frame["text"] for _, frame in sent] == ["Same draft", "Same draft"]
+    # Looking away clears the draft on the page; looking back sends it again, though it did not change.
+    assert [frame["text"] for _, frame in sent] == ["Same draft", "", "Same draft"]
+
+
+def test_looking_away_from_a_chat_with_no_draft_sends_nothing() -> None:
+    reader = _ScriptedDraftReader([ReplyDraft(after_event_id="event-1", text="")])
+    watched: list[tuple[str, str, ReplyDraftReader]] = [("chat-7", "agent-9", reader)]
+    sent: list[tuple[str, dict[str, Any]]] = []
+    publisher = _publisher(watched, sent)
+
+    publisher.publish_once()
+    watched.clear()
+    publisher.publish_once()
+
+    assert sent == []

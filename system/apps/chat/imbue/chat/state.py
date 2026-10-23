@@ -280,8 +280,12 @@ class ChatAppState(MutableModel):
         (``AgentManager.chat_watchers``): a chat in a hidden or unfocused window, one the chat root
         keeps loaded in the background, and one no page has open are never read.
         """
-        streamed_chat_ids = self.event_queues.streamed_chat_ids()
-        if not streamed_chat_ids:
+        watched_chat_ids = {
+            chat_id
+            for chat_id in self.event_queues.streamed_chat_ids()
+            if self.agent_manager.chat_watchers(ChatId(chat_id))
+        }
+        if not watched_chat_ids:
             return []
         with self._watchers_lock:
             running = [
@@ -291,9 +295,9 @@ class ChatAppState(MutableModel):
             ]
         watched: list[tuple[str, str, ReplyDraftReader]] = []
         for agent_id, watcher in running:
-            chat_id = self.agent_manager.chat_id_of_agent(agent_id)
-            if str(chat_id) in streamed_chat_ids and self.agent_manager.chat_watchers(chat_id):
-                watched.append((str(chat_id), agent_id, watcher))
+            chat_id = str(self.agent_manager.chat_id_of_agent(agent_id))
+            if chat_id in watched_chat_ids:
+                watched.append((chat_id, agent_id, watcher))
         return watched
 
     def capture_agent_pane(self, agent_id: str) -> str | None:

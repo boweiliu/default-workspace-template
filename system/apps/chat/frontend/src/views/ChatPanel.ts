@@ -37,12 +37,14 @@ import {
   isConversationNotFound,
   noteLoadedArrivals,
   removeMessageSentListener,
+  type ToolResultEvent,
 } from "../models/Response";
 import type { FillAction } from "../models/transcriptScroll/fillPlanner";
 import { createTranscriptScrollEngine } from "./transcript-scroll-engine";
 import { TranscriptScrollbar } from "./TranscriptScrollbar";
 import { connectToStream, disconnectFromStream, loadSnapshotWithStream } from "../models/StreamingMessage";
-import { getReplyDraftVersion, shownReplyDraft } from "../models/ReplyDrafts";
+import { shownReplyDraft } from "../models/ReplyDrafts";
+import { renderAssistantMessage } from "./message-renderers";
 import {
   addChatsUpdatedListener,
   getChatById,
@@ -118,6 +120,14 @@ function provisionalRecord(chatId: string): ProvisionalChat | null {
  *  shows its reason instead, like any other. */
 export function isSeededTranscriptShown(provisional: ProvisionalChat | null): boolean {
   return provisional !== null && provisional.is_seeded && provisional.phase !== "failed";
+}
+
+const NO_TOOL_RESULTS: Map<string, ToolResultEvent> = new Map();
+
+/** The chat's reply draft as a reply node, or nothing when there is none to show. */
+function renderReplyDraft(chatId: string): m.Vnode[] {
+  const draft = hasMoreAfter(chatId) ? null : shownReplyDraft(chatId, getLastEventId(chatId));
+  return draft === null ? [] : [renderAssistantMessage(draft, NO_TOOL_RESULTS, chatId)];
 }
 
 export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; isCompact?: boolean }> {
@@ -612,27 +622,21 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
     // transcript and the idle flag meet.
     maybeApplyFastModeLimit(chat, events, agentIsIdle);
 
-    // The reply the agent is still writing, which its transcript does not hold yet, renders after
-    // the transcript as a reply would, while the window reaches the live end.
-    const replyDraft = hasMoreAfter(chatId) ? null : shownReplyDraft(chatId, getLastEventId(chatId));
-
     // Memoize the turn-grouping -> rows pipeline. buildSections walks the entire
     // held transcript, so recomputing it on every scroll-driven redraw is the
     // dominant scroll cost on a long conversation. Its output depends only on the
-    // held events, the settled flag, the running compaction and the draft -- captured
-    // by the render version (bumped on any data mutation) plus those three -- so a
+    // held events, the settled flag and the running compaction -- captured by the
+    // render version (bumped on any data mutation) plus those two -- so a
     // scroll-only redraw reuses the cached rows.
     const renderKey =
       `${chatId}|${getRenderVersion(chatId)}|${tailTurnSettled ? 1 : 0}|` +
-      `${liveCompaction === null ? "-" : (liveCompaction.cause ?? "unknown")}|` +
-      `${replyDraft === null ? "-" : getReplyDraftVersion()}`;
+      `${liveCompaction === null ? "-" : (liveCompaction.cause ?? "unknown")}`;
     if (renderKey !== rowsCacheKey) {
       // Both structure and decoration come from the transcript walk; there is no
       // side-channel enrichment. The same pipeline feeds the subagent view, so a
       // subagent's "View conversation" renders an identical progress timeline.
       if (liveCompaction === null) closeRunningCompactionChips();
-      const renderedEvents = replyDraft === null ? events : [...events, replyDraft];
-      cachedRows = buildConversationRows(chatId, renderedEvents, tailTurnSettled, liveCompaction);
+      cachedRows = buildConversationRows(chatId, events, tailTurnSettled, liveCompaction);
       rowsCacheKey = renderKey;
     }
     const rows = cachedRows;
@@ -659,6 +663,10 @@ export function ChatPanel(): m.Component<{ chatId: string; isVisible?: boolean; 
         ...[renderHandoffTailNode(chatId, hasOpenHandoffRequest(events, chat?.handoff ?? null))].filter(
           (node) => node !== null,
         ),
+        // The reply the agent is still writing, which its transcript does not hold yet, while the
+        // window reaches the live end. A node of its own rather than a row: a draft changes a few
+        // times a second, and a row would re-walk the whole held transcript on every change.
+        ...renderReplyDraft(chatId),
         ...renderQueuedMessages(chatId),
         // The messages the chat app holds while the chat switches harness, then this page's
         // own not-yet-delivered sends.

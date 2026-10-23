@@ -28,8 +28,6 @@ interface HeldReplyDraft {
 }
 
 const draftByChat = new Map<string, HeldReplyDraft>();
-// Bumped on every change, so a view caching rows on the transcript can tell the draft changed.
-let draftVersion = 0;
 
 export function isReplyDraftFrame(raw: { type?: string }): raw is ReplyDraftFrame {
   return raw.type === REPLY_DRAFT_FRAME_TYPE;
@@ -44,15 +42,12 @@ export function applyReplyDraftFrame(chatId: string, frame: ReplyDraftFrame): vo
   } else {
     draftByChat.set(chatId, { afterEventId: frame.after_event_id, event: draftEvent(chatId, frame) });
   }
-  draftVersion += 1;
   m.redraw();
 }
 
 /** Forget the chat's draft (its stream closed). */
 export function clearReplyDraft(chatId: string): void {
-  if (draftByChat.delete(chatId)) {
-    draftVersion += 1;
-  }
+  draftByChat.delete(chatId);
 }
 
 /** The draft to show after the transcript, when the event it follows is the last one held. */
@@ -62,10 +57,6 @@ export function shownReplyDraft(chatId: string, lastEventId: string | null): Ass
     return null;
   }
   return held.event;
-}
-
-export function getReplyDraftVersion(): number {
-  return draftVersion;
 }
 
 /** The draft as a reply the transcript views render like any other: prose, no tool calls, not yet stopped. */

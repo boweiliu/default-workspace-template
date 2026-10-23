@@ -89,8 +89,8 @@ class ReplyDraftPublisher(MutableModel):
     capture_agent_pane: CaptureAgentPane = Field(frozen=True, description="Captures one agent's pane by agent id")
     broadcast_to_chat: BroadcastToChat = Field(frozen=True, description="Sends one frame on a chat's streams")
 
-    # The last draft sent per agent, so an unchanged draft sends nothing.
-    _published_by_agent: dict[str, ReplyDraft] = PrivateAttr(default_factory=dict)
+    # The last draft sent per agent, and the chat it went to, so an unchanged draft sends nothing.
+    _published_by_agent: dict[str, tuple[str, ReplyDraft]] = PrivateAttr(default_factory=dict)
     _stop_event: threading.Event = PrivateAttr(default_factory=threading.Event)
     _thread: threading.Thread | None = PrivateAttr(default=None)
 
@@ -115,15 +115,19 @@ class ReplyDraftPublisher(MutableModel):
             draft = watcher.read_reply_draft(self._bind_capture(agent_id))
             if draft is None:
                 continue
-            previous = self._published_by_agent.get(agent_id)
+            published = self._published_by_agent.get(agent_id)
+            previous = None if published is None else published[1]
             is_already_clear = draft.text == "" and (previous is None or previous.text == "")
             if previous == draft or is_already_clear:
                 continue
-            self._published_by_agent[agent_id] = draft
+            self._published_by_agent[agent_id] = (chat_id, draft)
             self.broadcast_to_chat(chat_id, reply_draft_frame(agent_id, draft))
-        # A chat the user looked away from starts from nothing when they look at it again.
+        # A chat the user looked away from loses its draft, which nothing would update or clear
+        # while they are away, and starts from nothing when they look at it again.
         for agent_id in set(self._published_by_agent) - seen_agent_ids:
-            del self._published_by_agent[agent_id]
+            chat_id, draft = self._published_by_agent.pop(agent_id)
+            if draft.text != "":
+                self.broadcast_to_chat(chat_id, reply_draft_frame(agent_id, ReplyDraft(after_event_id="", text="")))
 
     def _bind_capture(self, agent_id: str) -> CapturePaneCallback:
         return lambda: self.capture_agent_pane(agent_id)

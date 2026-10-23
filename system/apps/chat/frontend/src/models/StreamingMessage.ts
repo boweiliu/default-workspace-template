@@ -269,9 +269,12 @@ function installCatchUpTriggers(): void {
     }
   });
   addChatsUpdatedListener((chats) => {
+    const previousByChat = new Map(lastStatusByChat);
+    // Rebuilt from each push, so a chat that left the list leaves the map with it.
+    lastStatusByChat.clear();
     for (const chat of chats) {
-      const previous = lastStatusByChat.get(chat.chat_id);
       lastStatusByChat.set(chat.chat_id, chat.status);
+      const previous = previousByChat.get(chat.chat_id);
       if (previous === "working" && chat.status !== "working" && activeStreams.has(chat.chat_id)) {
         void catchUpLiveTail(chat.chat_id);
       }
