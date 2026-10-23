@@ -1,24 +1,26 @@
 import json
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 
 import pytest
 
-from share_gateway.agent_orientation import (
-    build_changes_feed,
-    build_skills_index,
-    cached_skills_index,
-    helper_source_url,
-    render_instruction_block,
-    render_primer,
-    summarize_connected_accounts,
-    template_commit,
-    template_ref,
-    template_source_ref,
-)
+from share_gateway.agent_orientation import build_changes_feed
+from share_gateway.agent_orientation import build_skills_index
+from share_gateway.agent_orientation import cached_skills_index
+from share_gateway.agent_orientation import helper_source_url
+from share_gateway.agent_orientation import render_instruction_block
+from share_gateway.agent_orientation import render_primer
+from share_gateway.agent_orientation import summarize_connected_accounts
+from share_gateway.agent_orientation import template_commit
+from share_gateway.agent_orientation import template_ref
+from share_gateway.agent_orientation import template_source_ref
 from share_gateway.caddyfile import RegisteredApp
-from share_gateway.testing import commit_all, git_output, make_workspace_repo
+from share_gateway.testing import commit_all
+from share_gateway.testing import git_output
+from share_gateway.testing import make_workspace_repo
 
 _APPS = [
     RegisteredApp("owner-exec", "owner-exec-ex111111", "127.0.0.1", 8793, is_grantable=False),

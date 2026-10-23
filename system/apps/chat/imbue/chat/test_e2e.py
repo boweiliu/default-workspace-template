@@ -1423,7 +1423,7 @@ _RECORD_PLACEHOLDERS_SEEN_SCRIPT = """
 def test_a_new_chat_with_an_account_is_a_blank_ready_chat_from_the_start(
     tmp_path: Path, page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With an account signed in the intake creates the chat at once on it, and the page is an empty chat with its composer
+    """With an account signed in a new chat is created at once on it, and the page is an empty chat with its composer
     ready from the first frame: no placeholder text while the agent is created, and none once it lands -- not even
     for a single frame, which is how a flash of a "not found" or "loading" screen shows up."""
     release_create = tmp_path / "release-create"

@@ -3,12 +3,10 @@ from typing import Any
 import pytest
 
 from app_manifest.errors import PageTemplateFieldError
-from app_manifest.primitives import (
-    PageTemplate,
-    canonical_name_from_title,
-    is_name_conflict,
-    render_page_template,
-)
+from app_manifest.primitives import PageTemplate
+from app_manifest.primitives import canonical_name_from_title
+from app_manifest.primitives import is_name_conflict
+from app_manifest.primitives import render_page_template
 
 
 @pytest.mark.parametrize(

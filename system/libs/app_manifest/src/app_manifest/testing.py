@@ -9,7 +9,8 @@ from typing import Final
 
 from werkzeug.test import TestResponse
 
-from app_manifest.registry import SHELL_APP_CONTRACT_PATH, SHELL_MODULE_PATHS
+from app_manifest.registry import SHELL_APP_CONTRACT_PATH
+from app_manifest.registry import SHELL_MODULE_PATHS
 from app_manifest.selection import ALWAYS_RUN_GUARDS
 
 APP_ICON_MARKUP: Final[str] = (

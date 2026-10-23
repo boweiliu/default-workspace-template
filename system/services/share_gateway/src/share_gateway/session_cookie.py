@@ -37,7 +37,9 @@ accepts whichever copy the browser sends.
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 
 import jwt
 from flask import Response

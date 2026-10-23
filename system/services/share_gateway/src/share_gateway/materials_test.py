@@ -6,14 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from share_gateway.materials import (
-    discard_signing_secret,
-    load_or_create_auth_label,
-    load_or_create_signing_secret,
-    parse_share_materials,
-    read_share_materials,
-    record_share_domain,
-)
+from share_gateway.materials import discard_signing_secret
+from share_gateway.materials import load_or_create_auth_label
+from share_gateway.materials import load_or_create_signing_secret
+from share_gateway.materials import parse_share_materials
+from share_gateway.materials import read_share_materials
+from share_gateway.materials import record_share_domain
 
 _TOK_123_DIGEST = hashlib.sha256(b"tok-123").hexdigest()
 

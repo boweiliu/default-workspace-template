@@ -21,48 +21,42 @@ import json
 import secrets
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
+from collections.abc import Mapping
+from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlencode
 
-from flask import Flask, Response, request
+from flask import Flask
+from flask import Response
+from flask import request
 from werkzeug.datastructures import Headers
 
-from share_gateway.caddyfile import (
-    RegisteredApp,
-    build_grantable_service_names,
-    build_label_to_name,
-)
-from share_gateway.grants import (
-    Grants,
-    GrantsError,
-    load_grants,
-    upgrade_invites_in_file,
-)
-from share_gateway.handoff import (
-    HandoffVerificationError,
-    JwksCache,
-    SingleUseJtiRegistry,
-    verify_handoff_token,
-)
+from share_gateway.caddyfile import RegisteredApp
+from share_gateway.caddyfile import build_grantable_service_names
+from share_gateway.caddyfile import build_label_to_name
+from share_gateway.grants import Grants
+from share_gateway.grants import GrantsError
+from share_gateway.grants import load_grants
+from share_gateway.grants import upgrade_invites_in_file
+from share_gateway.handoff import HandoffVerificationError
+from share_gateway.handoff import JwksCache
+from share_gateway.handoff import SingleUseJtiRegistry
+from share_gateway.handoff import verify_handoff_token
 from share_gateway.hostnames import service_for_host
-from share_gateway.identity import (
-    IDENTITY_HEADER,
-    AgentIdentity,
-    RequesterIdentity,
-    bearer_token_from_headers,
-    render_agent_identity_header,
-    render_identity_header,
-)
+from share_gateway.identity import AgentIdentity
+from share_gateway.identity import IDENTITY_HEADER
+from share_gateway.identity import RequesterIdentity
+from share_gateway.identity import bearer_token_from_headers
+from share_gateway.identity import render_agent_identity_header
+from share_gateway.identity import render_identity_header
 from share_gateway.log import log
 from share_gateway.materials import ShareMaterials
 from share_gateway.origin_policy import is_request_origin_allowed
-from share_gateway.session_cookie import (
-    mint_session_cookie_value,
-    set_session_cookie,
-    strip_session_cookie,
-    verify_session_from_cookies,
-)
+from share_gateway.session_cookie import mint_session_cookie_value
+from share_gateway.session_cookie import set_session_cookie
+from share_gateway.session_cookie import strip_session_cookie
+from share_gateway.session_cookie import verify_session_from_cookies
 
 _PENDING_LOGIN_TTL_SECONDS = 600.0
 

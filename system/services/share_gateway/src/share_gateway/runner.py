@@ -33,58 +33,60 @@ import sys
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 
 import httpx
 from inotify_simple import INotify
 from inotify_simple import flags as inotify_flags
-from werkzeug.serving import BaseWSGIServer, make_server
+from werkzeug.serving import BaseWSGIServer
+from werkzeug.serving import make_server
 
 from share_gateway import materials as materials_module
-from share_gateway.agent_access import LastSeenStore, default_agent_access_paths
+from share_gateway.agent_access import LastSeenStore
+from share_gateway.agent_access import default_agent_access_paths
 from share_gateway.agent_access import reconcile as reconcile_agent_access
 from share_gateway.agent_audit import events_dir_from_environ
-from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR, AgentGrantsError
+from share_gateway.agent_grants import AGENT_ACCESS_STATE_DIR
+from share_gateway.agent_grants import AgentGrantsError
 from share_gateway.agent_grants import utc_now as agent_access_now
 from share_gateway.agent_orientation import SKILLS_INDEX_CACHE_PATH
-from share_gateway.agent_routes import AgentAccessContext, register_agent_routes
-from share_gateway.agent_workspace import (
-    HOST_KEY_PUBLIC_PATH,
-    read_workspace_coordinates,
-)
-from share_gateway.assignment import RelayAssignment, load_assignment
-from share_gateway.caddyfile import (
-    APPS_TOML_PATH,
-    RegisteredApp,
-    build_grantable_service_names,
-    read_registered_apps,
-    render_caddyfile,
-)
-from share_gateway.certs import CertProvisioningError, ensure_share_certificate
+from share_gateway.agent_routes import AgentAccessContext
+from share_gateway.agent_routes import register_agent_routes
+from share_gateway.agent_workspace import HOST_KEY_PUBLIC_PATH
+from share_gateway.agent_workspace import read_workspace_coordinates
+from share_gateway.assignment import RelayAssignment
+from share_gateway.assignment import load_assignment
+from share_gateway.caddyfile import APPS_TOML_PATH
+from share_gateway.caddyfile import RegisteredApp
+from share_gateway.caddyfile import build_grantable_service_names
+from share_gateway.caddyfile import read_registered_apps
+from share_gateway.caddyfile import render_caddyfile
+from share_gateway.certs import CertProvisioningError
+from share_gateway.certs import ensure_share_certificate
 from share_gateway.frpc_config import render_frpc_toml
-from share_gateway.handoff import JwksCache, SingleUseJtiRegistry
+from share_gateway.handoff import JwksCache
+from share_gateway.handoff import SingleUseJtiRegistry
 from share_gateway.identity import AgentIdentity
 from share_gateway.log import log as _log
-from share_gateway.materials import (
-    ShareMaterials,
-    discard_signing_secret,
-    load_or_create_auth_label,
-    load_or_create_signing_secret,
-    read_share_materials,
-    record_share_domain,
-)
-from share_gateway.retry_state import (
-    STATUS_HALTED,
-    STATUS_RETRYING,
-    STATUS_UP,
-    ProvisioningRetryState,
-    ShareStackStartError,
-    remove_gateway_status,
-    utc_now,
-    write_gateway_status,
-)
-from share_gateway.server import PendingLoginRegistry, build_gateway_app
+from share_gateway.materials import ShareMaterials
+from share_gateway.materials import discard_signing_secret
+from share_gateway.materials import load_or_create_auth_label
+from share_gateway.materials import load_or_create_signing_secret
+from share_gateway.materials import read_share_materials
+from share_gateway.materials import record_share_domain
+from share_gateway.retry_state import ProvisioningRetryState
+from share_gateway.retry_state import STATUS_HALTED
+from share_gateway.retry_state import STATUS_RETRYING
+from share_gateway.retry_state import STATUS_UP
+from share_gateway.retry_state import ShareStackStartError
+from share_gateway.retry_state import remove_gateway_status
+from share_gateway.retry_state import utc_now
+from share_gateway.retry_state import write_gateway_status
+from share_gateway.server import PendingLoginRegistry
+from share_gateway.server import build_gateway_app
 
 POLL_INTERVAL_SECONDS = 10
 _CADDY_ADMIN_URL = "http://localhost:2019"

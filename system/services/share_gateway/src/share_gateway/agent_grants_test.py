@@ -1,38 +1,39 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import PublicFormat
 
-from share_gateway.agent_grants import (
-    AUTHORIZED_KEYS_MARKER,
-    WORKSPACE_SCOPE,
-    AgentGrant,
-    AgentGrantsError,
-    AgentInvite,
-    AgentKeyError,
-    AgentScopeError,
-    canonical_public_key_line,
-    find_grant_by_token,
-    find_invite_by_code,
-    fingerprint_of_public_key_line,
-    hash_admission_token,
-    hash_invite_code,
-    is_agent_id,
-    mint_admission_token,
-    mint_agent_id,
-    mint_invite_code,
-    normalize_invite_code,
-    parse_agent_grants,
-    parse_agent_invites,
-    reconcile_authorized_keys,
-    reconcile_authorized_keys_text,
-    render_agent_grants,
-    render_agent_invites,
-    sanitize_agent_name,
-    validate_scope,
-)
+from share_gateway.agent_grants import AUTHORIZED_KEYS_MARKER
+from share_gateway.agent_grants import AgentGrant
+from share_gateway.agent_grants import AgentGrantsError
+from share_gateway.agent_grants import AgentInvite
+from share_gateway.agent_grants import AgentKeyError
+from share_gateway.agent_grants import AgentScopeError
+from share_gateway.agent_grants import WORKSPACE_SCOPE
+from share_gateway.agent_grants import canonical_public_key_line
+from share_gateway.agent_grants import find_grant_by_token
+from share_gateway.agent_grants import find_invite_by_code
+from share_gateway.agent_grants import fingerprint_of_public_key_line
+from share_gateway.agent_grants import hash_admission_token
+from share_gateway.agent_grants import hash_invite_code
+from share_gateway.agent_grants import is_agent_id
+from share_gateway.agent_grants import mint_admission_token
+from share_gateway.agent_grants import mint_agent_id
+from share_gateway.agent_grants import mint_invite_code
+from share_gateway.agent_grants import normalize_invite_code
+from share_gateway.agent_grants import parse_agent_grants
+from share_gateway.agent_grants import parse_agent_invites
+from share_gateway.agent_grants import reconcile_authorized_keys
+from share_gateway.agent_grants import reconcile_authorized_keys_text
+from share_gateway.agent_grants import render_agent_grants
+from share_gateway.agent_grants import render_agent_invites
+from share_gateway.agent_grants import sanitize_agent_name
+from share_gateway.agent_grants import validate_scope
 from share_gateway.testing import new_ed25519_public_key_line
 
 # The public key and fingerprint of the owner-exec profile's shared test vectors, so the fingerprint rule here is

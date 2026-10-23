@@ -14,57 +14,55 @@ import os
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, Response, request
+from flask import Flask
+from flask import Response
+from flask import request
 
-from share_gateway.agent_access import (
-    AgentAccessPaths,
-    InvalidGrantLifetimeError,
-    JoinRefusedError,
-    LastSeenStore,
-    RevokeRefusedError,
-    count_failed_join,
-    describe_grant,
-    grant_lifetime_from_days,
-    join,
-    list_grants,
-    mint_invite,
-    revoke,
-    visible_grants,
-)
-from share_gateway.agent_grants import (
-    AgentGrant,
-    AgentGrantsError,
-    AgentScopeError,
-    find_grant_by_token,
-    is_agent_id,
-    load_active_agent_grants,
-    validate_scope,
-)
-from share_gateway.agent_orientation import (
-    HELPER_PATH,
-    LatchkeySummaryCache,
-    build_changes_feed,
-    cached_skills_index,
-    default_changes_since,
-    file_sha256,
-    helper_source_url,
-    parse_since,
-    render_instruction_block,
-    render_primer,
-    template_ref,
-)
-from share_gateway.agent_workspace import (
-    WorkspaceCoordinates,
-    app_origins_for,
-    exec_origin_for,
-)
-from share_gateway.caddyfile import RegisteredApp, build_grantable_service_names
-from share_gateway.grants import GrantsError, load_grants
-from share_gateway.identity import RequesterIdentity, bearer_token_from_headers
+from share_gateway.agent_access import AgentAccessPaths
+from share_gateway.agent_access import InvalidGrantLifetimeError
+from share_gateway.agent_access import JoinRefusedError
+from share_gateway.agent_access import LastSeenStore
+from share_gateway.agent_access import RevokeRefusedError
+from share_gateway.agent_access import count_failed_join
+from share_gateway.agent_access import describe_grant
+from share_gateway.agent_access import grant_lifetime_from_days
+from share_gateway.agent_access import join
+from share_gateway.agent_access import list_grants
+from share_gateway.agent_access import mint_invite
+from share_gateway.agent_access import revoke
+from share_gateway.agent_access import visible_grants
+from share_gateway.agent_grants import AgentGrant
+from share_gateway.agent_grants import AgentGrantsError
+from share_gateway.agent_grants import AgentScopeError
+from share_gateway.agent_grants import find_grant_by_token
+from share_gateway.agent_grants import is_agent_id
+from share_gateway.agent_grants import load_active_agent_grants
+from share_gateway.agent_grants import validate_scope
+from share_gateway.agent_orientation import HELPER_PATH
+from share_gateway.agent_orientation import LatchkeySummaryCache
+from share_gateway.agent_orientation import build_changes_feed
+from share_gateway.agent_orientation import cached_skills_index
+from share_gateway.agent_orientation import default_changes_since
+from share_gateway.agent_orientation import file_sha256
+from share_gateway.agent_orientation import helper_source_url
+from share_gateway.agent_orientation import parse_since
+from share_gateway.agent_orientation import render_instruction_block
+from share_gateway.agent_orientation import render_primer
+from share_gateway.agent_orientation import template_ref
+from share_gateway.agent_workspace import WorkspaceCoordinates
+from share_gateway.agent_workspace import app_origins_for
+from share_gateway.agent_workspace import exec_origin_for
+from share_gateway.caddyfile import RegisteredApp
+from share_gateway.caddyfile import build_grantable_service_names
+from share_gateway.grants import GrantsError
+from share_gateway.grants import load_grants
+from share_gateway.identity import RequesterIdentity
+from share_gateway.identity import bearer_token_from_headers
 from share_gateway.json_values import is_json_object
 from share_gateway.log import log
 from share_gateway.server import forwarded_client_ip

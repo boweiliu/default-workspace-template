@@ -5,30 +5,29 @@ import tomllib
 from pathlib import Path
 from typing import Final
 
+from loguru import logger
+from pydantic import ConfigDict
+from pydantic import Field
+from pydantic import ValidationError
+
+from app_manifest.errors import AppRegistrationError
+from app_manifest.errors import RegistryReadError
+from app_manifest.manifest import DEFAULT_PRIORITY
+from app_manifest.manifest import DefaultShortcut
+from app_manifest.manifest import LaunchPathMethod
+from app_manifest.manifest import MessageHandler
+from app_manifest.manifest import Pin
+from app_manifest.manifest import describe_validation_error
+from app_manifest.primitives import AppDescription
+from app_manifest.primitives import AppName
+from app_manifest.primitives import AppUrl
+from app_manifest.primitives import DisplayName
+from app_manifest.primitives import LaunchParamName
+from app_manifest.primitives import LaunchPathId
+from app_manifest.primitives import LaunchPathValue
+from app_manifest.primitives import PriorityName
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.primitives import NonEmptyStr
-from loguru import logger
-from pydantic import ConfigDict, Field, ValidationError
-
-from app_manifest.errors import AppRegistrationError, RegistryReadError
-from app_manifest.manifest import (
-    DEFAULT_PRIORITY,
-    DefaultShortcut,
-    LaunchPathMethod,
-    MessageHandler,
-    Pin,
-    describe_validation_error,
-)
-from app_manifest.primitives import (
-    AppDescription,
-    AppName,
-    AppUrl,
-    DisplayName,
-    LaunchParamName,
-    LaunchPathId,
-    LaunchPathValue,
-    PriorityName,
-)
 
 # The browser-side app contract module (desktop-interface contracts.md section 7), where the
 # shell's frontend build writes it, relative to the repo root every supervised program runs

@@ -1,20 +1,19 @@
 import json
 from pathlib import Path
 
-from click.testing import CliRunner, Result
+from click.testing import CliRunner
+from click.testing import Result
 
 from app_manifest.cli import app_manifest_cli
-from app_manifest.testing import (
-    APP_ICON_MARKUP,
-    build_news_workspace,
-    build_selection_workspace,
-    commit_everything,
-    init_git_repository,
-    run_git,
-    selection_lock,
-    write_app_manifest,
-    write_repo_file,
-)
+from app_manifest.testing import APP_ICON_MARKUP
+from app_manifest.testing import build_news_workspace
+from app_manifest.testing import build_selection_workspace
+from app_manifest.testing import commit_everything
+from app_manifest.testing import init_git_repository
+from app_manifest.testing import run_git
+from app_manifest.testing import selection_lock
+from app_manifest.testing import write_app_manifest
+from app_manifest.testing import write_repo_file
 
 
 def _run_cli(arguments: list[str]) -> Result:

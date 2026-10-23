@@ -2,34 +2,38 @@ import re
 import tomllib
 from enum import auto
 from pathlib import Path
-from typing import Any, Final, Self
+from typing import Any
+from typing import Final
+from typing import Self
 
-from imbue.imbue_common.enums import LowerCaseStrEnum, UpperCaseStrEnum
+from pydantic import Field
+from pydantic import ValidationError
+from pydantic import model_validator
+
+from app_manifest.errors import InvalidManifestValueError
+from app_manifest.errors import ManifestLoadError
+from app_manifest.primitives import AppDescription
+from app_manifest.primitives import AppName
+from app_manifest.primitives import DisplayName
+from app_manifest.primitives import EnvVarName
+from app_manifest.primitives import ExcludeGlob
+from app_manifest.primitives import IconPath
+from app_manifest.primitives import LaunchParamName
+from app_manifest.primitives import LaunchPathId
+from app_manifest.primitives import LaunchPathValue
+from app_manifest.primitives import MessageType
+from app_manifest.primitives import PageTemplate
+from app_manifest.primitives import PreviewName
+from app_manifest.primitives import PriorityName
+from app_manifest.primitives import ProgramName
+from app_manifest.primitives import ReferenceNote
+from app_manifest.primitives import ReferencePath
+from app_manifest.primitives import SecretFileName
+from app_manifest.primitives import is_path_covered_by
+from imbue.imbue_common.enums import LowerCaseStrEnum
+from imbue.imbue_common.enums import UpperCaseStrEnum
 from imbue.imbue_common.frozen_model import FrozenModel
 from imbue.imbue_common.primitives import NonEmptyStr
-from pydantic import Field, ValidationError, model_validator
-
-from app_manifest.errors import InvalidManifestValueError, ManifestLoadError
-from app_manifest.primitives import (
-    AppDescription,
-    AppName,
-    DisplayName,
-    EnvVarName,
-    ExcludeGlob,
-    IconPath,
-    LaunchParamName,
-    LaunchPathId,
-    LaunchPathValue,
-    MessageType,
-    PageTemplate,
-    PreviewName,
-    PriorityName,
-    ProgramName,
-    ReferenceNote,
-    ReferencePath,
-    SecretFileName,
-    is_path_covered_by,
-)
 
 MANIFEST_FILENAME: Final[str] = "app.toml"
 

@@ -1,13 +1,11 @@
 import json
 from pathlib import Path
 
-from share_gateway.assignment import (
-    DEFAULT_POLL_SECONDS,
-    RelayAssignment,
-    parse_assignment,
-    read_cached_assignment,
-    write_cached_assignment,
-)
+from share_gateway.assignment import DEFAULT_POLL_SECONDS
+from share_gateway.assignment import RelayAssignment
+from share_gateway.assignment import parse_assignment
+from share_gateway.assignment import read_cached_assignment
+from share_gateway.assignment import write_cached_assignment
 
 _RELAY_A = "relay-" + "a" * 16
 _RELAY_B = "relay-" + "b" * 16

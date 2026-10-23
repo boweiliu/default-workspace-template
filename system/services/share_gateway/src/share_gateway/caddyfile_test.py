@@ -1,13 +1,11 @@
 from pathlib import Path
 
-from share_gateway.caddyfile import (
-    RegisteredApp,
-    build_frame_ancestors_policy,
-    build_grantable_service_names,
-    build_label_to_name,
-    parse_registered_apps,
-    render_caddyfile,
-)
+from share_gateway.caddyfile import RegisteredApp
+from share_gateway.caddyfile import build_frame_ancestors_policy
+from share_gateway.caddyfile import build_grantable_service_names
+from share_gateway.caddyfile import build_label_to_name
+from share_gateway.caddyfile import parse_registered_apps
+from share_gateway.caddyfile import render_caddyfile
 
 _DOMAIN = "host-" + "a" * 32 + "." + "b" * 32 + ".us1.imbueminds.com"
 _AUTH_LABEL = "auth-x7k9q2w1"
