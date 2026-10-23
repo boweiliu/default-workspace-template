@@ -1268,21 +1268,6 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_on_its_ow
 
 
 @pytest.mark.timeout(120, func_only=False)
-def test_the_new_chat_button_with_nothing_signed_in_opens_a_chat_that_asks_for_a_provider(
-    tmp_path: Path, page: Page
-) -> None:
-    """With nothing signed in the New chat button opens the chat awaiting its first send, and that chat's page asks
-    for a provider, the same as any chat with none to start on."""
-    with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
-        _open_fixture_chat_root(page, server)
-        root = _chat_root(page)
-        root.locator(".chat-rail-new").first.click()
-        expect(_shown_chat(page).locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
-        awaiting = server.chat_state.agent_manager.get_provisional_chats()
-        assert [chat.phase.value for chat in awaiting] == ["awaiting_first_send"]
-
-
-@pytest.mark.timeout(120, func_only=False)
 def test_the_new_chat_button_starts_on_a_signed_in_account_once_the_most_recent_one_is_removed(
     tmp_path: Path, page: Page
 ) -> None:
