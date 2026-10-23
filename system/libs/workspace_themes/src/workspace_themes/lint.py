@@ -64,6 +64,8 @@ _LITERAL_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
 _COMMENT_LINE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^\s*(?://|/\*|\*(?![.\[#]|\s*(?:[{,>+~]|::?[a-zA-Z-]))|#\s)"
 )
+# A token with a fallback: the fallback is the look the app keeps while no theme is put in (docs/system/themeable-apps.md).
+_TOKEN_FALLBACK_START: Final[re.Pattern[str]] = re.compile(r"\bvar\(\s*--[\w-]+\s*,")
 
 
 class ThemingLintFinding(FrozenModel):
@@ -76,13 +78,27 @@ class ThemingLintFinding(FrozenModel):
 
 
 @pure
+def _without_token_fallbacks(line: str) -> str:
+    kept: list[str] = []
+    position = 0
+    while (match := _TOKEN_FALLBACK_START.search(line, position)) is not None:
+        kept.append(line[position : match.end()])
+        depth, position = 1, match.end()
+        while position < len(line) and depth > 0:
+            depth += {"(": 1, ")": -1}.get(line[position], 0)
+            position += 1
+    return "".join(kept) + line[position:]
+
+
+@pure
 def find_literal_looks_in_text(path: Path, text: str) -> list[ThemingLintFinding]:
     findings: list[ThemingLintFinding] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         if _COMMENT_LINE_PATTERN.match(line):
             continue
+        looked_at = _without_token_fallbacks(line)
         for pattern, message in _LITERAL_PATTERNS:
-            if pattern.search(line):
+            if pattern.search(looked_at):
                 findings.append(
                     ThemingLintFinding(
                         path=path,
