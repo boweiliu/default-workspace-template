@@ -238,15 +238,13 @@ def _open_fixture_chat(page: Page, server: RunningWorkspace) -> None:
 
 
 def _start_new_chat(page: Page, server: RunningWorkspace) -> FrameLocator:
-    """Run the chat app's ``new`` launch path from the launcher's menu (its primary free-text row, run with nothing
-    typed): the shell posts the intake and points the window at the chat it answers; return that chat's frame."""
-    _land(page, server)
-    page.locator("[data-launcher-field] textarea").click()
-    menu = page.locator("[data-launcher-overlay]")
-    expect(menu).to_be_visible(timeout=10000)
-    menu.locator(f'[data-launch="{CHAT_APP_NAME}:new"]').click()
-    expect(page.locator("iframe[data-live-page]")).to_have_count(1, timeout=15000)
-    return _chat(page, None)
+    """Start a chat from the chat list's New chat button, in the chat window a link opens; return that chat's frame.
+
+    The launcher has no blank-chat row with nothing typed: its primary free-text row sends to the main chat.
+    """
+    _open_fixture_chat_root(page, server)
+    _chat_root(page).locator(".chat-rail-new").first.click()
+    return _shown_chat(page)
 
 
 def _shown_chat(page: Page) -> FrameLocator:
@@ -1243,13 +1241,12 @@ def test_making_a_chat_the_main_chat_from_its_menu_moves_it_to_the_head_of_the_l
 
 
 @pytest.mark.timeout(120, func_only=False)
-def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_own_window(
+def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_on_its_own_page(
     tmp_path: Path, page: Page
 ) -> None:
-    """The window opens either way: with no account the chat app mints a chat that waits for its first send and
-    holds the intake, and that chat's page offers the provider chooser, so signing in happens where the chat will be
-    rather than on the shell or the chat list; no agent is created until an account is chosen (post-launch-paths plan
-    section 4.6)."""
+    """With no account the chat app mints a chat that waits for its first send, and that chat's page offers the
+    provider chooser, so signing in happens where the chat will be rather than on the shell or the chat list; no agent
+    is created until an account is chosen (post-launch-paths plan section 4.6)."""
     with _running_e2e_server(tmp_path, is_account_signed_in=False) as server:
         chat_frame = _start_new_chat(page, server)
         expect(chat_frame.locator('[data-e2e="provider-chooser"]')).to_be_visible(timeout=15000)
@@ -1263,8 +1260,7 @@ def test_a_new_chat_with_nothing_signed_in_offers_the_provider_chooser_in_its_ow
         ]
         awaiting = server.chat_state.agent_manager.get_provisional_chats()
         assert [chat.phase.value for chat in awaiting] == ["awaiting_first_send"]
-        # The root has applied the intake and reports the awaiting chat's selection alone, so the window keeps it
-        # on reload.
+        # The root reports the awaiting chat's selection alone, so the window keeps it on reload.
         _wait_for_chat_window_path(
             server, lambda path: path == chat_root_path(awaiting[0].chat_id), "the awaiting chat's selection"
         )
