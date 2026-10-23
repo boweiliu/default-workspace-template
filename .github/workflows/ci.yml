@@ -132,9 +132,8 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --all-packages
 
-      # The locked ruff, which the pre-commit hook runs too. The root config
-      # excludes the chat app and the shell, so each is checked from its own
-      # directory under its own config.
+      # The root config excludes the chat app and the shell, so each is checked
+      # from its own directory under its own config.
       - name: Lint Python (ruff check)
         run: |
           uv run --no-sync ruff check .

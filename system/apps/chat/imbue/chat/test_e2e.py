@@ -238,10 +238,7 @@ def _open_fixture_chat(page: Page, server: RunningWorkspace) -> None:
 
 
 def _start_new_chat(page: Page, server: RunningWorkspace) -> FrameLocator:
-    """Start a chat from the chat list's New chat button, in the chat window a link opens; return that chat's frame.
-
-    The launcher has no blank-chat row with nothing typed: its primary free-text row sends to the main chat.
-    """
+    """Start a chat from the chat list's New chat button, in the chat window a link opens; return that chat's frame."""
     _open_fixture_chat_root(page, server)
     _chat_root(page).locator(".chat-rail-new").first.click()
     return _shown_chat(page)
