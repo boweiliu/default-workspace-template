@@ -394,8 +394,9 @@
   border: none;
   border-radius: var(--radius-lg);
 }
-/* The frame's loading line sits under it, and the frame stays hidden (at its full size) until it
-   has loaded, so the wait shows the terminal's surface rather than the card's. */
+/* The frame's loading line sits under it for good, and the frame stays hidden (at its full size)
+   until it has loaded, so any moment the frame paints nothing shows the terminal's surface rather
+   than the card's. */
 .terminal-frame-box {
   position: relative;
   width: 100%;
@@ -404,6 +405,9 @@
 .terminal-frame-loading {
   position: absolute;
   inset: 0;
+}
+.terminal-frame-box > .terminal-frame {
+  position: relative;
 }
 .terminal-frame-pending {
   visibility: hidden;
