@@ -52,8 +52,8 @@ INJECTED_KIT_FILE_NAME: Final[str] = "kit.js"
 INJECTED_LAYERS_FILE_NAME: Final[str] = "layers.css"
 # The global the page kit reads its level from, set ahead of the kit's own script.
 KIT_LEVEL_GLOBAL: Final[str] = "__WORKSPACE_THEME_LEVEL__"
-# The workspace's default theme, ``{"id", "revision"}``, which a page wears first when its origin remembers none: a
-# page the shell does not frame itself (an app inside a preview) never hears ``shell:theme``.
+# The workspace's default theme, ``{"id", "revision"}``, which a page wears first when its origin remembers none,
+# until a ``shell:theme`` reaches it (a page outside the shell gets none).
 KIT_DEFAULT_THEME_GLOBAL: Final[str] = "__WORKSPACE_THEME_DEFAULT__"
 _ROOT_SELECTOR: Final[str] = ":root"
 _PART_ATTRIBUTE_SELECTOR: Final[re.Pattern[str]] = re.compile(

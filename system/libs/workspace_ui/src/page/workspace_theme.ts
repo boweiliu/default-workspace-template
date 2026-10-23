@@ -14,7 +14,7 @@ import { rememberedTheme, wearTheme, wearThemeFromMessage, type ThemeRef } from 
 const INJECTED_THEMES_PREFIX = "/__workspace_theme/themes/";
 const level = (globalThis as { __WORKSPACE_THEME_LEVEL__?: unknown }).__WORKSPACE_THEME_LEVEL__;
 // The workspace's default theme, which the shell sets ahead of the kit: what a page wears first when its origin
-// remembers none, since a page the shell does not frame itself (an app inside a preview) never hears `shell:theme`.
+// remembers none, until a `shell:theme` reaches it (a page outside the shell gets none).
 const workspaceDefault = (globalThis as { __WORKSPACE_THEME_DEFAULT__?: ThemeRef }).__WORKSPACE_THEME_DEFAULT__;
 
 if (typeof level === "string") {
