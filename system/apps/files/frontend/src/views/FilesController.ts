@@ -14,6 +14,7 @@ import {
 } from "@imbue/workspace-ui/src/embed";
 import type { ActionRow, MenuRow } from "@imbue/workspace-ui/src/components/menu";
 import type { IconName } from "@imbue/workspace-ui/src/components/icons";
+import { startDownload } from "@imbue/workspace-ui/src/download";
 
 import { downloadUrlOf, pageUrlOf, urlOf, type Entry, type Listing } from "../models/server";
 import { FilesModel, type HistoryMode } from "../models/FilesModel";
@@ -22,7 +23,6 @@ import { decodePathname, titleOf } from "../models/paths";
 import { sourcesFromFileList } from "../models/uploads";
 import { isAnySyncMoving, isLiveShared } from "../models/connections";
 import { Dialogs } from "./dialogs";
-import { startDownload } from "./download";
 
 /** How often the shares, and the folders on screen, are read again while the window is on screen: often while a sync
  *  is carrying something across, so its progress and what it brings show as they go, and otherwise often enough that
@@ -231,8 +231,9 @@ export class FilesController {
 
   download(entries: readonly Entry[]): void {
     for (const entry of entries) {
-      const filename = entry.isFolder ? `${entry.name}.zip` : entry.name;
-      startDownload(this.win.document, downloadUrlOf(entry.path, entry.isFolder), filename);
+      startDownload(this.win.document, downloadUrlOf(entry.path, entry.isFolder), entry.name, (note) =>
+        this.model.toasts.show(note),
+      );
     }
   }
 
