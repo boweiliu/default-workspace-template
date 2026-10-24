@@ -86,10 +86,14 @@ const popOutBridge: PopOutBridge = {
   reportDetachedWindows: (windows) => sendToEmbedder(DETACHED_WINDOWS, { windows: [...windows] }),
 };
 
-/** Where an external link no app takes opens: through the chrome, or in a new tab of the browser this shell is in. */
+/** Where an external link no app takes opens: through the chrome, or in a new tab of the browser this shell is in,
+ *  or, for a custom-scheme link facing an older chrome, in its app of the user's system by navigating this page
+ *  itself, which Electron hands to the app without leaving the page (the page's own ``frame-src`` admits no custom
+ *  scheme, so a hidden frame of it could not launch one). */
 const outsideLinks: OutsideLinkOpener = {
   openInEmbedder: (url) => sendToEmbedder(OPEN_EXTERNAL, { url }),
   openInBrowser: (url) => void window.open(url, "_blank", "noopener,noreferrer"),
+  launchInSystemApp: (url) => window.location.assign(url),
 };
 
 function bootstrap(): void {
@@ -156,7 +160,10 @@ function bootstrap(): void {
   // The pull-out conversation's two asks from the chrome: what it can do, and a window to bring back.
   setEmbedderMessageHandler(EMBEDDER_CAPABILITIES, (message) => {
     desktopStore.setCanPopOut(message.canPopOut === true);
-    desktopStore.setCanOpenLinksOutside(message.opensExternalLinks === true);
+    desktopStore.setOutsideLinkCapabilities({
+      opensExternalLinks: message.opensExternalLinks === true,
+      opensCustomSchemeLinks: message.opensCustomSchemeLinks === true,
+    });
   });
   setEmbedderMessageHandler(REATTACH_WINDOW, (message) => {
     const windowId = message.windowId;
@@ -224,7 +231,7 @@ function bootstrap(): void {
   // Announced once the page can act on what the embedder held, not merely once a handler is
   // registered: relaying a message needs the apps (which of them take it), and the embedder sends
   // what it held the moment this lands.
-  void loaded.then(() => announceReadyToEmbedder({ opensLinks: true }));
+  void loaded.then(() => announceReadyToEmbedder({ opensLinks: true, opensCustomSchemeLinks: true }));
 }
 
 window.addEventListener("load", bootstrap);

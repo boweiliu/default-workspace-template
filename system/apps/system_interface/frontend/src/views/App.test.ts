@@ -72,6 +72,7 @@ async function mountApp(options: { isDetached?: boolean; soloWindowId?: string }
     outsideLinks: {
       openInEmbedder: (url) => openedOutside.push(`embedder:${url}`),
       openInBrowser: (url) => openedOutside.push(`browser:${url}`),
+      launchInSystemApp: (url) => openedOutside.push(`app:${url}`),
     },
   });
   await store.start(NO_LINK);
