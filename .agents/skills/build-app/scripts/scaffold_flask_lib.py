@@ -1007,7 +1007,7 @@ def main() -> None:
         f"{program_path.relative_to(repo_root)}; the window renders at the service's "
         f"own origin, http://{args.name}.<workspace-host>/). "
         f"Next: implement your routes in src/{package}/runner.py, then verify per "
-        f"references/verify.md (smoketest_app.py or curl + Playwright against http://127.0.0.1:{port}/)."
+        f"references/verify.md (verify_app.py or curl + Playwright against http://127.0.0.1:{port}/)."
     )
 
 

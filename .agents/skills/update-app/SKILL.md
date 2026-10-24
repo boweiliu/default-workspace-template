@@ -192,7 +192,21 @@ don't watch their own source, so a code change is **not** live until the
 process restarts:
 
 - **Backend change** (Python / server logic, for an app or a
-  daemon): restart the program.
+  daemon): restart the program. For an app, steps 2 to 4 of this loop are
+  one call -- it restarts without waiting out the program's 30 s `startsecs`
+  window, waits for the port, checks a marker, and refreshes or opens the
+  window:
+
+  ```bash
+  python3 system/scripts/verify_app.py <name> --restart --marker "<text unique to your change>" --refresh
+  ```
+
+  With no window open yet, pass `--open` instead of `--refresh`: the call
+  opens the window only after the checks pass, the order step 3 asks for.
+
+  A daemon with no port cannot use `verify_app.py` (it needs a port to
+  check), so bounce it with supervisord directly; the call waits out the
+  program's `startsecs`, which is 30 s only if its block sets `startsecs=30`:
 
   ```bash
   supervisorctl restart <name>
@@ -209,7 +223,7 @@ process restarts:
   ```bash
   uv tool install -e system/apps/<package> --reinstall
   uv sync --all-packages            # the app is also a workspace member; keep the lockfile current
-  supervisorctl restart <name>
+  python3 system/scripts/verify_app.py <name> --restart --marker "<text>" --refresh
   ```
 
   (Background services under `system/services/` run from the root venv
@@ -279,9 +293,12 @@ names any channel that did not land on stderr and is never a reason to stop.
 Confirm the change actually does the right thing, exercised as the user
 would (not just "the process is up"):
 
-- **App**: `curl` against the registered backend URL
-  `http://127.0.0.1:<port>/` then a Playwright assertion on a
-  marker unique to your change. The recipe is in
+- **App**: the `verify_app.py --restart --marker ... --refresh` call of
+  step 2 is this check (HTTP against the registered backend URL
+  `http://127.0.0.1:<port>/`, the marker unique to your change, and
+  `--screenshot` for a rendered page only with `--open`, before any window
+  exists); add one `curl` of a changed route to the same call when the change
+  is an API. The recipe is in
   `build-app`'s [verify reference](../build-app/references/verify.md);
   the symptom-indexed gotchas (connection refused, a window stuck on the
   loading page, broken WebSockets) are in that skill's

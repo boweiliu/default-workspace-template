@@ -10,7 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GestureListener, GestureSource } from "../gestures/pointerGestures";
 import type { Desktop, DesktopShortcut } from "../model/records";
 import { DesktopStore } from "../store/DesktopStore";
+import { TourController } from "../model/tour";
 import { FakeDesktopApi, FakeDesktopSocket, offerApps, settle } from "../testing/fakeShell";
+import { FakeTourApi } from "../testing/fakeTour";
 import {
   appRecord,
   desktopRecord,
@@ -38,6 +40,7 @@ const gestures: GestureSource = {
 let api: FakeDesktopApi;
 let socket: FakeDesktopSocket;
 let store: DesktopStore;
+let tour: TourController;
 /** Every link the store opened outside the workspace, by where it went. */
 let openedOutside: string[];
 
@@ -73,7 +76,13 @@ async function mountApp(options: { isDetached?: boolean; soloWindowId?: string }
   });
   await store.start(NO_LINK);
   socket.deliver().onAppsUpdated([appRecord("docs")]);
-  mountView(() => m(App, { store, gestures, host: "127.0.0.1:8000", protocol: "http:" }));
+  tour = new TourController({
+    api: new FakeTourApi({ isSeen: true }),
+    highlightChrome: () => undefined,
+    isAutoStartAllowed: () => false,
+    redraw: () => m.redraw(),
+  });
+  mountView(() => m(App, { store, gestures, tour, host: "127.0.0.1:8000", protocol: "http:" }));
 }
 
 beforeEach(async () => {

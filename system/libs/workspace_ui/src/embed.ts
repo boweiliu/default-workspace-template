@@ -92,6 +92,12 @@ export const OPEN_LINK: "minds:open-link" = "OPEN_LINK" in embedContract ? embed
 // for an external link that embedder handed over with OPEN_LINK.
 export const OPEN_EXTERNAL: "minds:open-external" =
   "OPEN_EXTERNAL" in embedContract ? embedContract.OPEN_EXTERNAL : "minds:open-external";
+// Workspace -> embedder: ring one of the Imbue Studio chrome's own controls while the
+// workspace's tour talks about it, or clear the ring. Payload: { anchor }, one of the
+// chrome's anchor names ("share", "help", ...) or null. Fire-and-forget; a chrome that does
+// not know the type ignores it, and the tour's words never depend on the ring.
+export const HIGHLIGHT_CHROME: "minds:highlight-chrome" =
+  "HIGHLIGHT_CHROME" in embedContract ? embedContract.HIGHLIGHT_CHROME : "minds:highlight-chrome";
 
 type EmbedderMessageHandler = (message: ContractMessage) => void;
 

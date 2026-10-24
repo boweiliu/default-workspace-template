@@ -73,6 +73,8 @@ from imbue.system_interface.shell.theme_routes import DefaultThemeResponse
 from imbue.system_interface.shell.theme_routes import ThemeChoiceRequest
 from imbue.system_interface.shell.theme_wire import THEME_ICON_ROUTE
 from imbue.system_interface.shell.theme_wire import ThemeCatalogWire
+from imbue.system_interface.shell.tour import TOUR_ROUTE
+from imbue.system_interface.shell.tour import TourProgress
 from imbue.system_interface.shell.wallpapers import WALLPAPER_ROUTE_PREFIX
 from imbue.system_interface.shell.wallpapers import WallpapersListing
 
@@ -198,4 +200,7 @@ SHELL_ROUTE_TABLE: RouteTable = {
     ("GET", "/api/avatars/{design_id}/icon.png"): _IMAGE,
     ("GET", "/api/avatars/{design_id}/source.svg"): SchemalessRoute(reason="the design's SVG, as a download"),
     ("POST", "/api/avatar-selection"): RouteModels(request_model=AvatarSelection, response_model=AvatarSelected),
+    # The show-around tour
+    ("GET", TOUR_ROUTE): RouteModels(response_model=TourProgress),
+    ("POST", TOUR_ROUTE): RouteModels(request_model=TourProgress, response_model=TourProgress),
 }
