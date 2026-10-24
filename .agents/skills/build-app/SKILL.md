@@ -451,8 +451,9 @@ directive** (`script-src`, `style-src` and `font-src`, `img-src`,
 `connect-src`); an inline `<script>` needs its
 `inline_script_source` in `script-src`; never `'unsafe-inline'` or `*` for
 scripts. The browser reports every block to the starter's `/_csp-report` route,
-which logs it to stderr as `ERROR Content-Security-Policy blocked <url> on <page>
-(<directive>)` (a blocked inline script adds its line and first characters), so
+which logs it to stderr as an `ERROR` line containing
+`Content-Security-Policy blocked <url> on <page> (<directive>)` (a blocked
+inline script adds its line and first characters), so
 when something on a page does not show up, read the app's
 stderr log (`/var/log/supervisor/<name>-stderr.log`; `check-app-errors` finds
 these lines too) rather than guessing.
@@ -628,7 +629,7 @@ Reading the confirmation signal:
 
 On confirmation, **hand the confirmed app to the `crystallize-creation`
 skill with `type=app`.** It owns the rest -- the tracking ticket, the
-task file (set `type: app`), launching the generic worker,
+task file (`creations: app:<app name>`), launching the generic worker,
 polling, merging on `done`, and refreshing the window after merge. Give it only:
 the slug (the app name), and a task body naming the built lib path, the
 app name, the URL segment, and what the app does. The generic worker
