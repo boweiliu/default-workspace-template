@@ -38,7 +38,7 @@ import { clientRecord } from "./records";
 import { EMPTY_THEME_CATALOG, type ThemeCatalog } from "../model/themes";
 
 /** The frame the shell answers for a pinned window a client has never placed (the shell's own constant). */
-export const PINNED_WINDOW_FRAME = { x: 0.46, y: 0.05, width: 0.5, height: 0.9 };
+export const PINNED_WINDOW_FRAME = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
 
 export class FakeDesktopApi implements DesktopApi {
   desktops: Desktop[] = [];

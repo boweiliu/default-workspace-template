@@ -17,7 +17,6 @@ dependencies = [
     "werkzeug>=3.0",
     # Serves the workspace's themes from this app's own origin (docs/system/blueprint/workspace-themes/).
     "workspace-themes",
-    "workspace-layout",
 ]
 
 [dependency-groups]
@@ -116,7 +115,6 @@ known-first-party = [
     "imbue",
     "app_manifest",
     "app_schema",
-    "workspace_layout",
 ]
 
 # Makes this directory ty's project; without a [tool.ty] table ty keeps searching upward.
