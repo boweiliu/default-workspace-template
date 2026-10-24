@@ -1351,7 +1351,7 @@ describe("pinned entries", () => {
 
   it("restores a pinned window the client never placed at the frame the shell answered, not the cascade", async () => {
     const store = await pinnedStore();
-    expect(store.windowRect("win-9")).toEqual({ x: 460, y: 40, width: 500, height: 720 });
+    expect(store.windowRect("win-9")).toEqual({ x: 50, y: 40, width: 900, height: 720 });
     store.toggleTaskbarEntry("win-9");
     expect(activePlacements(store.getState()).find((placement) => placement.window_id === "win-9")).toMatchObject({
       frame: PINNED_WINDOW_FRAME,

@@ -443,8 +443,7 @@ def test_built_in_manifests_agree_with_the_contract_table() -> None:
     assert by_name["getting-started"].default_shortcut.launch == "open"
     assert by_name["getting-started"].default_shortcut.mode == "focus"
     assert by_name["getting-started"].pin is None
-    # Its preview (update-app's preview_app.py) boots unregistered, so it neither re-points the live row nor opens
-    # the first-visit window.
+    # Its preview (update-app's preview_app.py) boots unregistered, so it does not re-point the live row.
     assert by_name["getting-started"].preview.command[:2] == (
         "getting-started",
         "--no-register",

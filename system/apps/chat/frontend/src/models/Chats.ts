@@ -212,6 +212,10 @@ let replayedProvisionalIds: Set<string> | null = null;
 // Who is waiting for a provisional chat to become an agent (a send typed while it was being
 // created), settled by the push that registers it or the one that fails it.
 const registrationWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }[]>();
+// The chats whose launch this page posted and has not yet seen move past awaiting its first send: the backend
+// refuses a second launch of a chat it is already creating, so a send typed in the meantime waits for the chat
+// to land and goes to it then, as a send into any creating chat does.
+const launchesInFlight = new Set<string>();
 let chatsUpdatedListeners: ChatsUpdatedListener[] = [];
 let chatActivityListeners: ChatActivityListener[] = [];
 let chatActiveAgentListeners: ChatActiveAgentListener[] = [];
@@ -346,12 +350,14 @@ function handleEvent(event: WsEvent): void {
       const { type: _type, ...provisional } = event;
       provisionalChats = [...provisionalChats.filter((p) => p.chat_id !== provisional.chat_id), provisional];
       replayedProvisionalIds?.add(provisional.chat_id);
+      if (provisional.phase !== "awaiting_first_send") launchesInFlight.delete(provisional.chat_id);
       if (provisional.phase === "failed") {
         settleRegistration(provisional.chat_id, new Error(provisional.error ?? "The chat could not be started"));
       }
       break;
     }
     case "provisional_chat_completed":
+      launchesInFlight.delete(event.chat_id);
       if (event.success) {
         // The chat itself arrives on the chats_updated push, which is what settles waiters.
         provisionalChats = provisionalChats.filter((p) => p.chat_id !== event.chat_id);
@@ -545,12 +551,28 @@ export async function awaitingChatForEmptyList(): Promise<string> {
  * Launch a chat minted earlier (a seeded one awaiting its first send, or one whose create
  * failed) on ``accountId``: it keeps its id and name, so the window showing it becomes the chat.
  */
-export function launchChat(chatId: string, accountId: string, message = ""): Promise<CreatedChat> {
-  // A seeded chat's launch brings the user's first message; a failed create's retry has none
-  // to bring, so the field is left out then.
-  return postCreateChat(
-    message === "" ? { chat_id: chatId, account_id: accountId } : { chat_id: chatId, account_id: accountId, message },
-  );
+export async function launchChat(chatId: string, accountId: string, message = ""): Promise<CreatedChat> {
+  launchesInFlight.add(chatId);
+  try {
+    // A seeded chat's launch brings the user's first message; a failed create's retry has none
+    // to bring, so the field is left out then.
+    return await postCreateChat(
+      message === ""
+        ? { chat_id: chatId, account_id: accountId }
+        : { chat_id: chatId, account_id: accountId, message },
+    );
+  } catch (error) {
+    // The launch did not take: the next send may launch the chat, and a send that waited on this
+    // one gets the refusal back rather than waiting for a chat that is not coming.
+    launchesInFlight.delete(chatId);
+    settleRegistration(chatId, error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  }
+}
+
+/** Whether this page has posted a launch of ``chatId`` that the backend has not yet reported as creating. */
+export function isLaunchInFlight(chatId: string): boolean {
+  return launchesInFlight.has(chatId);
 }
 
 async function postCreateChat(body: Record<string, string | ModelIdentity | null>): Promise<CreatedChat> {

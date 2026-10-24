@@ -20,17 +20,19 @@ a single local store you can search. Once the user has asked for datalib, this
 is where you look for their history; do **not** scrape or re-download the
 original services yourself.
 
-The **data root** is `data/.skills/datalib` (relative to the workspace root),
-and the store's config file is `config.toml` inside it. `data/` is the
-workspace's own data tree on the persistent volume, so the store survives
-restarts. The binaries live in `~/.local/bin`, which is not on PATH for every
-shell, so establish all of this once at the top of your shell work:
+The skill's folder, `data/.skills/datalib` (relative to the workspace root),
+is a **libraries folder** laid out like the desktop app's `~/Datalib`: one
+folder per library. The library this workspace uses is `Default`, so the
+**data root** is `data/.skills/datalib/Default`, and the store's config file
+is `config.toml` inside it. `data/` is the workspace's own data tree on the
+persistent volume, so the store survives restarts. The binaries live in
+`~/.local/bin`, which is not on PATH for every shell, so establish all of
+this once at the top of your shell work:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-DATA_ROOT="$HOME/workspace/data/.skills/datalib"   # the data root holding the store
+DATA_ROOT="$HOME/workspace/data/.skills/datalib/Default"   # the data root holding the store
 DATALIB_CONFIG="$DATA_ROOT/config.toml"
-mkdir -p "$DATA_ROOT"
 
 # Nothing of datalib is installed until it is first used. This installs the
 # binaries (pinned to datalib v0.44.0), datalib's agent guide, and the Node
@@ -39,6 +41,7 @@ mkdir -p "$DATA_ROOT"
 # listed. After the first run it only checks that all of it is in place and
 # running, so run it every time:
 bash "$HOME/workspace/.agents/skills/datalib/scripts/install_datalib.sh"
+mkdir -p "$DATA_ROOT"
 ```
 
 1. **Search the existing mirror first.** The user may already have data
