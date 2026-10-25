@@ -717,7 +717,8 @@ def stoppable_app_candidates(
     reached and talked to through), nor is an internal app the user cannot open, nor one with no
     program to stop and start. The browser is left out too: its service holds almost no memory and
     its Chromium processes have their own section. Only a program supervisord reports running is
-    listed, because a stopped one frees nothing.
+    listed: a stopped one frees nothing, and a registry row naming a program supervisord does not
+    have at all (a stale row outlives the drop-in that ran it) could not be started again.
     """
     candidates: list[AppCandidate] = []
     for app in apps:
