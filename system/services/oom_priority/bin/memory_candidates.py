@@ -186,14 +186,6 @@ class AgentCandidate(NamedTuple):
     rss_kib: int | None
 
 
-class ShellAnswer(NamedTuple):
-    """The shell's inventory document, read once for every section that needs it, or why it could not be."""
-
-    url: str
-    document: Any | None
-    error: str | None
-
-
 class WindowIndex(NamedTuple):
     """What the inventory's desktops say: how many windows show each app, and which browsers a window shows.
 
@@ -203,6 +195,16 @@ class WindowIndex(NamedTuple):
 
     count_by_app: Mapping[str, int]
     browser_names: frozenset[str] | None
+
+
+class ShellAnswer(NamedTuple):
+    """The shell's inventory document, read and indexed once for every section that needs it, or
+    why it could not be. ``windows`` is None when there was no document or it is not shaped as one."""
+
+    url: str
+    document: Any | None
+    windows: WindowIndex | None
+    error: str | None
 
 
 class AppCandidate(NamedTuple):
@@ -663,10 +665,15 @@ def _fetch(fetch_json: FetchJson, url: str) -> tuple[Any, str | None]:
 
 
 def read_shell_inventory(sources: Sources) -> ShellAnswer:
-    """The shell's inventory document, read once for the app and browser sections both."""
+    """The shell's inventory document, read and indexed once for the app and browser sections both."""
     url = f"{sources.shell_url}{INVENTORY_ROUTE}"
     document, error = _fetch(sources.fetch_json, url)
-    return ShellAnswer(url=url, document=document, error=error)
+    return ShellAnswer(
+        url=url,
+        document=document,
+        windows=None if error is not None else read_window_index(document),
+        error=error,
+    )
 
 
 def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSection:
@@ -691,7 +698,7 @@ def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSect
         return BrowserSection((), ())
 
     # Only a running browser holds memory, and only the shell knows which ones a window shows.
-    windows = read_window_index(shell.document) if shell.error is None else None
+    windows = shell.windows
     if windows is None or windows.browser_names is None:
         reason = shell.error or "not an inventory document"
         return BrowserSection(
@@ -769,7 +776,7 @@ def stoppable_app_candidates(
 
 
 def collect_app_section(sources: Sources, shell: ShellAnswer) -> AppSection:
-    windows = read_window_index(shell.document) if shell.error is None else None
+    windows = shell.windows
     if windows is None:
         reason = shell.error or "not an inventory document"
         return AppSection(
