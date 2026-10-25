@@ -9,3 +9,5 @@ The pass stops the program and never the windows, so a window stays where it is 
 A background helper whose checks were killed for memory is now a case the update answers itself, rather than one it improvises: it frees memory under that rule and replies with the room it made, measured against the figure the memory guard acts on. Narrowing or skipping a check is still never the answer. It reaches the user only when everything the update may stop is stopped and the room is still not there.
 
 New reference: `.agents/skills/update-self/references/freeing-memory-for-an-update.md`. The general rule for every other flow is unchanged -- it offers the candidates and stops only what the user approves -- and now says so explicitly.
+
+A background helper deciding for itself whether to rerun a killed check now reads the same figure its lead does, rather than the container's `/proc/meminfo`, which under a memory cap reads far more free than the guard sees and sent it straight back into another kill.
