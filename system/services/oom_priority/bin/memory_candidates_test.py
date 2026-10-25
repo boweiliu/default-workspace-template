@@ -541,8 +541,14 @@ def test_lists_the_apps_the_workspace_may_stop_with_how_many_windows_show_them(
         ("lineup-scout", "lineup-scout", 0, 512),
     ]
     assert [a.stops_when_no_windows for a in apps] == [False, True]
-    assert "daily-digest  Daily Digest  daily-digest  2        3 MiB" in (
-        memory_candidates.render_table(report)
+    # The table carries the auto-stop field too: an app the shell does not stop by itself may be
+    # doing work between requests, which is what a reader ranks the candidates by.
+    table = memory_candidates.render_table(report)
+    assert (
+        "daily-digest  Daily Digest  daily-digest  2        no         3 MiB" in table
+    )
+    assert (
+        "lineup-scout  lineup-scout  lineup-scout  0        yes        0 MiB" in table
     )
 
 

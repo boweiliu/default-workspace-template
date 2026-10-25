@@ -372,7 +372,10 @@ It lists:
   left out: its service holds almost nothing and its Chromium processes have
   their own section below. Each row carries how many windows show the app, which
   is what decides whether stopping it takes something off the user's screen, and
-  its memory is the summed RSS of its program's process tree.
+  `AUTO-STOP` (`stop_when_no_windows` in JSON), which says whether the shell
+  stops the app by itself once no window has shown it for the grace period. An
+  app it does not is one that may do work between requests, so it is the costlier
+  one to take down. Its memory is the summed RSS of its program's process tree.
 - **Browsers no window shows**, from the browser service's `GET /browsers`. A
   candidate is a `running` browser that no window names, according to the same
   inventory document. Its memory is the summed RSS of the Chromium

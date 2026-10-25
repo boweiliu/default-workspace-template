@@ -970,13 +970,14 @@ def render_table(report: Report) -> str:
         lines.append("  none")
     else:
         lines += _table(
-            ("NAME", "TITLE", "PROGRAM", "WINDOWS", "MEMORY"),
+            ("NAME", "TITLE", "PROGRAM", "WINDOWS", "AUTO-STOP", "MEMORY"),
             [
                 (
                     app.name,
                     app.display_name,
                     app.program,
                     str(app.window_count),
+                    "yes" if app.stops_when_no_windows else "no",
                     _mib(app.rss_kib),
                 )
                 for app in apps

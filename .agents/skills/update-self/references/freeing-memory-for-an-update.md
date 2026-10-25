@@ -61,10 +61,10 @@ field.
 Stop as little as the run needs. Take the candidates largest first, re-read the free memory, and
 stop when there is room -- a scheduled licence is not a reason to clear the workspace.
 
-An app the listing marks `stop_when_no_windows: false` may be one that does work between requests (a
-poller, a scheduled refresh, a job that outlives its window; the `build-app` skill sets the field
-that way on purpose). It is still yours to stop, but prefer the others first, and say in the results
-message that it was down for the update.
+An app whose `AUTO-STOP` column reads `no` (`stop_when_no_windows: false` in `--json`) may be one
+that does work between requests (a poller, a scheduled refresh, a job that outlives its window; the
+`build-app` skill sets the field that way on purpose). It is still yours to stop, but prefer the
+others first, and say in the results message that it was down for the update.
 
 ## Stop the program, never the windows
 
