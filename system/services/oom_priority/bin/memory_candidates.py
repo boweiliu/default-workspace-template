@@ -540,9 +540,9 @@ def read_window_index(inventory: Any) -> WindowIndex | None:
 
     The browser part mirrors ``workspace_layout.windows.read_app_window_paths``: a window's own
     path and each client's path of it all count. It needs more of a window record than the counts
-    do, so a window whose paths are malformed takes ``browser_names`` to None -- "unknown" for the
-    browsers alone -- and leaves the counts standing, rather than blanking both sections over a
-    field only one of them reads.
+    do, so a browser window whose paths are malformed takes ``browser_names`` to None -- "unknown"
+    for the browsers alone -- and leaves the counts standing, rather than blanking both sections
+    over a field only one of them reads.
     """
     if not isinstance(inventory, dict) or not isinstance(
         inventory.get("desktops"), list
@@ -701,7 +701,14 @@ def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSect
     # Only a running browser holds memory, and only the shell knows which ones a window shows.
     windows = shell.windows
     if windows is None or windows.browser_names is None:
-        reason = shell.error or "not an inventory document"
+        # The two halves fail for different reasons, and the apps section above is listed from the
+        # same document, so saying "not an inventory document" for a malformed window would send
+        # the reader after a shell that answered perfectly well.
+        reason = (
+            shell.error or "not an inventory document"
+            if windows is None
+            else "a browser window carried a path the read could not parse"
+        )
         return BrowserSection(
             None,
             (

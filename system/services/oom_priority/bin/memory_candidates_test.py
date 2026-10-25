@@ -606,7 +606,13 @@ def test_a_window_the_browser_read_cannot_parse_leaves_the_apps_listed(
         ("daily-digest", 1)
     ]
     assert report.browsers.candidates is None
+    # The note names the window, not the document: the shell answered, and the apps section above
+    # was read from that same answer.
     assert "so which browsers no window shows is unknown" in report.browsers.notes[0]
+    assert (
+        "a browser window carried a path the read could not parse"
+        in report.browsers.notes[0]
+    )
 
 
 def test_apps_are_unknown_rather_than_none_when_supervisord_cannot_be_asked(
