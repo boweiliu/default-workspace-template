@@ -83,9 +83,9 @@ the end (`uv run --no-sync workspace-layout open <app>`), because nothing else w
 
 ## Putting it back
 
-A landed apply needs nothing: it runs `mngr start --restart system-services`, which restarts
-supervisord, and every program carries `autostart=true`, so they all come up again. That is also why
-a stopped app costs the user only the stretch before the restart.
+An app needs nothing from a landed apply: it runs `mngr start --restart system-services`, which
+restarts supervisord, and every program carries `autostart=true`, so they all come up again. That is
+also why a stopped app costs the user only the stretch before the restart.
 
 A pass that ends any other way -- a rollback, `STUCK`, `REFUSED`, a decision for the user -- reaches
 no restart, so start each app you stopped by name before you compose the results message:
@@ -94,6 +94,11 @@ no restart, so start each app you stopped by name before you compose the results
 supervisorctl start <program> ...
 ```
 
-Then name every app in the results message with what it was and that it is back
+A browser is not a program, so no ending brings one back: the browser service restores a stopped
+browser as stopped, with its tabs, and its next window is what starts it
+(`system/apps/browser/README.md`). Leave it for that window, or start it yourself with `POST
+/browsers/<name>/start` on the service.
+
+Then name every app and browser in the results message with what it was and where it now stands
 (`references/results-message.md`), the same way the paused chats are named. An app you could not
 start again is a caveat, not a silence.
