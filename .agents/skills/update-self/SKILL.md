@@ -448,8 +448,9 @@ on a worker" in `.agents/shared/references/lead-proxy.md`.
 
 Per `.agents/shared/references/lead-proxy.md` (worker `update-self`, branch
 `mngr/update-self`, reports dir `data/.tasks/update-self/reports/`). A
-`question` is one of four things; you answer the first three yourself, and only
-the last reaches the user. For the first three: reply via `create_worker.py
+`question` is one of four things. You answer the first two yourself; the third
+you answer too, and reach the user only where it says so; the last always ends
+the pass with a decision for them. For the first three: reply via `create_worker.py
 reply --task-file data/.tasks/update-self/task.md -m "..."`, consume the
 report, re-arm the poll. The last ends the pass, as below.
 
@@ -855,8 +856,9 @@ After an apply that landed, give this resume 5b's `--landed` and
 `--wip-commit` too, so a chat it still had to tell hears the same news.
 
 Then put back the apps and browsers this pass stopped for memory, which no
-command records: an apply that landed has already restarted every program, so
-this is for every other ending
+command records. An apply that landed has already restarted every app, so for
+those this is only for the other endings; a browser is never restarted by
+anything, whatever the outcome
 (`references/freeing-memory-for-an-update.md`, "Putting it back").
 
 If a stray preview of a critical app is registered (an older pass may have left
