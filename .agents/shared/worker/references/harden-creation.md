@@ -432,8 +432,14 @@ pressure: that is a shed, never a failure to fix in the code. A shed child can
 also surface as ordinary test errors (a browser that vanished mid-test), so
 run the same check when failures look unrelated to your change. Then judge
 whether a rerun would be shed again, from the ledger (are shed records still
-arriving, for processes other than yours?) and from `/proc/meminfo` (is
-`MemAvailable` recovering since the shed, or still falling?). If things are
+arriving, for processes other than yours?) and from the free memory the guard
+itself acts on -- the first line of `python3
+system/services/oom_priority/bin/memory_candidates.py`, which reads the
+headroom file earlyoom runs with while it is fresh and names the file it read.
+Is that figure recovering since the shed, or still falling? Do not take it from
+`/proc/meminfo` or `free -m`: under a memory cap those describe the whole
+machine or miss what the runtime is charged, and read far more free than the
+guard sees, so a rerun decided on them is shed again. If things are
 settling, rerun the shed command. If they are not, or the rerun is shed too,
 ask your lead with a `question` gate (`worker-reporting.md`) naming the
 command, the ledger records, and the free memory you saw; your lead frees
