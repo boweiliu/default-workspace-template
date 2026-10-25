@@ -304,7 +304,10 @@ def read_free_memory(
     rerunning a command the guard goes on shedding.
     """
     try:
-        is_host_fresh = now.timestamp() - host_meminfo.stat().st_mtime <= HOST_MEMINFO_MAX_AGE_SECONDS
+        is_host_fresh = (
+            now.timestamp() - host_meminfo.stat().st_mtime
+            <= HOST_MEMINFO_MAX_AGE_SECONDS
+        )
     except OSError:
         is_host_fresh = False
     sources = (host_meminfo, proc_meminfo) if is_host_fresh else (proc_meminfo,)
