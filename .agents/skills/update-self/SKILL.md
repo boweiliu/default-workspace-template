@@ -362,8 +362,8 @@ Per §6 of the worker guide: the report shapes come from
 report by hand as §6 spells out -- not with the launcher's `report` subcommand,
 which this workspace's own launcher may predate. Valid `name:` values:
 `question` (mid-flight gate: a genuine, unresolvable conflict, the §4a/§4b/§4c
-scope escape hatch, or a §4b customization the update cannot keep),
-`done` / `stuck` (terminal). `<TASK_FILE>` -> `data/.tasks/update-self/task.md`.
+scope escape hatch, a gate command shed for memory, or a §4b customization the
+update cannot keep), `done` / `stuck` (terminal). `<TASK_FILE>` -> `data/.tasks/update-self/task.md`.
 BODY_EOF
 } > data/.tasks/update-self/task.md
 ```
