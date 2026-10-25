@@ -19,6 +19,7 @@ from chat_background_tasks import markers
 from chat_background_tasks.testing import runner_task
 from imbue.mngr.cli.field_catalog import FieldContext, build_list_field_catalog
 from mngr_cli_contract.contract import assert_mngr_argv_valid
+from oom_priority.meminfo import HOST_MEMINFO_MAX_AGE_SECONDS
 
 _SCRIPT = Path(__file__).parent / "memory_candidates.py"
 _spec = importlib.util.spec_from_file_location("memory_candidates", _SCRIPT)
@@ -827,7 +828,7 @@ def test_free_memory_comes_from_the_headroom_file_the_memory_guard_acts_on(
 
     # earlyoom ignores the file once it is stale, and so must this: a publisher that died would
     # otherwise freeze the reported headroom at whatever it last wrote.
-    stale = _NOW + timedelta(seconds=memory_candidates.HOST_MEMINFO_MAX_AGE_SECONDS + 1)
+    stale = _NOW + timedelta(seconds=HOST_MEMINFO_MAX_AGE_SECONDS + 1)
     fallen_back = memory_candidates.read_free_memory(proc / "meminfo", host, stale)
     assert fallen_back is not None
     assert (fallen_back.source, fallen_back.free_kib) == (str(proc / "meminfo"), 6000)

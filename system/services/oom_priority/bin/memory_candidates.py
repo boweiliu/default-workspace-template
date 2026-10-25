@@ -62,7 +62,7 @@ from oom_priority.agent_identity import (
     WORKER_LABEL,
     is_label_true,
 )
-from oom_priority.meminfo import HOST_MEMINFO_MAX_AGE_SECONDS, HOST_MEMINFO_PATH
+from oom_priority.meminfo import HOST_MEMINFO_PATH, is_host_meminfo_fresh
 from oom_priority.proctree import list_descendant_pids
 from oom_priority.registry import live_pids_by_agent_id
 from oom_priority.supervisor_rpc import supervised_pids
@@ -310,14 +310,11 @@ def read_free_memory(
     who takes ``/proc/meminfo`` for the guard's figure can be several gigabytes out, and will keep
     rerunning a command the guard goes on shedding.
     """
-    try:
-        is_host_fresh = (
-            now.timestamp() - host_meminfo.stat().st_mtime
-            <= HOST_MEMINFO_MAX_AGE_SECONDS
-        )
-    except OSError:
-        is_host_fresh = False
-    sources = (host_meminfo, proc_meminfo) if is_host_fresh else (proc_meminfo,)
+    sources = (
+        (host_meminfo, proc_meminfo)
+        if is_host_meminfo_fresh(host_meminfo, now.timestamp())
+        else (proc_meminfo,)
+    )
     for source in sources:
         values_kib = _parse_meminfo(source)
         for field in (MEMINFO_PREFERRED_FIELD, MEMINFO_FALLBACK_FIELD):
