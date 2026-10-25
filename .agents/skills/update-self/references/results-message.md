@@ -79,11 +79,15 @@ List each, in plain terms:
 - **The work-in-progress commit**: that unfinished work from other chats was
   saved as it stood, so nothing was lost, and that you can split it up or put
   it back uncommitted if they prefer.
-- **The browser or an app it stopped**: name each one, say it was stopped to
-  make room for the update, and that it is running again. One whose window
-  they had open is worth saying plainly: the window stayed where it was and the
-  page works again. If the update did not land and something could not be
-  started again, say which, and that opening it starts it.
+- **Each app it stopped**: name each one, say it was stopped to make room for
+  the update, and that it is running again. One whose window they had open is
+  worth saying plainly: the window stayed where it was and the page works
+  again. If the update did not land and an app could not be started again, say
+  which, and that opening it starts it.
+- **Each browser it stopped**: name each one, say it was stopped to make room
+  for the update, that its tabs are kept, and that it starts again the next
+  time they open it. A browser is not started by the update's restart, so do
+  not say it is running again.
 
 ## The resume note
 
