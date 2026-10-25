@@ -45,9 +45,11 @@ try:
     dispatch = json.load(open('data/.state/update-apply/last-dispatch.json'))
 except (OSError, ValueError):
     dispatch = {}
-is_mine = dispatch.get('chat_agent_name') == os.environ.get('MNGR_AGENT_NAME') or dispatch.get(
-    'chat_id'
-) == os.environ.get('MNGR_AGENT_ID')
+name = os.environ.get('MNGR_AGENT_NAME', '')
+chat = os.environ.get('MINDS_CHAT_ID', '') or os.environ.get('MNGR_AGENT_ID', '')
+is_mine = (name and dispatch.get('chat_agent_name') == name) or (
+    chat and dispatch.get('chat_id') == chat
+)
 print(dispatch.get('started_by') if is_mine else None)
 "
 ```
