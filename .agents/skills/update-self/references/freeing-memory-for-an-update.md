@@ -32,7 +32,8 @@ the user apps no window is showing.
 **A scheduled run** may stop **any** app the candidates command's apps section lists, windows open
 or not. That section is the boundary, and it is drawn so that everything in it can be brought back:
 it holds no critical app (the shell, the chat and the terminal are what the workspace is reached and
-talked to through), nothing internal, and nothing without a supervisord program to start again.
+talked to through), nothing sharing a critical app's program, nothing internal, and nothing without
+a supervisord program to start again.
 Nothing outside it is yours to stop -- not a service, not the shell, not the user's data.
 
 Tell the two apart by who dispatched the run. The app writes this before it creates the chat:

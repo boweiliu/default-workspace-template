@@ -19,7 +19,8 @@ It joins four sources, each read independently so one failing leaves the others 
   marker files. Its memory is the summed RSS of its process trees, rooted at the pid mngr
   reports plus every live pid the agent-pid registry holds for it;
 - apps, from the shell's ``GET /api/inventory`` joined to the programs supervisord is running: an
-  app the workspace is allowed to stop (not critical, not internal, and with a program), with how
+  app the workspace is allowed to stop (with a program of its own that no critical app shares, and
+  neither critical nor internal itself), with how
   many windows show it, since that is what decides whether stopping it takes something off the
   user's screen. Its memory is the summed RSS of its program's process tree;
 - browsers, from the browser service's ``GET /browsers``: a ``running`` browser that no desktop

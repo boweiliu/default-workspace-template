@@ -368,7 +368,9 @@ It lists:
 - **Apps the workspace may stop**, from the shell's `GET /api/inventory` joined
   to the programs supervisord reports running. A candidate has a program, is not
   critical (the shell, the chat and the terminal are what the workspace is
-  reached and talked to through), is not internal, and is running. The browser is
+  reached and talked to through), does not share a critical app's program (the
+  stop would take that app down with it), is not internal, and is running. The
+  browser is
   left out: its service holds almost nothing and its Chromium processes have
   their own section below. Each row carries how many windows show the app, which
   is what decides whether stopping it takes something off the user's screen, and
