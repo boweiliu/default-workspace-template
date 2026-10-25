@@ -195,10 +195,14 @@ class ShellAnswer(NamedTuple):
 
 
 class WindowIndex(NamedTuple):
-    """What the inventory's desktops say: how many windows show each app, and which browsers a window shows."""
+    """What the inventory's desktops say: how many windows show each app, and which browsers a window shows.
+
+    ``browser_names`` is None when a window record carried a path the browser read could not parse,
+    which is "unknown" for the browsers and says nothing about the counts.
+    """
 
     count_by_app: Mapping[str, int]
-    browser_names: frozenset[str]
+    browser_names: frozenset[str] | None
 
 
 class AppCandidate(NamedTuple):
@@ -532,37 +536,40 @@ def read_window_index(inventory: Any) -> WindowIndex | None:
     (which, like an unreachable shell, means "unknown", never "none").
 
     The browser part mirrors ``workspace_layout.windows.read_app_window_paths``: a window's own
-    path and each client's path of it all count.
+    path and each client's path of it all count. It needs more of a window record than the counts
+    do, so a window whose paths are malformed takes ``browser_names`` to None -- "unknown" for the
+    browsers alone -- and leaves the counts standing, rather than blanking both sections over a
+    field only one of them reads.
     """
     if not isinstance(inventory, dict) or not isinstance(
         inventory.get("desktops"), list
     ):
         return None
     count_by_app: dict[str, int] = {}
-    browser_names: set[str] = set()
+    browser_names: set[str] | None = set()
     for desktop in inventory["desktops"]:
         if not isinstance(desktop, dict) or not isinstance(
             desktop.get("windows"), list
         ):
             return None
         for window in desktop["windows"]:
-            if not isinstance(window, dict):
+            if not isinstance(window, dict) or not isinstance(window.get("app"), str):
                 return None
+            app = window["app"]
+            count_by_app[app] = count_by_app.get(app, 0) + 1
+            if app != BROWSER_APP_NAME or browser_names is None:
+                continue
             window_path = window.get("path")
             client_paths = window.get("client_paths", {})
-            app = window.get("app")
             if (
-                not isinstance(app, str)
-                or not isinstance(window_path, str)
+                not isinstance(window_path, str)
                 or not isinstance(client_paths, dict)
                 or not all(
                     isinstance(client_path, str)
                     for client_path in client_paths.values()
                 )
             ):
-                return None
-            count_by_app[app] = count_by_app.get(app, 0) + 1
-            if app != BROWSER_APP_NAME:
+                browser_names = None
                 continue
             for path in (window_path, *client_paths.values()):
                 values = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query).get(
@@ -571,7 +578,8 @@ def read_window_index(inventory: Any) -> WindowIndex | None:
                 if values:
                     browser_names.add(values[0])
     return WindowIndex(
-        count_by_app=count_by_app, browser_names=frozenset(browser_names)
+        count_by_app=count_by_app,
+        browser_names=None if browser_names is None else frozenset(browser_names),
     )
 
 
@@ -684,7 +692,7 @@ def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSect
 
     # Only a running browser holds memory, and only the shell knows which ones a window shows.
     windows = read_window_index(shell.document) if shell.error is None else None
-    if windows is None:
+    if windows is None or windows.browser_names is None:
         reason = shell.error or "not an inventory document"
         return BrowserSection(
             None,
@@ -713,13 +721,23 @@ def stoppable_app_candidates(
 ) -> list[AppCandidate]:
     """The running apps the workspace is allowed to stop, largest memory first.
 
-    A critical app is never one (the shell, the chat and the terminal are what the workspace is
-    reached and talked to through), nor is an internal app the user cannot open, nor one with no
-    program to stop and start. The browser is left out too: its service holds almost no memory and
-    its Chromium processes have their own section. Only a program supervisord reports running is
+    The filter is the shell's own ``stoppable_program_of``
+    (``system_interface/shell/data_types.py``), which decides what the workspace may stop, park and
+    wake: an app with a program, not critical (the shell, the chat and the terminal are what the
+    workspace is reached and talked to through), and not sharing a critical app's program, since
+    stopping that program would take the critical app down with it. An internal app the user cannot
+    open is left out as well, and so is the browser: its service holds almost no memory and its
+    Chromium processes have their own section. Only a program supervisord reports running is
     listed: a stopped one frees nothing, and a registry row naming a program supervisord does not
     have at all (a stale row outlives the drop-in that ran it) could not be started again.
     """
+    critical_programs = {
+        app["program"]
+        for app in apps
+        if app.get("critical")
+        and isinstance(app.get("program"), str)
+        and app["program"]
+    }
     candidates: list[AppCandidate] = []
     for app in apps:
         name = app.get("name")
@@ -727,6 +745,8 @@ def stoppable_app_candidates(
         if not isinstance(name, str) or not isinstance(program, str) or not program:
             continue
         if app.get("critical") or app.get("internal") or name == BROWSER_APP_NAME:
+            continue
+        if program in critical_programs:
             continue
         pid = pids_by_program.get(program)
         if pid is None:

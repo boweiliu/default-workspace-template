@@ -546,6 +546,63 @@ def test_lists_the_apps_the_workspace_may_stop_with_how_many_windows_show_them(
     )
 
 
+def test_an_app_sharing_a_critical_apps_program_is_never_offered(
+    tmp_path: Path, runtime_dir: Path
+) -> None:
+    """The shell's own `stoppable_program_of` refuses these, because `supervisorctl stop <program>`
+    would take the critical app down with the row that merely shares its program."""
+    proc = tmp_path / "proc"
+    _fake_process(proc, 500, 4096)
+    inventory = _inventory(
+        apps=[
+            _app("terminal", program="terminal", critical=True),
+            _app("terminal-extras", program="terminal"),
+        ],
+    )
+    http = _FakeHttp(
+        {
+            f"{_BROWSER_URL}/browsers": _fleet(),
+            f"{_SHELL_URL}/api/inventory": inventory,
+        }
+    )
+
+    report = memory_candidates.collect_report(
+        _sources(proc, _FakeMngr([]), http, supervised_pids={"terminal": 500})
+    )
+
+    assert report.apps.candidates == ()
+
+
+def test_a_window_the_browser_read_cannot_parse_leaves_the_apps_listed(
+    tmp_path: Path, runtime_dir: Path
+) -> None:
+    """The browser read needs a window's paths; the counts need only its app. One malformed record
+    takes the browsers to unknown and leaves the apps standing."""
+    proc = tmp_path / "proc"
+    _fake_process(proc, 600, 2048)
+    inventory = _inventory(
+        {"app": "browser", "path": None, "client_paths": {"c": "/?session=browser-1"}},
+        {"app": "daily-digest", "path": "/"},
+        apps=[_app("daily-digest", program="daily-digest")],
+    )
+    http = _FakeHttp(
+        {
+            f"{_BROWSER_URL}/browsers": _fleet(_browser("browser-1", "running")),
+            f"{_SHELL_URL}/api/inventory": inventory,
+        }
+    )
+
+    report = memory_candidates.collect_report(
+        _sources(proc, _FakeMngr([]), http, supervised_pids={"daily-digest": 600})
+    )
+
+    assert [(a.name, a.window_count) for a in report.apps.candidates] == [
+        ("daily-digest", 1)
+    ]
+    assert report.browsers.candidates is None
+    assert "so which browsers no window shows is unknown" in report.browsers.notes[0]
+
+
 def test_apps_are_unknown_rather_than_none_when_supervisord_cannot_be_asked(
     tmp_path: Path, runtime_dir: Path
 ) -> None:
@@ -695,13 +752,9 @@ def test_an_unreadable_shell_leaves_browsers_unknown_rather_than_calling_them_un
 ) -> None:
     proc = tmp_path / "proc"
     fleet = _fleet(_browser("browser-1", "running"))
-    malformed_browser_window = _inventory(
-        {"app": "browser", "path": None, "client_paths": {"c": "/?session=browser-1"}}
-    )
     for inventory_answer in (
         urllib.error.URLError("timed out"),
         {"unexpected": "shape"},
-        malformed_browser_window,
     ):
         http = _FakeHttp(
             {
