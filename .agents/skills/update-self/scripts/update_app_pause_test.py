@@ -158,6 +158,25 @@ def test_resume_starts_every_recorded_app_and_empties_the_record(
     assert supervisord.calls.count("start daily-digest") == 1
 
 
+def test_an_app_a_landed_apply_already_restarted_leaves_the_record(
+    tmp_path: Path, supervisord: FakeSupervisord
+) -> None:
+    """The ordinary ending: the apply restarts supervisord, every program comes back under
+    `autostart=true`, and the resume meets `ERROR (already started)` for each. That is the outcome
+    the record asked for, so the record empties and the results message has no caveat to carry."""
+    supervisord.set_state(running=["daily-digest", "pr-review"])
+    assert _main(tmp_path, "run-status", "start") == 0
+    assert _main(tmp_path, "run-status", "stop-apps", "daily-digest", "pr-review") == 0
+    supervisord.set_state(
+        running=["daily-digest", "pr-review"],
+        already={"start": ["daily-digest", "pr-review"]},
+    )
+
+    assert _main(tmp_path, "run-status", "resume-apps") == 0
+
+    assert _record(tmp_path).stopped_programs == []
+
+
 def test_an_app_that_will_not_start_stays_on_the_record_for_the_next_try(
     tmp_path: Path, supervisord: FakeSupervisord
 ) -> None:
