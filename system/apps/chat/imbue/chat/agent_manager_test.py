@@ -1393,6 +1393,38 @@ def test_a_workspace_with_chats_but_no_main_chat_opens_a_new_main_chat_ahead_of_
         restarted.stop()
 
 
+def test_initial_discovery_of_a_workspace_with_chats_but_no_main_chat_opens_the_new_main_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """The live app reads the agent list first through initial discovery, before the observe stream."""
+    chat = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._adopt_initial_listing(
+            [
+                AgentInfo(
+                    id=str(chat.id),
+                    name=str(chat.name),
+                    state="RUNNING",
+                    agent_state_dir=tmp_path / "agent_state",
+                    claude_config_dir=tmp_path / "claude_config",
+                    labels=dict(chat.labels),
+                )
+            ]
+        )
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None and main_id != str(chat.id)
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == main_id
+
+        manager._handle_observe_event(make_full_agent_state_event([chat]))
+        assert manager.get_main_chat_id() == main_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
 def test_a_new_workspace_opens_no_main_chat_of_its_own_and_its_first_chat_takes_it(
     broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:
