@@ -26,6 +26,8 @@ from flask import Response
 from flask import request
 from flask import send_from_directory
 from loguru import logger
+from workspace_themes.flask_routes import THEME_STATIC_ROUTE_TABLE
+from workspace_themes.flask_routes import register_workspace_theme_route
 
 from app_schema.api_schema import RouteModels
 from app_schema.api_schema import RouteTable
@@ -88,6 +90,7 @@ ROUTE_TABLE: RouteTable = {
         for path in _REMOTE_PATHS
         for method, reason in _FILE_VERBS.items()
     },
+    **THEME_STATIC_ROUTE_TABLE,
 }
 
 
@@ -114,6 +117,7 @@ def create_app(
     synced_root: Path = SYNCED_FOLDERS,
 ) -> Flask:
     app = Flask(__name__, static_folder=None)
+    register_workspace_theme_route(app)
     register_api_schema_route(
         app, f"{API_PREFIX}/schema", title=APP_DISPLAY_NAME, description=APP_DESCRIPTION, route_table=ROUTE_TABLE
     )
