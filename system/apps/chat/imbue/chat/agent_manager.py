@@ -3479,8 +3479,8 @@ class AgentManager:
         self._auto_open.request_open(provisional.chat_id)
 
     # CLEANUP: drop the upgrade main chat (this method, ``_is_main_chat_opening_pending``, the
-    # ``opens_main_chat_on_upgrade`` build argument, and ``MAIN_CHAT_INTRODUCTION``) once no workspace from
-    # before minds-v0.9.0 is left to update.
+    # ``opens_main_chat_on_upgrade`` build argument, ``MainChatStore.is_recorded``, and ``MAIN_CHAT_INTRODUCTION``)
+    # once no workspace from before minds-v0.9.0 is left to update.
     def _open_main_chat_on_upgrade_locked(self) -> ProvisionalChat | None:
         """On the first read of the agent list, open a new main chat for a workspace that had chats before there
         was a main chat (``main_chat.py``), and make it the main chat; the chat to publish, or None. Lock held."""
