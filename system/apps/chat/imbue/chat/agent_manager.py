@@ -1143,8 +1143,6 @@ class AgentManager:
     _main_chat: MainChatStore
     # Whether the main chat's agent is started again whenever it is found stopped (the live chat app's).
     _keeps_main_chat_awake: bool
-    # Whether the first read of the agent list still owes a workspace with chats but no main chat a new one.
-    _is_main_chat_opening_pending: bool
     # When this manager last started each main-chat agent it found stopped, monotonic seconds.
     _main_chat_wake_started_at: dict[str, float]
     # Re-tags chat agents' OOM ``oom_score_adj`` from live activity: page presence and
@@ -1213,7 +1211,6 @@ class AgentManager:
         message_stamps: MessageStampStore | None = None,
         main_chat: MainChatStore | None = None,
         keeps_main_chat_awake: bool = False,
-        opens_main_chat_on_upgrade: bool = False,
         auto_open: AutoOpenReactor | None = None,
         chat_record_store: ChatRecordStore | None = None,
         chat_files_root: Path = DEFAULT_CHAT_RECORDS_ROOT,
@@ -1235,9 +1232,7 @@ class AgentManager:
         passes one backed by the chat app's data directory, as it does ``main_chat``, which
         holds the workspace's main chat (``main_chat.py``). ``keeps_main_chat_awake`` starts the main chat's agent
         again whenever it is found stopped; the live chat app sets it, and a test that does not ask for it never
-        runs ``mngr start``. ``opens_main_chat_on_upgrade`` opens a new main chat when the first read of the agent
-        list finds chats but ``main_chat`` holds none (a workspace from before there was a main chat); the live
-        chat app sets it. ``auto_open``
+        runs ``mngr start``. ``auto_open``
         surfaces labeled chats' windows; the default remembers nothing and reaches
         no shell, so a real server passes one backed by the ledger and the shell.
         ``chat_record_store`` holds the records of the chats that have run on several
@@ -1328,7 +1323,6 @@ class AgentManager:
         manager._message_stamps = message_stamps if message_stamps is not None else MessageStampStore(path=None)
         manager._main_chat = main_chat if main_chat is not None else MainChatStore(path=None)
         manager._keeps_main_chat_awake = keeps_main_chat_awake
-        manager._is_main_chat_opening_pending = opens_main_chat_on_upgrade
         manager._main_chat_wake_started_at = {}
         manager._transcript_broadcaster = None
         manager._watcher_eviction_callback = None
@@ -3432,19 +3426,26 @@ class AgentManager:
         """
         explicit_title = explicit_chat_name(title)
         with self._lock:
-            provisional = self._seed_chat_locked(explicit_title, turns)
+            provisional = self._seed_chat_locked(
+                explicit_title, turns, is_recorded_as_main_first=self._main_chat.read() is None
+            )
         self._publish_seeded_chat(provisional)
         return CreatedChat(
             chat_id=provisional.chat_id, name=canonical_agent_name(provisional.name), display_name=provisional.name
         )
 
-    def _seed_chat_locked(self, explicit_title: str, turns: tuple[SeedTurn, ...]) -> ProvisionalChat:
+    def _seed_chat_locked(
+        self, explicit_title: str, turns: tuple[SeedTurn, ...], is_recorded_as_main_first: bool
+    ) -> ProvisionalChat:
         """Write a seeded chat's seed and record and list it as provisional, for ``_publish_seeded_chat`` to announce.
-        Raises ``AgentNameConflictError`` for a title already in use. Lock held."""
+        ``is_recorded_as_main_first`` makes it the main chat before any of its files are written. Raises
+        ``AgentNameConflictError`` for a title already in use. Lock held."""
         chat_id = ChatId(str(AgentId()))
         now = datetime.now(timezone.utc)
         events = seed_events(chat_id, turns, now)
         display_name = self._mint_display_name_locked(explicit_title)
+        if is_recorded_as_main_first:
+            self._main_chat.write(chat_id)
         record = ChatRecord(
             chat_id=chat_id,
             agents=(
@@ -3478,19 +3479,30 @@ class AgentManager:
         self._broadcast_chats_updated()
         self._auto_open.request_open(provisional.chat_id)
 
-    # CLEANUP: drop the upgrade main chat (this method, ``_is_main_chat_opening_pending``, the
-    # ``opens_main_chat_on_upgrade`` build argument, ``MainChatStore.is_recorded``, and ``MAIN_CHAT_INTRODUCTION``)
-    # once no workspace from before minds-v0.9.0 is left to update.
+    # CLEANUP: drop the upgrade main chat (this method, ``MainChatStore.is_file_never_written``, and
+    # ``MAIN_CHAT_INTRODUCTION``) once no workspace from before minds-v0.9.0 is left to update.
     def _open_main_chat_on_upgrade_locked(self) -> ProvisionalChat | None:
-        """On the first read of the agent list, open a new main chat for a workspace that had chats before there
-        was a main chat (``main_chat.py``), and make it the main chat; the chat to publish, or None. Lock held."""
-        if not self._is_main_chat_opening_pending or not self._is_agent_list_known:
+        """On the first read of the agent list, give a workspace that had chats before there was a main chat
+        (``main_chat.py``) a main chat of its own: a "Main" chat an interrupted opening left, else a new one; the
+        new chat to publish, or None. Its callers run it only as the agent list becomes known, so it runs before
+        any seed route can. Lock held."""
+        if self._is_secondary or not self._is_agent_list_known or not self._main_chat.is_file_never_written():
             return None
-        self._is_main_chat_opening_pending = False
-        if self._main_chat.is_recorded() or not self._main_chat_candidates_locked():
+        candidate_ids = {candidate.chat_id for candidate in self._main_chat_candidates_locked()}
+        if not candidate_ids:
+            return None
+        left_by_an_interrupted_opening = sorted(
+            chat_id
+            for chat_id, record in self._chat_record_by_id.items()
+            if chat_id in candidate_ids and record.is_seeded and record.seed_title == MAIN_CHAT_NAME
+        )
+        if left_by_an_interrupted_opening:
+            self._main_chat.write(left_by_an_interrupted_opening[0])
             return None
         try:
-            provisional = self._seed_chat_locked(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)
+            provisional = self._seed_chat_locked(
+                MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION, is_recorded_as_main_first=False
+            )
         except (AgentNameConflictError, OSError) as e:
             _loguru_logger.warning("Did not open a new main chat: {}", e)
             return None

@@ -7,11 +7,14 @@ When the chat it names is gone (deleted, or never listed), another chat takes it
 welcome chat if one is still listed, else the chat messaged most recently, else one still awaiting
 its first send. A chat another agent started (a helper) never takes it. With no chat at all there
 is no main chat until one exists: the chat list opens a chat awaiting its first send, which takes it.
+The welcome chat is recorded as the main chat before any of its own files are written, so a chat app
+stopped part-way through seeding it never leaves a welcome chat with no main chat file.
 
 A workspace that had chats before there was a main chat (one updated from an earlier version) has
 no main chat file and chats already listed when this app first reads the agent list. Rather than
 hand the main chat to whichever of those was messaged last (often the chat that ran the update),
-the chat app opens a new one on ``MAIN_CHAT_INTRODUCTION`` and makes it the main chat.
+the chat app opens a new one on ``MAIN_CHAT_INTRODUCTION`` and makes it the main chat, or makes a
+"Main" chat an earlier, interrupted opening left behind the main chat.
 """
 
 import json
@@ -89,10 +92,10 @@ class MainChatStore(MutableModel):
     path: Path | None = Field(frozen=True, description="The file, or None for memory only (tests)")
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _chat_id: ChatId | None = PrivateAttr(default=None)
-    _is_recorded: bool = PrivateAttr(default=False)
+    _is_file_written: bool = PrivateAttr(default=False)
 
     def model_post_init(self, context: object, /) -> None:
-        self._is_recorded = self.path is not None and self.path.exists()
+        self._is_file_written = self.path is not None and self.path.exists()
         self._chat_id = self._load()
 
     def _load(self) -> ChatId | None:
@@ -129,11 +132,12 @@ class MainChatStore(MutableModel):
             if chat_id == self._chat_id:
                 return
             self._chat_id = chat_id
-            self._is_recorded = True
+            self._is_file_written = True
             self._save_unlocked()
 
-    def is_recorded(self) -> bool:
-        """Whether the workspace has ever had a main chat: the file was there when loaded, even one naming no
-        chat or unreadable, or a chat has been written since."""
+    def is_file_never_written(self) -> bool:
+        """Whether the store keeps a file that has never been written: absent when loaded, and nothing written
+        since. A file there at load counts as written even when it names no chat or cannot be read. False for a
+        store in memory only, which has no workspace history behind it."""
         with self._lock:
-            return self._is_recorded
+            return self.path is not None and not self._is_file_written
