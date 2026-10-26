@@ -3,7 +3,8 @@
  * the one the root shows marked, and starting a new one at the head. Picking a row shows
  * that chat in the root's inner frame.
  *
- * The rows are ordered and grouped by ``rows.ts``. A row is renameable in place (double-click,
+ * The rows are ordered and grouped by ``rows.ts``. The main chat leads in a medium weight, its group set
+ * off from the rest by a rule, since it is where a text with no chat of its own goes. A row is renameable in place (double-click,
  * or the pencil under the pointer), and a right-click opens a menu: rename, stop or restart,
  * delete (which asks first). A stopped chat stays in the list faded with a pause mark; one
  * being deleted is crossed out until the list drops it.
@@ -28,8 +29,8 @@ import { anchorForPoint } from "@imbue/workspace-ui/src/menu-position";
 import { kebabGlyph, plusGlyph } from "../glyphs";
 import { isUnread } from "./chatUnread";
 import { acceptPendingRename, dropPendingRename, showPendingRename } from "./pendingRenames";
-import { destroyChat, renameChat, startChat, stopChat } from "./verbs";
-import { isAgentStarted } from "./rows";
+import { destroyChat, makeMainChat, renameChat, startChat, stopChat } from "./verbs";
+import { isAgentStarted, startsWithMainChat } from "./rows";
 import {
   DEFAULT_RAIL_WIDTH_PX,
   MAX_RAIL_WIDTH_PX,
@@ -159,6 +160,12 @@ function setRunningFromMenu(row: ChatRow, isRunning: boolean): void {
   });
 }
 
+function makeMainFromMenu(row: ChatRow): void {
+  makeMainChat(row.chatId).catch((error: unknown) => {
+    alert(`Could not make "${row.title}" the main chat.\n\n${error instanceof Error ? error.message : String(error)}`);
+  });
+}
+
 /** What a row's menu needs of the root: the rows, the one shown, and how to show another. */
 export type RowMenuContext = Pick<ChatRailAttrs, "rows" | "selectedChatId" | "onPick">;
 
@@ -200,8 +207,20 @@ export function rowMenuRows(attrs: RowMenuContext, row: ChatRow, referenceRows: 
   const isStopped = row.status === "stopped";
   return [
     { kind: "action", key: "rename", label: "Rename", onSelect: () => beginRename(row) },
-    // A chat with no agent yet has nothing to stop or restart; its rename and delete apply as it lands.
-    ...(row.isProvisional
+    // A helper another agent started cannot be the main chat, and the main chat needs no offer to become it.
+    ...(row.isMain || isAgentStarted(row)
+      ? []
+      : [
+          {
+            kind: "action",
+            key: "make-main",
+            label: "Make main chat",
+            onSelect: () => makeMainFromMenu(row),
+          } as MenuRow,
+        ]),
+    // The main chat is kept running (the chat app wakes it whenever it is found stopped), and a chat that is not an
+    // agent yet has nothing to stop, so neither offers these.
+    ...(row.isMain || row.isProvisional
       ? []
       : [
           {
@@ -307,7 +326,7 @@ export const ChatRail: m.Component<ChatRailAttrs> = {
             // list, so the drawer's own pan-y must be repeated here for a sideways drag over the rows to reach it.
             class: `chat-rail-list min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-2${attrs.isTouch ? " touch-pan-y" : ""}`,
           },
-          attrs.rows.map((row) => railRow(attrs, row)),
+          railGroups(attrs),
         ),
         attrs.isTouch ? null : resizeHandle(),
         menuRow === undefined ? null : railMenu.view(rowMenuRows(attrs, menuRow, menuReferenceRows)),
@@ -315,6 +334,21 @@ export const ChatRail: m.Component<ChatRailAttrs> = {
     );
   },
 };
+
+/** The rows, the main chat alone in a container of its own above a rule; its helpers lead the rest, under it. */
+function railGroups(attrs: ChatRailAttrs): m.Vnode[] {
+  const split = startsWithMainChat(attrs.rows) ? 1 : 0;
+  const rest = attrs.rows.slice(split).map((row) => railRow(attrs, row));
+  if (split === 0) return [m("div", { key: "rest" }, rest)];
+  return [
+    m(
+      "div",
+      { key: "main", class: "chat-rail-main-group mb-1 border-b border-default pb-1" },
+      attrs.rows.slice(0, split).map((row) => railRow(attrs, row)),
+    ),
+    m("div", { key: "rest" }, rest),
+  ];
+}
 
 /** How far one arrow key moves the list's edge. */
 const RESIZE_KEY_STEP_PX = 16;
@@ -448,9 +482,11 @@ function railRow(attrs: ChatRailAttrs, row: ChatRow): m.Vnode {
               ? "chat-rail-row--selected bg-fill-active text-primary"
               : "text-primary hover:bg-fill-hover",
         row.status === "stopped" ? "chat-rail-row--stopped opacity-50" : "",
+        row.isMain ? "chat-rail-row--main font-medium" : "",
       ].join(" "),
       "data-chat-id": row.chatId,
       "data-status": status,
+      "data-main": row.isMain ? "true" : undefined,
       "aria-current": isSelected ? "true" : undefined,
       "aria-disabled": isDeleting ? "true" : undefined,
       // In the drawer the chat on screen is picked again to close it.

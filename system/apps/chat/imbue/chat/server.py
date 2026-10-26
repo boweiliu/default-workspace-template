@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from collections.abc import Iterator
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from typing import Final
@@ -120,6 +121,7 @@ from imbue.chat.harnesses.session import AgentHarnessSession
 from imbue.chat.harnesses.session import SendOutcome
 from imbue.chat.harnesses.session_watcher import AgentSessionWatcher
 from imbue.chat.harnesses.session_watcher import TranscriptReader
+from imbue.chat.main_chat import MAIN_CHAT_NAME
 from imbue.chat.models import AgentCreationError
 from imbue.chat.models import AgentDestroyError
 from imbue.chat.models import AgentListItem
@@ -167,13 +169,13 @@ from imbue.chat.models import PoweredByResponse
 from imbue.chat.models import ProvisionalChat
 from imbue.chat.models import ProvisionalChatPhase
 from imbue.chat.models import RenameChatRequest
-from imbue.chat.models import SetLaunchChoiceRequest
 from imbue.chat.models import RenameChatResponse
 from imbue.chat.models import ScreenCaptureResponse
 from imbue.chat.models import SeedChatRequest
 from imbue.chat.models import SendFailureResponse
 from imbue.chat.models import SendMessageRequest
 from imbue.chat.models import SendMessageResponse
+from imbue.chat.models import SetLaunchChoiceRequest
 from imbue.chat.models import SetModelChoiceRequest
 from imbue.chat.models import ShoulderTapAtomicResponse
 from imbue.chat.models import SignedOutAccountError
@@ -833,7 +835,13 @@ def _send_to_chat(
                 answer=SendFailureResponse(detail=detail, kind=ACCOUNT_SIGNED_OUT_SEND_FAILURE_KIND), status=409
             )
         try:
-            outcome = _deliver_message(state, agent_info, send_message_request.message, message_id)
+            # A seeded chat whose agent was launched as the user signed in has its conversation to deliver
+            # ahead of the first words sent to it; the seed counts as delivered only with a send that went through.
+            outcome = agent_manager.carry_pending_seed(
+                chat_id,
+                send_message_request.message,
+                lambda text: _deliver_message(state, agent_info, text, message_id),
+            )
         except AgentNotFoundError as e:
             # Destroyed while the send was in flight: the chat is gone, not refusing.
             logger.info("Agent {} was destroyed while a message to it was in flight: {}", agent_info.name, e)
@@ -1792,17 +1800,17 @@ def _seed_chat() -> Response:
 
     The body is a :class:`SeedChatRequest`. Answers 201 with the chat's id and name pair; the
     chat is listed at once as a provisional chat awaiting the user's first message, with the
-    turns as its transcript (``chat_seed.py``). Like every create, 503 until the agent list has
-    been read from mngr once, so the Imbue Studio app's seeding retries rather than being refused; a
-    title with no usable characters answers 400 and one already taken 409, as a launch's
-    requested name would.
+    turns as its transcript (``chat_seed.py``), named ``MAIN_CHAT_NAME``: it is the workspace's first
+    main chat (``main_chat.py``). Like every create, 503 until the agent list has been read from
+    mngr once, so the Imbue Studio app's seeding retries rather than being refused; 409 when a chat
+    already wears that name.
     """
     agent_manager: AgentManager = get_state().agent_manager
     if not agent_manager.is_agent_list_known():
         return _agent_list_not_known_response()
     seed_request = parse_request_body(SeedChatRequest)
     try:
-        created = agent_manager.seed_chat(seed_request.title, seed_request.turns)
+        created = agent_manager.seed_chat(MAIN_CHAT_NAME, seed_request.turns)
     except AgentNameConflictError as e:
         return error_response(str(e), 409)
     except AgentCreationError as e:
@@ -1825,11 +1833,20 @@ def _agent_chat_snapshot(agent_manager: AgentManager, chat_id: ChatId) -> ChatSn
     return agent_manager.get_chat_snapshot(str(chat_id))
 
 
+def _main_or_most_recent_intake_chat(
+    agent_manager: AgentManager, snapshots: Sequence[ChatSnapshot]
+) -> _ResolvedIntakeChat:
+    main_id = agent_manager.get_main_chat_id()
+    if main_id is not None:
+        return _ResolvedIntakeChat(chat_id=main_id)
+    return _ResolvedIntakeChat(chat_id=most_recently_messaged_chat_id(snapshots))
+
+
 def _resolve_intake_chat(agent_manager: AgentManager, intake: IntakeRequest) -> _ResolvedIntakeChat | Response:
     """The chat an intake's target names (spec 3.5), or the 404 for an explicit chat the app does not list.
 
-    ``new_chat`` answers no chat: the caller creates or mints one. ``current_chat`` and
-    ``chat_selector`` fall back to that when nothing qualifies.
+    ``new_chat`` answers no chat: the caller creates or mints one. ``current_chat``,
+    ``main_chat`` and ``chat_selector`` fall back to that when nothing qualifies.
     """
     snapshots = agent_manager.get_chat_snapshots()
     match intake.target:
@@ -1842,7 +1859,9 @@ def _resolve_intake_chat(agent_manager: AgentManager, intake: IntakeRequest) -> 
             selected = chat_id_selected_by_window_path(intake.window_path)
             if selected is not None and agent_manager.knows_chat(selected):
                 return _ResolvedIntakeChat(chat_id=selected)
-            return _ResolvedIntakeChat(chat_id=most_recently_messaged_chat_id(snapshots))
+            return _main_or_most_recent_intake_chat(agent_manager, snapshots)
+        case IntakeTarget.MAIN_CHAT:
+            return _main_or_most_recent_intake_chat(agent_manager, snapshots)
         case IntakeTarget.CHAT_SELECTOR:
             if len(snapshots) > 1:
                 return _ResolvedIntakeChat(chat_id=None, needs_pick=True)
@@ -2093,7 +2112,11 @@ def _list_chats_endpoint() -> Response:
     agent_manager: AgentManager = get_state().agent_manager
     if not agent_manager.is_agent_list_known():
         return _agent_list_not_known_response()
-    return model_response(ChatListResponse(chats=tuple(agent_manager.get_chat_snapshots())))
+    return model_response(
+        ChatListResponse(
+            chats=tuple(agent_manager.get_chat_snapshots()), main_chat_id=agent_manager.get_main_chat_id()
+        )
+    )
 
 
 def _refuse_primary_agent(agent_state_name: str, labels: dict[str, str], verb: str) -> Response | None:
@@ -2111,14 +2134,17 @@ def _refuse_primary_agent(agent_state_name: str, labels: dict[str, str], verb: s
 
 
 def _destroy_chat(chat_id: str) -> Response:
-    """Destroy a chat by running ``mngr destroy --force`` on every agent of it; a chat with no agent yet is
-    dropped (one still being created loses its agent as the create lands)."""
+    """Destroy a chat by running ``mngr destroy --force`` on every agent of it.
+
+    A chat that is not an agent yet is discarded, its seed with it; one still being created leaves every page
+    at once and loses its agent as the create lands.
+    """
     agent_manager: AgentManager = get_state().agent_manager
     agent_info = _find_active_agent(chat_id)
     if agent_info is None:
-        if agent_manager.discard_provisional_chat(chat_id):
-            return model_response(DestroyAgentResponse(status="ok"))
-        return _chat_not_found_response(chat_id)
+        if not agent_manager.discard_provisional_chat(chat_id):
+            return _chat_not_found_response(chat_id)
+        return model_response(DestroyAgentResponse(status="ok"))
     refusal = _refuse_primary_agent(agent_info.name, agent_info.labels, "destroy")
     if refusal is not None:
         return refusal
@@ -2154,10 +2180,9 @@ def _rename_chat(chat_id: str) -> Response:
     """
     agent_manager: AgentManager = get_state().agent_manager
     agent_info = _find_active_agent(chat_id)
-    if agent_info is None:
-        if agent_manager.get_provisional_chat(chat_id) is None:
-            return _chat_not_found_response(chat_id)
-    else:
+    if agent_info is None and agent_manager.get_provisional_chat(chat_id) is None:
+        return _chat_not_found_response(chat_id)
+    if agent_info is not None:
         refusal = _refuse_primary_agent(agent_info.name, agent_info.labels, "rename")
         if refusal is not None:
             return refusal
@@ -2169,6 +2194,17 @@ def _rename_chat(chat_id: str) -> Response:
     except AgentRenameError as e:
         return error_response(str(e), 400)
     return model_response(RenameChatResponse(status="ok"))
+
+
+def _make_main_chat(chat_id: str) -> Response:
+    """Star a chat as the workspace's main chat (``main_chat.py``); 409 for one that cannot be the main chat."""
+    agent_manager: AgentManager = get_state().agent_manager
+    parsed = parse_chat_ref(chat_id)
+    if parsed is None or not agent_manager.knows_chat(parsed):
+        return _chat_not_found_response(chat_id)
+    if not agent_manager.make_main_chat(parsed):
+        return error_response("Only a chat you started can be the main chat", 409)
+    return model_response(OkResponse())
 
 
 def _stop_chat(chat_id: str) -> Response:
@@ -2309,11 +2345,11 @@ def _serve_file_or_document(path: str) -> Response:
     """Serve an agent-authored file by its absolute on-disk path, else the chat page for a one-segment key.
 
     A chat page's markdown names files by their absolute path (``/home/user/...``), which the
-    browser resolves against this origin; ``try_serve_file`` answers those (an image inline,
-    any other existing file as a download). A single path segment that is no file is a chat
-    page's key; anything else is not found.
+    browser resolves against this origin; ``try_serve_file`` answers those (an image inline, or
+    as a download when asked for with ``?download``; any other existing file as a download). A
+    single path segment that is no file is a chat page's key; anything else is not found.
     """
-    file_response = try_serve_file(path)
+    file_response = try_serve_file(path, is_download="download" in request.args)
     if file_response is not None:
         return file_response
     if "/" in path:
@@ -2397,7 +2433,9 @@ def _run_ws_broadcast_loop(websocket: Any, agent_manager: AgentManager) -> None:
         # process was running) can be dropped rather than waited on forever.
         for provisional in agent_manager.get_provisional_chats_as_shown():
             websocket.send(json.dumps(provisional_chat_created_message(provisional)))
-        websocket.send(json.dumps(chats_updated_message(agent_manager.get_chat_snapshots())))
+        websocket.send(
+            json.dumps(chats_updated_message(agent_manager.get_chat_snapshots(), agent_manager.get_main_chat_id()))
+        )
         shutdown = False
         while not shutdown:
             # The pages send nothing; anything that arrives is drained and ignored.
@@ -2424,6 +2462,7 @@ _PER_CHAT_ROUTES: Final[tuple[tuple[str, Callable[..., Response], tuple[str, ...
     ("destroy", _destroy_chat, ("POST",)),
     ("rename", _rename_chat, ("POST",)),
     ("launch-choice", _set_launch_choice, ("POST",)),
+    ("make-main", _make_main_chat, ("POST",)),
     ("start", _start_chat, ("POST",)),
     ("stop", _stop_chat, ("POST",)),
     ("events", _get_events, ("GET",)),
@@ -2515,6 +2554,7 @@ _ROUTE_TABLE: Final[RouteTable] = {
     ("POST", "/api/chats/{chat_id}/launch-choice"): RouteModels(
         request_model=SetLaunchChoiceRequest, response_model=OkResponse
     ),
+    ("POST", "/api/chats/{chat_id}/make-main"): RouteModels(response_model=OkResponse),
     ("POST", "/api/chats/{chat_id}/start"): RouteModels(
         response_model=StartAgentResponse, alternate_responses=(_CONVERGING,)
     ),

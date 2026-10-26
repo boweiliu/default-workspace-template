@@ -50,6 +50,7 @@ import {
   getProvisionalChat,
   refuseSendToFailedChat,
   isHandoffCancellable,
+  isLaunchInFlight,
   launchChat,
   whenChatRegistered,
 } from "../models/Chats";
@@ -752,9 +753,14 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
           // it was minted for, else the signed-in one, else the one the chooser produces. A seeded
           // chat's message rides the launch as the agent's first, wrapped in the seed; any other is
           // sent once the launch is under way, held like any send to a starting chat, so Stop can
-          // take it back until the agent is up.
+          // take it back until the agent is up. A chat whose launch is already on its way (the
+          // sign-in's) is a creating chat to this send.
           const awaiting = getProvisionalChat(chatId);
-          if (awaiting?.phase === "awaiting_first_send" && getChatById(chatId) === undefined) {
+          if (
+            awaiting?.phase === "awaiting_first_send" &&
+            getChatById(chatId) === undefined &&
+            !isLaunchInFlight(chatId)
+          ) {
             const accountId = await chooseAccountForFirstSend(awaiting);
             if (accountId === null) {
               // The chooser closed with no sign-in: nothing was launched, and the message is
@@ -789,6 +795,9 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
           // and delivers it once the create lands, so a page closed meanwhile loses nothing, and the
           // bubble stays until the turn arrives. A create that has already failed takes no sends,
           // and the message goes back to the composer like any failed send.
+          // A launch this page posted that the backend has not yet reported creating may not hold
+          // the send yet, so that one send waits for the chat to land.
+          if (isLaunchInFlight(chatId)) await whenChatRegistered(chatId);
           refuseSendToFailedChat(chatId);
           const status = await sendMessage(chatId, finalText, messageId);
           // The send resolved: the message is now real (committed, queued, or held for the
@@ -1396,14 +1405,35 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
         );
       }
 
+      /**
+       * The chooser for a chat with no provider to start on: the sign-in it produces launches a chat still
+       * awaiting its first send right away, so its agent is up before the user has typed, and the first send
+       * goes to the running agent (carrying the seeded conversation, for a seeded chat). A launch the chat app
+       * refuses lands on the page as a failed create, with its "Try again".
+       */
+      function openProviderChooserForFirstSend(awaitingChatId: string): void {
+        openProviderChooser({
+          onSignedIn: (accountId) => {
+            const awaiting = getProvisionalChat(awaitingChatId);
+            if (awaiting?.phase !== "awaiting_first_send" || getChatById(awaitingChatId) !== undefined) return;
+            if (isLaunchInFlight(awaitingChatId)) return;
+            launchChat(awaitingChatId, accountId).catch((error: unknown) => {
+              console.error(
+                `The chat ${awaitingChatId} could not be started on sign-in: ${describeRequestError(error)}`,
+              );
+            });
+          },
+        });
+      }
+
       /** In place of the composer while nothing is signed in that a new chat could start on. The chooser opens as the
        *  notice appears, and its button opens it again once dismissed. */
-      function renderNoProviderNotice(): m.Children {
+      function renderNoProviderNotice(awaitingChatId: string): m.Children {
         return providerNotice(
           "message-input-no-provider",
           "Connect an AI provider to start chatting.",
-          () => openProviderChooser(),
-          () => openProviderChooser(),
+          () => openProviderChooserForFirstSend(awaitingChatId),
+          () => openProviderChooserForFirstSend(awaitingChatId),
         );
       }
 
@@ -1435,8 +1465,8 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
       const canSendNow = canSend && !isComposerDisabled;
       const blockingNotice = isBlockedBySignedOutAccount
         ? renderSignedOutAccountNotice(chatId)
-        : isBlockedByNoProvider
-          ? renderNoProviderNotice()
+        : isBlockedByNoProvider && chatId !== null
+          ? renderNoProviderNotice(chatId)
           : null;
 
       // The stop button is there whenever a message of the user's is in progress: while the

@@ -11,7 +11,16 @@ import {
 import type { ChatRow } from "./rows";
 
 function row(chatId: string, title: string): ChatRow {
-  return { chatId, title, status: "idle", labels: {}, agentIds: [chatId], lastActiveMs: null, isProvisional: false };
+  return {
+    chatId,
+    title,
+    status: "idle",
+    labels: {},
+    agentIds: [chatId],
+    lastActiveMs: null,
+    isProvisional: false,
+    isMain: false,
+  };
 }
 
 const titles = (rows: readonly ChatRow[]): string[] => rows.map((entry) => entry.title);
