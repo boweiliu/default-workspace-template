@@ -108,8 +108,8 @@ MAIN_BRANCH_SIGNAL = STATE_DIR / "workspace_main_branch_initialized"
 _LEGACY_MAIN_BRANCH_SIGNAL = STATE_DIR / "initial_chat_created"
 # Tells the system interface this workspace is new, so its show-around tour may start by itself. A
 # workspace that already existed when an update brought the tour in never gets it. The directory is
-# system_interface's ``DEFAULT_STATE_DIRECTORY``, spelled out for the same reason as
-# ``_STARTER_PROJECT_ID`` below.
+# system_interface's ``DEFAULT_STATE_DIRECTORY``, spelled out rather than imported to keep this
+# first-boot program's dependencies minimal.
 OFFER_TOUR_SIGNAL = STATE_DIR / "system_interface" / "offer_tour"
 # The view the first chat is filed in: the starter project the workspace seeds.
 # Duplicated from system_interface's ``projects.DEFAULT_PROJECT_ID`` rather than
