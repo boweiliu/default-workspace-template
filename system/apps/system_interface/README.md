@@ -99,7 +99,7 @@ supervisord from the repo root) listens on `http://127.0.0.1:8000` and serves:
   `layout_op` (contracts section 6); it accepts each client's `client_state`
   report.
 
-Its state lives under `data/.state/system_interface/`: `desktops.json`, `tour.json` (whether the tour has run, and where it resumes),
+Its state lives under `data/.state/system_interface/`: `desktops.json`, `tour.json` (whether the tour has run, and where it resumes), `offer_tour` (the bootstrap's mark on a new workspace, without which the tour never starts by itself),
 `default_shortcuts_offered.json` (the apps whose default shortcut the shell
 has offered), `placements/<desktop>/<client>.json`,
 `window_paths/<client>.json` (a client's own paths for independent windows),
