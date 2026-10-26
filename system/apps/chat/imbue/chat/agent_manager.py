@@ -3481,7 +3481,7 @@ class AgentManager:
     def _open_main_chat_on_upgrade_locked(self) -> ProvisionalChat | None:
         """On the first read of the agent list, open a new main chat for a workspace that had chats before there
         was a main chat (``main_chat.py``), and make it the main chat; the chat to publish, or None. Lock held."""
-        if not self._is_main_chat_opening_pending:
+        if not self._is_main_chat_opening_pending or not self._is_agent_list_known:
             return None
         self._is_main_chat_opening_pending = False
         if self._main_chat.read() is not None or not self._main_chat_candidates_locked():

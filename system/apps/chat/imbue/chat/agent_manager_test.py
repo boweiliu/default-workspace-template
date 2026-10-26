@@ -1411,6 +1411,26 @@ def test_a_new_workspace_opens_no_main_chat_of_its_own_and_its_first_chat_takes_
         manager.stop()
 
 
+def test_an_agent_event_before_the_agent_list_is_known_leaves_the_new_main_chat_for_the_full_list(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    gone = _agent_details("Chat-9", labels={"user_created": "true"})
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_agent_removed_event(gone.id, gone.name, gone.host.id))
+        assert manager.get_main_chat_id() is None
+
+        manager._handle_observe_event(make_full_agent_state_event([other]))
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None and main_id != str(other.id)
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
 def test_a_workspace_whose_main_chat_is_recorded_opens_no_new_one(
     broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:
