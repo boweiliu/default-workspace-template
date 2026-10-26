@@ -943,11 +943,17 @@ def _cmd_run_status_stop_apps(args: argparse.Namespace) -> int:
     recorder = args.chat or os.environ.get(ENV_DRI_AGENT, "")
     status = _run_status_for_recorder(repo_root, recorder, now)
 
-    def record(program: str) -> None:
+    def record(program: str, is_stopped: bool) -> None:
         if program not in status.stopped_programs:
             status.stopped_programs.append(program)
         write_run_status(status, repo_root, now)
-        print(f"Stopped {program}.")
+        if is_stopped:
+            print(f"Stopped {program}.")
+        else:
+            print(
+                f"Recorded {program} as this run's to start again; its stop never answered, "
+                "so whether it is down is unknown."
+            )
 
     problems = stop_programs(args.program, run_command, record)
     for problem in problems:

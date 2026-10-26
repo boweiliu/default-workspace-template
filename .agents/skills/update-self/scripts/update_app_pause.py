@@ -62,13 +62,15 @@ def _timed_out(result: CompletedCommand) -> bool:
 def stop_programs(
     programs: Sequence[str],
     run: CommandRunner,
-    record: Callable[[str], None],
+    record: Callable[[str, bool], None],
 ) -> list[str]:
     """Stop each program, calling ``record`` for every one this pass may now owe a start.
 
     ``record`` is called before the next program is touched, so a pass killed partway through
-    leaves a record of everything it has already stopped. Returns one line per program that could
-    not be stopped.
+    leaves a record of everything it has already stopped. Its second argument says whether
+    supervisorctl confirmed the stop, which a caller that reports the round needs: a timed-out
+    stop is recorded without anyone knowing the program is down. Returns one line per program
+    that could not be stopped.
 
     A program is recorded unless supervisorctl plainly refused the stop. A stop that *timed out*
     is recorded as well, and still reported: a timeout says the answer never came, not that the
@@ -88,7 +90,7 @@ def stop_programs(
             problems.append(f"could not stop {program}: {_answer(result)}")
             if not _timed_out(result):
                 continue
-        record(program)
+        record(program, is_stopped)
     return problems
 
 

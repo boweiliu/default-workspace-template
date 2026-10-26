@@ -130,7 +130,10 @@ def test_an_app_that_would_not_stop_is_not_recorded_as_one_to_start(
 
 
 def test_a_stop_that_times_out_is_reported_but_still_recorded(
-    tmp_path: Path, supervisord: FakeSupervisord, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    supervisord: FakeSupervisord,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A timeout says the answer never came, not that the app is up. Recording one that turns out
     to be running costs a redundant start the resume forgets; not recording one that is down
@@ -147,6 +150,11 @@ def test_a_stop_that_times_out_is_reported_but_still_recorded(
     assert _main(tmp_path, "run-status", "stop-apps", "daily-digest") == 1
 
     assert _record(tmp_path).stopped_programs == ["daily-digest"]
+    # The record is not a claim that the app is down, so the round must not read as one: the
+    # lead composes the results message from this output.
+    printed = capsys.readouterr().out
+    assert "Stopped daily-digest." not in printed
+    assert "never answered" in printed
 
 
 def test_an_app_already_stopped_counts_as_stopped(
