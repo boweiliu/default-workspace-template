@@ -64,10 +64,10 @@ what this run needs, with no confirmation and no preflight script, you may:
 - stop the browser and the user apps no window is showing, and on a **scheduled**
   run any user app at all, windows or not
   (`python3 system/services/oom_priority/bin/memory_candidates.py` lists them;
-  a browser stops through the browser service, an app through `supervisorctl
-  stop <program>`). `references/freeing-memory-for-an-update.md` has the rule,
-  how to tell a scheduled run from a pressed one, and what the pass owes the
-  user afterwards;
+  a browser stops through the browser service, an app through `run-status
+  stop-apps`, which records it so `resume-apps` starts it again).
+  `references/freeing-memory-for-an-update.md` has the rule, how to tell a
+  scheduled run from a pressed one, and what the pass owes the user afterwards;
 - prune the worktrees of workers that are gone (`git worktree list`, then `git
   worktree remove` one whose agent `mngr list` no longer shows, never the
   `update-self` worker's), apply snapshots under
@@ -855,11 +855,17 @@ python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scrip
 After an apply that landed, give this resume 5b's `--landed` and
 `--wip-commit` too, so a chat it still had to tell hears the same news.
 
-Then put back the apps and browsers this pass stopped for memory, which no
-command records. An apply that landed has already restarted every app, so for
-those this is only for the other endings; a browser is never restarted by
-anything, whatever the outcome
-(`references/freeing-memory-for-an-update.md`, "Putting it back").
+Then start the apps this pass stopped for memory, whatever the outcome (a no-op
+when it stopped none, or when a landed apply's restart got there first):
+
+```bash
+python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scripts/update_self.py \
+    run-status resume-apps
+```
+
+A browser is not a program and no ending brings one back, so put any this pass
+stopped back yourself (`references/freeing-memory-for-an-update.md`, "Putting it
+back").
 
 If a stray preview of a critical app is registered (an older pass may have left
 one; the careful flow refuses its next pass on that app while one is), tear it
