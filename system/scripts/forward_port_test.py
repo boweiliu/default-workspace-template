@@ -754,6 +754,8 @@ def _write_manifest(tmp_path: Path, body: str, icon: str | None = _ICON) -> Path
 _FULL_MANIFEST = """
 name = "files"
 display_name = "Files"
+description = "Browse and open the files in this workspace."
+api_schema_path = "/api/schema"
 icon = "icon.svg"
 critical = false
 stop_when_no_windows = true
@@ -833,6 +835,8 @@ def test_manifest_registration_copies_every_field_onto_the_row(tmp_path: Path) -
     assert list(row["default_shortcut"]) == ["launch", "mode"]
     assert row["launcher_rank"] == 20
     assert row["window_closed_path"] == "/api/window-closed"
+    assert row["description"] == "Browse and open the files in this workspace."
+    assert row["api_schema_path"] == "/api/schema"
     assert "actions" not in row
     # The row carries each launch path's param NAMES (the launcher reads them), its presets, and its method, text
     # and draft params, and none of those keys at all for a launch path that declares none of them.
@@ -866,6 +870,24 @@ def test_manifest_registration_copies_only_the_pin_keys_the_manifest_wrote(tmp_p
 
     assert result.returncode == 0, result.stderr
     assert _read_apps(apps_file)[0]["pin"] == {"path": "/inbox"}
+
+
+def test_manifest_registration_copies_the_theming_mode_and_leaves_it_off_an_app_without_one(tmp_path: Path) -> None:
+    apps_file = tmp_path / "apps.toml"
+    (tmp_path / "chat").mkdir()
+    (tmp_path / "notes").mkdir()
+    themed = _write_manifest(
+        tmp_path / "chat", 'name = "chat"\ndisplay_name = "Chat"\nicon = "icon.svg"\n\n[theming]\nmode = "parts"\n'
+    )
+    plain = _write_manifest(tmp_path / "notes", 'name = "notes"\ndisplay_name = "Notes"\nicon = "icon.svg"\n')
+
+    for manifest, port in ((themed, 8010), (plain, 8090)):
+        result = _run(["--manifest", str(manifest), "--url", f"http://localhost:{port}"], apps_file)
+        assert result.returncode == 0, result.stderr
+
+    rows = {row["name"]: row for row in _read_apps(apps_file)}
+    assert rows["chat"]["theming_mode"] == "parts"
+    assert "theming_mode" not in rows["notes"]
 
 
 @pytest.mark.parametrize(
@@ -981,6 +1003,8 @@ def test_manifest_registration_is_authoritative_on_every_call(tmp_path: Path) ->
     assert row["program"] == "files-sidecar"
     assert row["critical"] is True
     for stale_key in (
+        "description",
+        "api_schema_path",
         "instances",
         "instances_url",
         "stop_when_no_windows",

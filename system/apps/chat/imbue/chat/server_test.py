@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import pytest
+from app_schema.testing import assert_api_schema_describes_app
+from app_manifest.testing import assert_document_policy_admits_page
 from chat_background_tasks.listing import chats_from_agents_payload
 from flask import Flask
 from flask.testing import FlaskClient
@@ -33,6 +35,7 @@ from werkzeug.test import TestResponse
 from imbue.chat.accounts import INDEX_VERSION
 from imbue.chat.accounts import account_dir
 from imbue.chat.accounts import commit_account
+from imbue.chat.accounts import delete_account
 from imbue.chat.accounts import index_path
 from imbue.chat.accounts import mint_account_dir
 from imbue.chat.activity_state import ActivityState
@@ -49,7 +52,10 @@ from imbue.chat.agent_manager import _build_chat_destroy_command
 from imbue.chat.agent_manager import _build_chat_stop_command
 from imbue.chat.background_tasks import BackgroundTaskReader
 from imbue.chat.chat_naming import ChatNamer
+from imbue.chat.chat_naming import chat_naming_prompt
 from imbue.chat.chat_records import ChatRecord
+from imbue.chat.chat_seed import SeedRole
+from imbue.chat.chat_seed import SeedTurn
 from imbue.chat.chat_transcript import agent_switch_event_id
 from imbue.chat.config import Config
 from imbue.chat.errors import ChatAppError
@@ -66,6 +72,7 @@ from imbue.chat.harnesses.events import DisplayKind
 from imbue.chat.harnesses.harness_type import HarnessType
 from imbue.chat.harnesses.lanes import HARNESS_LABEL
 from imbue.chat.harnesses.message_display import BACKGROUND_TASK_REPORT_TAG
+from imbue.chat.harnesses.message_display import SEED_CONTEXT_TAG
 from imbue.chat.harnesses.mock_one_shot_test import ScriptedOneShotCompletion
 from imbue.chat.harnesses.pi_coding.model import PiInterruptToComposer
 from imbue.chat.harnesses.registry import build_interrupt_to_composer
@@ -74,6 +81,7 @@ from imbue.chat.harnesses.session import FileHarnessSession
 from imbue.chat.harnesses.session import SendOutcome
 from imbue.chat.harnesses.session import SessionDeps
 from imbue.chat.latchkey_gateway import GatewayAccess
+from imbue.chat.main_chat import MAIN_CHAT_NAME
 from imbue.chat.models import AgentStateItem
 from imbue.chat.models import CreateChatRequest
 from imbue.chat.models import HandoffPhase
@@ -113,8 +121,9 @@ from imbue.chat.testing import open_ws
 from imbue.chat.testing import seed_agent_state
 from imbue.chat.testing import seed_failed_chat
 from imbue.chat.testing import serve_app
-from imbue.chat.testing import write_background_task_marker
 from imbue.chat.testing import utc_iso_seconds_ago
+from imbue.chat.testing import wait_until_true
+from imbue.chat.testing import write_background_task_marker
 from imbue.chat.testing import write_compacting_marker
 from imbue.chat.testing import write_recording_mngr_binary
 from imbue.chat.ws_broadcaster import WebSocketBroadcaster
@@ -169,6 +178,22 @@ def app(config: Config, signed_in_account: str, tmp_path: Path, messenger: Recor
 @pytest.fixture
 def client(app: Flask) -> FlaskClient:
     return app.test_client()
+
+
+def test_the_chat_documents_are_served_under_the_document_policy(client: FlaskClient) -> None:
+    """The chats document carries a policy a browser would run it under; the terminal frame and the markdown's
+    images, video and audio from anywhere are admitted (the shared default admits images from the chat's own
+    origin only; the sanitizer admits all three tags, see the frontend's markdown test), and a non-page answer
+    carries none."""
+    page = client.get("/")
+
+    assert page.status_code == 200
+    assert_document_policy_admits_page(page)
+    policy = page.headers["Content-Security-Policy"]
+    assert "frame-src http: https:" in policy
+    assert "img-src * data: blob:" in policy
+    assert "media-src * data: blob:" in policy
+    assert "Content-Security-Policy" not in client.get("/api/health").headers
 
 
 def test_list_agents_endpoint(client: FlaskClient) -> None:
@@ -938,6 +963,55 @@ def test_send_message_success() -> None:
     assert messenger.sent == [(agent_id, "hello")]
 
 
+def test_a_send_to_a_chat_launched_at_sign_in_carries_the_seeded_conversation_once(
+    tmp_path: Path, signed_in_account: str
+) -> None:
+    """The sign-in launch left the seed pending on the record: the message route delivers the first send with
+    the seeded conversation ahead of the user's words, and the next send as typed."""
+    mngr_binary, _log_path = write_recording_mngr_binary(tmp_path)
+    messenger = RecordingMngrMessenger()
+    manager = AgentManager.build(
+        WebSocketBroadcaster(), messenger=messenger, mngr_binary=mngr_binary, chat_files_root=tmp_path
+    )
+    # The launch's create runs in the primary agent's work dir, which the isolation fixture only names.
+    Path(os.environ["MNGR_AGENT_WORK_DIR"]).mkdir(parents=True, exist_ok=True)
+    manager.note_agent_list_known()
+    client = create_application(build_test_state(agent_manager=manager)).test_client()
+    seeded = manager.seed_chat(
+        "Welcome",
+        (
+            SeedTurn(role=SeedRole.USER, text="Wait.. what is honest software?"),
+            SeedTurn(role=SeedRole.ASSISTANT, text="Your workspace is ready."),
+        ),
+    )
+    chat_id = ChatId(seeded.chat_id)
+    manager.create_chat("", chat_id=seeded.chat_id)
+    wait_until_true(lambda: manager.get_provisional_chat(seeded.chat_id) is None, 10, "the provisional chat's completion")
+    record = manager._chat_record_store.read(chat_id)
+    assert record is not None and record.is_seed_pending is True
+    member_id = record.agents[-1].agent_id
+    member = AgentInfo(
+        id=member_id,
+        name="Welcome",
+        state="RUNNING",
+        agent_state_dir=tmp_path / "member",
+        claude_config_dir=tmp_path / ".claude",
+    )
+
+    with patch("imbue.chat.server._find_active_agent", return_value=member):
+        first = client.post(f"/api/chats/{chat_id}/message", json={"message": "1"})
+        second = client.post(f"/api/chats/{chat_id}/message", json={"message": "2"})
+
+    assert first.status_code == 200 and second.status_code == 200
+    (first_id, carried), (second_id, plain) = messenger.sent
+    assert first_id == member_id and second_id == member_id
+    assert carried.startswith(f"<{SEED_CONTEXT_TAG}>") and carried.endswith(f"</{SEED_CONTEXT_TAG}>\n1")
+    assert "Wait.. what is honest software?" in carried
+    assert plain == "2"
+    delivered = manager._chat_record_store.read(chat_id)
+    assert delivered is not None and delivered.is_seed_pending is False
+
+
 def test_a_message_sent_to_a_chat_still_called_chat_n_names_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -949,7 +1023,7 @@ def test_a_message_sent_to_a_chat_still_called_chat_n_names_it(
         manager._agents[agent_id] = AgentStateItem(
             id=agent_id, name="Chat-4", state="RUNNING", labels={"display_name": "Chat 4"}, work_dir=None
         )
-    completion = ScriptedOneShotCompletion(["Rome trip: plan five days in May"])
+    completion = ScriptedOneShotCompletion(["Five days in Rome"])
     renames: list[tuple[ChatId, str]] = []
     namer = ChatNamer(
         chat_files_root=tmp_path / "chats",
@@ -967,8 +1041,8 @@ def test_a_message_sent_to_a_chat_still_called_chat_n_names_it(
     response = client.post(f"/api/chats/{agent_id}/message", json={"message": "Help me plan 5 days in Rome"})
 
     assert response.status_code == 200
-    assert completion.prompts == ["Help me plan 5 days in Rome"]
-    assert renames == [(ChatId(agent_id), "Rome trip: plan five days in May")]
+    assert completion.prompts == [chat_naming_prompt("Help me plan 5 days in Rome")]
+    assert renames == [(ChatId(agent_id), "Five days in Rome")]
 
 
 def _client_with_account_labeled_chat(
@@ -3038,7 +3112,8 @@ def _seed_body() -> dict[str, Any]:
 
 def test_seeding_a_chat_lists_it_awaiting_its_first_send_with_the_turns_as_its_transcript(tmp_path: Path) -> None:
     """The Imbue Studio app's onboarding conversation arrives whole: the chat is created (201) as a
-    provisional chat awaiting the user, and its events route reads the seeded turns."""
+    provisional chat awaiting the user, named the main chat whatever title the app sent, and its events
+    route reads the seeded turns."""
     agent_manager = AgentManager.build(WebSocketBroadcaster(), chat_files_root=tmp_path)
     agent_manager.note_agent_list_known()
     client = create_application(build_test_state(agent_manager=agent_manager)).test_client()
@@ -3047,7 +3122,7 @@ def test_seeding_a_chat_lists_it_awaiting_its_first_send_with_the_turns_as_its_t
 
     assert response.status_code == 201
     created = response.get_json()
-    assert created["display_name"] == "Getting started"
+    assert created["display_name"] == MAIN_CHAT_NAME
     provisional = agent_manager.get_provisional_chat(created["chat_id"])
     assert provisional is not None
     assert provisional.phase is ProvisionalChatPhase.AWAITING_FIRST_SEND
@@ -3060,10 +3135,21 @@ def test_seeding_a_chat_lists_it_awaiting_its_first_send_with_the_turns_as_its_t
     assert events["events"][0]["content"] == "Wait.. what is honest software?"
 
 
-def test_seeding_a_chat_refuses_a_title_with_no_usable_characters(client: FlaskClient) -> None:
-    response = client.post("/api/chats/seed", json={**_seed_body(), "title": "!!!"})
-    assert response.status_code == 400
-    assert "no usable characters" in response.get_json()["detail"]
+def test_a_seeded_chat_waiting_for_its_first_send_can_be_renamed_and_deleted_through_its_routes(
+    app: Flask, client: FlaskClient
+) -> None:
+    agent_manager = state_of(app).agent_manager
+    chat_id = client.post("/api/chats/seed", json=_seed_body()).get_json()["chat_id"]
+
+    renamed = client.post(f"/api/chats/{chat_id}/rename", json={"title": "Planning"})
+    provisional = agent_manager.get_provisional_chat(chat_id)
+    deleted = client.post(f"/api/chats/{chat_id}/destroy")
+
+    assert renamed.status_code == 200
+    assert provisional is not None and provisional.name == "Planning"
+    assert deleted.status_code == 200
+    assert agent_manager.get_provisional_chat(chat_id) is None
+    assert client.post(f"/api/chats/{chat_id}/destroy").status_code == 404
 
 
 def test_seeding_a_chat_refuses_a_body_without_turns(client: FlaskClient) -> None:
@@ -3102,7 +3188,7 @@ def test_an_empty_chat_list_chat_is_refused_until_the_agent_list_is_known() -> N
 def test_the_chat_settings_read_as_the_defaults_and_are_replaced_whole(client: FlaskClient) -> None:
     assert client.get("/api/settings").get_json() == {
         "settings": {
-            "fast_mode_default": "auto",
+            "fast_mode_default": "off",
             "fast_mode_turn_limit": 2,
             "is_fast_mode_notice_shown": False,
             "autocompact_default": True,
@@ -3163,7 +3249,7 @@ def test_a_chats_fast_mode_defaults_to_the_workspaces_and_is_replaced_whole(tmp_
     _register_agent(app, "agent-fast", "Chat-1", "RUNNING")
 
     assert client.get("/api/chats/agent-fast/fast-mode").get_json() == {
-        "state": {"mode": "auto", "is_switched": False}
+        "state": {"mode": "off", "is_switched": False}
     }
 
     response = client.put("/api/chats/agent-fast/fast-mode", json={"mode": "auto", "is_switched": True})
@@ -3303,6 +3389,66 @@ def test_create_chat_refuses_an_id_it_never_minted(
 
     assert response.status_code == 400
     assert "never-minted" in response.get_json()["detail"]
+
+
+def test_create_chat_with_nothing_signed_in_is_refused_as_needing_a_provider(
+    client: FlaskClient, app: Flask, signed_in_account: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create with no account left to run on says so in words, with the kind the chat root opens the provider
+    gate on."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-123")
+    _register_agent(app, "agent-123", "primary", "RUNNING")
+    delete_account(signed_in_account)
+
+    response = client.post("/api/chats/create", json={})
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "detail": "Connect an AI provider to start chatting.",
+        "kind": "no_provider_account",
+    }
+
+
+def test_create_chat_naming_a_signed_out_account_is_refused_in_words(
+    client: FlaskClient, app: Flask, signed_in_account: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A create naming an account deleted since the page read the list is refused with the signed-out kind and a
+    sentence, not the account store's "no such account: <id>"."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-123")
+    _register_agent(app, "agent-123", "primary", "RUNNING")
+    removed, _ = mint_account_dir()
+    commit_account(removed, "anthropic", "Anthropic")
+    delete_account(removed)
+
+    response = client.post("/api/chats/create", json={"account_id": removed})
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "detail": "The account this chat was going to start on was signed out. Choose a provider to start it on.",
+        "kind": "account_signed_out",
+    }
+
+
+def test_create_chat_naming_no_account_skips_a_removed_most_recent_one(
+    client: FlaskClient, app: Flask, signed_in_account: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rail's New chat names no account: once the most recently used account is removed, the create starts on
+    the account still signed in rather than the removed one."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    monkeypatch.setenv("MNGR_AGENT_ID", "agent-123")
+    _register_agent(app, "agent-123", "primary", "RUNNING")
+    removed, _ = mint_account_dir()
+    commit_account(removed, "anthropic", "Anthropic")
+    delete_account(removed)
+
+    response = client.post("/api/chats/create", json={})
+
+    assert response.status_code == 201
+    provisional = state_of(app).agent_manager.get_provisional_chat(response.get_json()["chat_id"])
+    assert provisional is not None
+    assert provisional.account_id == signed_in_account
 
 
 def test_create_chat_rejects_a_conflicting_explicit_name_with_a_409(
@@ -3611,6 +3757,26 @@ def test_ignores_requested_at_cache_busting_query(client: FlaskClient, tmp_path:
     assert tagged.content_type == "image/png"
     assert tagged.data == b"fake-png-bytes"
     assert tagged.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+
+
+def test_serves_image_as_an_attachment_for_the_lightbox_download(client: FlaskClient, tmp_path: Path) -> None:
+    """The lightbox's Download asks for the image with ``download``, beside its message's cache key: the image comes
+    as an attachment under its own name, and a missing one is a not-found in plain words the lightbox can show."""
+    image_path = tmp_path / "chart.png"
+    image_path.write_bytes(b"fake-png-bytes")
+
+    downloaded = client.get(f"{image_path}?requested_at=2026-07-24T00%3A00%3A00Z&download=")
+
+    assert downloaded.status_code == 200
+    assert downloaded.content_type == "image/png"
+    assert downloaded.data == b"fake-png-bytes"
+    assert downloaded.headers["Content-Disposition"] == "attachment; filename=chart.png"
+
+    missing = client.get(f"{tmp_path / 'gone.png'}?download=")
+    assert missing.status_code == 404
+    assert missing.content_type.startswith("text/plain")
+    assert missing.get_data(as_text=True) == f"There's nothing at {tmp_path / 'gone.png'}."
+    assert "Content-Disposition" not in missing.headers
 
 
 def test_serves_image_in_nested_subdirectory(client: FlaskClient, tmp_path: Path) -> None:
@@ -4015,9 +4181,9 @@ def test_a_converging_chat_holds_sends_answers_409_to_the_verbs_and_can_be_cance
     ]
     # The page renders the held messages and the phase text from the snapshot, so both ride it.
     assert listed[0]["handoff"]["target_harness"] == "codex"
-    assert listed[0]["handoff"]["held_sends"] == [
-        {"message_id": "trigger-1", "text": "Carry on in Codex"},
-        {"message_id": "m-2", "text": "and this"},
+    assert [(held["message_id"], held["text"]) for held in listed[0]["handoff"]["held_sends"]] == [
+        ("trigger-1", "Carry on in Codex"),
+        ("m-2", "and this"),
     ]
     # The chat still reads from the agent it is leaving.
     assert client.get(f"/api/chats/{first}/events").get_json()["total"] == 1
@@ -4163,9 +4329,9 @@ def test_a_chat_restarting_on_another_account_holds_sends_refuses_the_verbs_and_
         (chat["status"], chat["handoff"]["kind"], chat["handoff"]["phase"], chat["handoff"]["target_label"])
         for chat in listed
     ] == [("working", "rebind", "restarting", "Anthropic 2 (Claude Code)")]
-    assert listed[0]["handoff"]["held_sends"] == [
-        {"message_id": "trigger-1", "text": "Carry on on the other account"},
-        {"message_id": "m-2", "text": "and this"},
+    assert [(held["message_id"], held["text"]) for held in listed[0]["handoff"]["held_sends"]] == [
+        ("trigger-1", "Carry on on the other account"),
+        ("m-2", "and this"),
     ]
     assert not log_path.exists()
 
@@ -4336,6 +4502,42 @@ def test_intake_current_chat_falls_back_to_the_most_recently_messaged_chat(
     assert response.get_json()["path"].startswith("/?chat=agent-00000000000000000000000000000002&intake=")
 
 
+def test_making_a_chat_the_main_chat_stars_it_and_refuses_a_helper_or_an_unknown_chat(
+    app: Flask, client: FlaskClient
+) -> None:
+    agent_manager = state_of(app).agent_manager
+    seed_agent_state(agent_manager, "agent-00000000000000000000000000000001", name="first")
+    seed_agent_state(agent_manager, "agent-00000000000000000000000000000002", name="second")
+    seed_agent_state(
+        agent_manager, "agent-00000000000000000000000000000003", name="helper", labels={"agent_created": "true"}
+    )
+
+    starred = client.post("/api/chats/agent-00000000000000000000000000000002/make-main")
+    helper = client.post("/api/chats/agent-00000000000000000000000000000003/make-main")
+    unknown = client.post("/api/chats/agent-00000000000000000000000000000009/make-main")
+
+    assert starred.status_code == 200
+    assert client.get("/api/chats").get_json()["main_chat_id"] == "agent-00000000000000000000000000000002"
+    assert helper.status_code == 409
+    assert unknown.status_code == 404
+    assert agent_manager.get_main_chat_id() == ChatId("agent-00000000000000000000000000000002")
+
+
+def test_intake_current_chat_falls_back_to_the_main_chat_over_a_more_recently_messaged_one(
+    app: Flask, client: FlaskClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A text typed where no chat is on screen goes to the welcome chat, even while it still awaits its first send."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    welcome_id = client.post("/api/chats/seed", json=_seed_body()).get_json()["chat_id"]
+    _track_claude_agent(app, "agent-00000000000000000000000000000002", "second", tmp_path / "claude_config")
+    state_of(app).agent_manager.record_message_sent(ChatId("agent-00000000000000000000000000000002"))
+
+    response = _intake(client, message="Draft", target="current_chat", is_draft=True, window_path="/")
+
+    assert response.status_code == 200
+    assert response.get_json()["path"].startswith(f"/?chat={welcome_id}&intake=")
+
+
 def test_intake_with_several_chats_to_choose_from_holds_the_choice_for_the_picker(
     app: Flask, client: FlaskClient, messenger: RecordingMngrMessenger, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4376,6 +4578,44 @@ def test_intake_with_one_chat_sends_to_it_without_a_pick(
     assert response.status_code == 200
     assert response.get_json() == {"path": "/?chat=agent-00000000000000000000000000000001"}
     assert messenger.sent == [("agent-00000000000000000000000000000001", "Carry on")]
+
+
+def test_intake_main_chat_sends_to_the_main_chat_over_a_more_recently_messaged_one(
+    app: Flask, client: FlaskClient, messenger: RecordingMngrMessenger, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher's Enter: a text sent to ``main_chat`` lands in the main chat, with no pick among several."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    _track_claude_agent(app, "agent-00000000000000000000000000000001", "first", tmp_path / "claude_config")
+    _track_claude_agent(app, "agent-00000000000000000000000000000002", "second", tmp_path / "claude_config")
+    agent_manager: AgentManager = state_of(app).agent_manager
+    assert agent_manager.make_main_chat(ChatId("agent-00000000000000000000000000000001"))
+    agent_manager.record_message_sent(ChatId("agent-00000000000000000000000000000002"))
+
+    response = _intake(client, message="Carry on", target="main_chat", is_delivery_awaited=True)
+
+    assert response.status_code == 200
+    assert response.get_json() == {"path": "/?chat=agent-00000000000000000000000000000001"}
+    assert messenger.sent == [("agent-00000000000000000000000000000001", "Carry on")]
+
+
+def test_intake_main_chat_with_no_chats_falls_back_to_a_new_chat(
+    app: Flask, client: FlaskClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no chat to be the main chat, a ``main_chat`` intake follows the ``new_chat`` rules: here a draft
+    mints a chat awaiting its first send and holds the text for its composer."""
+    monkeypatch.setenv("MNGR_HOST_DIR", str(tmp_path))
+    agent_manager: AgentManager = state_of(app).agent_manager
+
+    response = _intake(client, message="Draw me a seal", target="main_chat", is_draft="true")
+
+    assert response.status_code == 200
+    path = response.get_json()["path"]
+    token = _token_of(path)
+    provisional = agent_manager.get_provisional_chat(parse_qs(urlparse(path).query)["chat"][0])
+    assert provisional is not None
+    assert provisional.phase is ProvisionalChatPhase.AWAITING_FIRST_SEND
+    applied = client.post(f"/api/chats/intakes/{token}/apply", json={})
+    assert applied.get_json()["composer_text"] == "Draw me a seal"
 
 
 def test_intake_dismissed_picker_drops_the_intake(
@@ -4916,3 +5156,7 @@ def test_a_compaction_that_finished_while_no_watcher_ran_ends_when_the_chat_is_o
         assert agent_info.id not in manager._compaction_pending_by_agent
     finally:
         state.shutdown()
+
+
+def test_the_chat_describes_its_api_the_way_its_manifest_says(client: FlaskClient) -> None:
+    assert_api_schema_describes_app(client, Path(__file__).resolve().parents[2] / "app.toml")
