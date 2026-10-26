@@ -140,8 +140,10 @@ def test_a_theme_s_rules_leave_the_wrapper_page_as_it_is(
     pty.wait_for_function("term.options.theme.foreground === '#c0c0c0'", timeout=5000)
     shell.evaluate("stopSending()")
 
+    # The wrapper's own `body` rule in `pages.py`, which is ttyd's #2b2b2b so the beat before
+    # ttyd opens its terminal reads as the terminal.
     assert unthemed == {
-        "background": "rgb(0, 0, 0)",
+        "background": "rgb(43, 43, 43)",
         "color": "rgb(221, 221, 221)",
         "font": "system-ui, sans-serif",
     }
