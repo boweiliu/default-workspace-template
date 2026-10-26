@@ -14,11 +14,12 @@ from urllib.parse import quote
 
 import pytest
 from flask import Response
-from flask import jsonify
 from playwright.sync_api import Browser
 from playwright.sync_api import BrowserContext
 from playwright.sync_api import Page
 
+from app_schema.routes import model_response
+from files_app.connections import Connections as ConnectionsListing
 from files_app.server import create_app
 from files_app.serving import serve_in_background
 
@@ -60,10 +61,11 @@ def files_origin(files_root: Path, connections: Connections) -> Iterator[str]:
     """The origin of the Files server over `files_root`."""
     if not (STATIC_DIRECTORY / "index.html").is_file():
         pytest.fail("Files is not built: run `npm run build` at system/ first")
-    app = create_app(gateway=None, static_directory=STATIC_DIRECTORY, root=files_root)
+    app = create_app(gateway=None, static_directory=STATIC_DIRECTORY, agent_id="agent-main", root=files_root)
 
     def listed_connections() -> Response:
-        return jsonify(connections.listed)
+        # Through the route's model, as the real view answers: the route table refuses a hand-built JSON answer.
+        return model_response(ConnectionsListing.model_validate(connections.listed))
 
     app.view_functions["connections"] = listed_connections
     with serve_in_background("127.0.0.1", 0, app) as server:

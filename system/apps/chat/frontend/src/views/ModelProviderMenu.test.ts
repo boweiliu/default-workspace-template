@@ -36,6 +36,7 @@ vi.mock("../models/HarnessCatalog", async (importOriginal) => ({
 const settingsState: { choice: unknown } = { choice: null };
 const picks: unknown[] = [];
 vi.mock("../models/ModelSettings", () => ({
+  addModelChoiceFailureListener: () => undefined,
   effectiveChoice: () => settingsState.choice,
   changedAxes: () => ["model"],
   setModelChoice: (...args: unknown[]) => picks.push(args),
@@ -980,6 +981,9 @@ describe("the combo card", () => {
     if (row === null) throw new Error("no fast row");
     expect(row.textContent).toContain("Fast mode");
     expect(row.textContent).toContain("Auto (off now)");
+    expect(row.getAttribute("data-hover-tooltip")).toBe(
+      "Fast mode makes the model reply faster. It's the same model, just as smart, only quicker. It costs more to run, so turn it on when speed matters and leave it off otherwise.",
+    );
     expect(document.querySelector(".fast-limit-input")).toBeNull();
 
     click('[data-menu-row="fast"]');
@@ -1174,6 +1178,8 @@ describe("the combo card", () => {
     expect(submenu.querySelector(".autocompact-help")?.textContent).toBe(
       "Saves ~50% by compacting right before the cache expires.",
     );
+    // The rule above "New chats start with" is the menu's own separator part, which themes dress.
+    expect(submenu.querySelector('[role="separator"]')?.getAttribute("data-part")).toBe("menu-separator");
 
     click('[data-autocompact="on"]');
     expect(autocompactWrites).toEqual([]);

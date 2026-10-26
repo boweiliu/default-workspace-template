@@ -1,5 +1,7 @@
 name = "files"
 display_name = "Files"
+description = "The workspace's file browser: the files here and on the person's connected computers, to open, upload and share."
+api_schema_path = "/__files/api/schema"
 icon = "icon.svg"
 critical = false
 # Files holds nothing between windows: the shell stops it once none shows it.
@@ -16,6 +18,10 @@ id = "new"
 label = "Files"
 path = "/home/user/workspace/"
 params = [{name = "path", label = "Path", required = false}]
+
+# Files' page is built from the shared components and wears the workspace's theme itself.
+[theming]
+mode = "tokens"
 
 # A link to a file or folder (a chat's absolute-path link) opens on its view page in a Files window: a file's own
 # page, or for a folder the folder itself, which Files reads ``?view`` on a folder as. A window already at the file or

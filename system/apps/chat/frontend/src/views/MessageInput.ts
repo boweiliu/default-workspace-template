@@ -17,6 +17,7 @@ import { stageElementReferences } from "../models/elementReferences";
 import { drainToComposer, getEventsForChat, interruptAgent, mintMessageId, sendMessage } from "../models/Response";
 import type { SendStatus } from "../models/Response";
 import { cancelHandoff, switchChat } from "../models/Handoffs";
+import { addModelChoiceFailureListener } from "../models/ModelSettings";
 import {
   getPendingPick,
   isSwitchSending,
@@ -48,6 +49,7 @@ import {
   getChatById,
   getProvisionalChat,
   isHandoffCancellable,
+  isLaunchInFlight,
   launchChat,
   whenChatRegistered,
 } from "../models/Chats";
@@ -57,6 +59,7 @@ import { handoffComposerPlaceholder } from "./handoff-phase";
 import { hoverTooltipAttrs } from "@imbue/workspace-ui/src/components/hoverTooltip";
 import { icon, spinnerIcon, stopIcon } from "@imbue/workspace-ui/src/components/icons";
 import { Button } from "@imbue/workspace-ui/src/components/Button";
+import { appPartAttrs } from "@imbue/workspace-ui/src/themes/parts";
 import { ATTACHMENT_CHIP_HEIGHT_CLASS, AttachmentStrip } from "./AttachmentStrip";
 
 const MAX_TEXTAREA_HEIGHT_PX = 240;
@@ -311,7 +314,7 @@ function providerNotice(markerClass: string, sentence: string, onChoose: () => v
 function composeRow(leading: m.Children | undefined, boxChildren: m.Children[]): m.Vnode {
   return m("div", { class: "message-input-compose-row flex items-end gap-1.5" }, [
     leading ?? null,
-    m("div", { class: `${INPUT_BOX_CLASS} min-w-0 flex-1` }, boxChildren),
+    m("div", { class: `${INPUT_BOX_CLASS} min-w-0 flex-1`, ...appPartAttrs("chat", "composer") }, boxChildren),
   ]);
 }
 
@@ -329,6 +332,17 @@ function catchUpOnSignedOutAccount(sendError: unknown): void {
     () => m.redraw(),
     (err: unknown) => console.error(`Failed to re-read the account list: ${describeRequestError(err)}`),
   );
+}
+
+// A pick in the model bar the chat app refused (the chat is switching providers, say) is told in the chat's notice.
+addModelChoiceFailureListener((chatId, detail) =>
+  raiseFailureNotice(chatId, { title: "Couldn't change the model", detail }),
+);
+
+/** The provider chooser for a chat whose account was signed out: the account signed in to or picked is the one the
+ *  chat's next message moves it to. */
+function chooseProviderToContinue(chatId: string): void {
+  openProviderChooser({ onSignedIn: (chosen) => beginSwitchToAccountId(chatId, chosen) });
 }
 
 export function MessageInput(): m.Component<MessageInputAttrs> {
@@ -381,6 +395,9 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
   const authCommandNotice = makeNoticeDialog();
   // mngr's classification of the failure, which decides which recoveries are worth offering.
   let actionFailureKind: SendFailureKind = "unknown";
+  // Whether the chat app refused the send because the chat's account was signed out: sending again cannot help, so
+  // the notice offers choosing a provider instead of Retry and Force.
+  let isActionFailureOnSignedOutAccount = false;
   // Retry for a failure raised by a sibling view, which knows how to repeat its own operation.
   let externalRetry: (() => Promise<void>) | null = null;
   let fileInputElement: HTMLInputElement | null = null;
@@ -707,9 +724,14 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
           // A chat awaiting its first send (a seeded one, one an intake minted, or the one an empty
           // chat list opens on) has no agent yet, and this send is what launches one: on the account
           // it was minted for, else the signed-in one, else the one the chooser produces. The
-          // message rides the launch as the agent's first, so nothing is sent after it lands.
+          // message rides the launch as the agent's first, so nothing is sent after it lands. A chat
+          // whose launch is already on its way (the sign-in's) is a creating chat to this send.
           const awaiting = getProvisionalChat(chatId);
-          if (awaiting?.phase === "awaiting_first_send" && getChatById(chatId) === undefined) {
+          if (
+            awaiting?.phase === "awaiting_first_send" &&
+            getChatById(chatId) === undefined &&
+            !isLaunchInFlight(chatId)
+          ) {
             const accountId = await chooseAccountForFirstSend(awaiting);
             if (accountId === null) {
               // The chooser closed with no sign-in: nothing was launched, and the message is
@@ -767,6 +789,7 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
               actionFailureTitle = "Couldn't send your message";
               actionFailureDetail = detail;
               actionFailureKind = describeRequestErrorKind(err);
+              isActionFailureOnSignedOutAccount = sendFailureKind(err) === ACCOUNT_SIGNED_OUT_SEND_FAILURE_KIND;
               actionFailureRecovery = { chatId, text: sentText, sentText: finalText, attachments: sentAttachments };
             }
           }
@@ -1055,6 +1078,7 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
         actionFailureInFlight = null;
         externalRetry = null;
         actionFailureKind = "unknown";
+        isActionFailureOnSignedOutAccount = false;
         actionFailureTitle = "Couldn't send your message";
       }
 
@@ -1132,6 +1156,7 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
             // The reason can change between attempts -- a blocked input can become an agent that
             // is gone -- and the buttons follow the kind, so it has to be re-read with the text.
             actionFailureKind = describeRequestErrorKind(err);
+            isActionFailureOnSignedOutAccount = sendFailureKind(err) === ACCOUNT_SIGNED_OUT_SEND_FAILURE_KIND;
             actionFailureInFlight = null;
           } else {
             clearActionFailureNotice();
@@ -1179,6 +1204,26 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
 
       function renderActionFailureNotice(detail: string): m.Children {
         const recovery = actionFailureRecovery;
+        if (isActionFailureOnSignedOutAccount) {
+          // The message is back in the composer; it goes out on the provider chosen here, with the chat's next send.
+          const signedOutChatId = recovery?.chatId ?? chatId;
+          return m(actionFailureNotice, {
+            title: actionFailureTitle,
+            body: [detail],
+            dismissLabel: "Cancel",
+            onDismiss: dismissActionFailureNotice,
+            actions: [
+              {
+                label: "Choose a provider",
+                run: () => {
+                  clearActionFailureNotice();
+                  m.redraw();
+                  if (signedOutChatId) chooseProviderToContinue(signedOutChatId);
+                },
+              },
+            ],
+          });
+        }
         // A pane that is gone is not going to be there on the next attempt, so Retry is not
         // offered at all rather than offered and guaranteed to fail. Every other kind -- and
         // anything unclassified -- keeps it.
@@ -1317,18 +1362,39 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
         return providerNotice(
           "message-input-signed-out",
           "You signed out of the account this chat runs on. Choose a provider to continue it on.",
-          () => openProviderChooser({ onSignedIn: (chosen) => beginSwitchToAccountId(signedOutChatId, chosen) }),
+          () => chooseProviderToContinue(signedOutChatId),
         );
+      }
+
+      /**
+       * The chooser for a chat with no provider to start on: the sign-in it produces launches a chat still
+       * awaiting its first send right away, so its agent is up before the user has typed, and the first send
+       * goes to the running agent (carrying the seeded conversation, for a seeded chat). A launch the chat app
+       * refuses lands on the page as a failed create, with its "Try again".
+       */
+      function openProviderChooserForFirstSend(awaitingChatId: string): void {
+        openProviderChooser({
+          onSignedIn: (accountId) => {
+            const awaiting = getProvisionalChat(awaitingChatId);
+            if (awaiting?.phase !== "awaiting_first_send" || getChatById(awaitingChatId) !== undefined) return;
+            if (isLaunchInFlight(awaitingChatId)) return;
+            launchChat(awaitingChatId, accountId).catch((error: unknown) => {
+              console.error(
+                `The chat ${awaitingChatId} could not be started on sign-in: ${describeRequestError(error)}`,
+              );
+            });
+          },
+        });
       }
 
       /** In place of the composer while nothing is signed in that a new chat could start on. The chooser opens as the
        *  notice appears, and its button opens it again once dismissed. */
-      function renderNoProviderNotice(): m.Children {
+      function renderNoProviderNotice(awaitingChatId: string): m.Children {
         return providerNotice(
           "message-input-no-provider",
           "Connect an AI provider to start chatting.",
-          () => openProviderChooser(),
-          () => openProviderChooser(),
+          () => openProviderChooserForFirstSend(awaitingChatId),
+          () => openProviderChooserForFirstSend(awaitingChatId),
         );
       }
 
@@ -1360,8 +1426,8 @@ export function MessageInput(): m.Component<MessageInputAttrs> {
       const canSendNow = canSend && !isComposerDisabled;
       const blockingNotice = isBlockedBySignedOutAccount
         ? renderSignedOutAccountNotice(chatId)
-        : isBlockedByNoProvider
-          ? renderNoProviderNotice()
+        : isBlockedByNoProvider && chatId !== null
+          ? renderNoProviderNotice(chatId)
           : null;
 
       // The stop button is only meaningful while the agent has an interruptible
