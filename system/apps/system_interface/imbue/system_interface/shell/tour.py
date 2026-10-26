@@ -1,8 +1,8 @@
 """What the workspace's show-around tour has done (the new-onboarding spec, section 3.4): whether it has started, and
 the card it resumes at when the agent's reply interrupted it, in ``tour.json`` under the shell's state directory.
-Absent or unusable means it has not run and nothing waits to resume, so a new workspace offers the tour once. Only a
-workspace the bootstrap marked new on its first boot (``offer_tour`` beside it) is offered it: one that already
-existed when an update brought the tour in reads as having seen it."""
+Absent or unusable means it has not run and nothing waits to resume in a workspace the bootstrap marked new on its
+first boot (``offer_tour`` beside it), so a new workspace offers the tour once; in any other (one that already existed
+when an update brought the tour in) it reads as seen."""
 
 from pathlib import Path
 from typing import Final
