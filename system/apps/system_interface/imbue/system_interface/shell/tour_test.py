@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 from imbue.system_interface.shell.tour import TOUR_FILENAME
-from imbue.system_interface.shell.tour import UNSEEN_TOUR
 from imbue.system_interface.shell.tour import TourProgress
 from imbue.system_interface.shell.tour import TourStore
+from imbue.system_interface.shell.tour import UNSEEN_TOUR
 
 
 def test_the_tour_record_defaults_to_unseen_and_round_trips(tmp_path: Path) -> None:
