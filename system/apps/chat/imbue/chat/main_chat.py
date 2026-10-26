@@ -89,8 +89,10 @@ class MainChatStore(MutableModel):
     path: Path | None = Field(frozen=True, description="The file, or None for memory only (tests)")
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
     _chat_id: ChatId | None = PrivateAttr(default=None)
+    _is_recorded: bool = PrivateAttr(default=False)
 
     def model_post_init(self, context: object, /) -> None:
+        self._is_recorded = self.path is not None and self.path.exists()
         self._chat_id = self._load()
 
     def _load(self) -> ChatId | None:
@@ -127,4 +129,11 @@ class MainChatStore(MutableModel):
             if chat_id == self._chat_id:
                 return
             self._chat_id = chat_id
+            self._is_recorded = True
             self._save_unlocked()
+
+    def is_recorded(self) -> bool:
+        """Whether the workspace has ever had a main chat: the file was there when loaded, even one naming no
+        chat or unreadable, or a chat has been written since."""
+        with self._lock:
+            return self._is_recorded

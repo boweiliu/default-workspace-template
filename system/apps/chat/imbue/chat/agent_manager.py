@@ -3478,13 +3478,16 @@ class AgentManager:
         self._broadcast_chats_updated()
         self._auto_open.request_open(provisional.chat_id)
 
+    # CLEANUP: drop the upgrade main chat (this method, ``_is_main_chat_opening_pending``, the
+    # ``opens_main_chat_on_upgrade`` build argument, and ``MAIN_CHAT_INTRODUCTION``) once no workspace from
+    # before minds-v0.9.0 is left to update.
     def _open_main_chat_on_upgrade_locked(self) -> ProvisionalChat | None:
         """On the first read of the agent list, open a new main chat for a workspace that had chats before there
         was a main chat (``main_chat.py``), and make it the main chat; the chat to publish, or None. Lock held."""
         if not self._is_main_chat_opening_pending or not self._is_agent_list_known:
             return None
         self._is_main_chat_opening_pending = False
-        if self._main_chat.read() is not None or not self._main_chat_candidates_locked():
+        if self._main_chat.is_recorded() or not self._main_chat_candidates_locked():
             return None
         try:
             provisional = self._seed_chat_locked(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)
@@ -4298,7 +4301,6 @@ class AgentManager:
             match event:
                 case FullAgentStateEvent():
                     self._agent_details_by_id = {str(agent.id): agent for agent in event.agents}
-                    self._is_agent_list_known = True
                 case AgentStateEvent():
                     self._agent_details_by_id[str(event.agent.id)] = event.agent
                 case AgentRemovedEvent():
@@ -4376,6 +4378,10 @@ class AgentManager:
                 new_agents[agent_id] = self._agents.get(agent_id, created.agent)
             self._agents = new_agents
             self._match_by_agent_id = new_matches
+            # Known only once the listing it came with is installed, so nothing reads the list as known while
+            # it is still the one before.
+            if is_full_snapshot:
+                self._is_agent_list_known = True
             opened_main_chat = None if was_agent_list_known else self._open_main_chat_on_upgrade_locked()
 
         for agent_id in added_agent_ids:

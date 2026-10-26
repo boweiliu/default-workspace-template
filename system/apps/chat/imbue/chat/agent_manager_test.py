@@ -1447,6 +1447,26 @@ def test_a_workspace_whose_main_chat_is_recorded_opens_no_new_one(
         manager.stop()
 
 
+def test_a_workspace_that_lost_every_chat_after_having_a_main_chat_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """Deleting the last chat leaves the main chat file naming none; a chat made later (by a bare ``mngr create``
+    while this app was down) is not a workspace from before there was a main chat."""
+    earlier = MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME)
+    earlier.write(ChatId("agent-" + "1" * 32))
+    earlier.write(None)
+    later = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([later]))
+
+        assert manager.get_main_chat_id() == ChatId(str(later.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
 def test_a_workspace_with_a_chat_already_named_main_opens_no_new_one_and_falls_back_to_the_latest_chat(
     broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:
