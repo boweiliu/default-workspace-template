@@ -2719,8 +2719,9 @@ def test_an_open_op_at_a_post_launch_path_posts_for_its_page_with_and_without_a_
     assert poster.posts[1].body == {"target": "new_chat", "message": "later"}
 
 
-def test_the_tour_record_is_unseen_until_posted_and_round_trips(client: FlaskClient) -> None:
-    assert client.get("/api/tour").get_json() == {"is_seen": False, "resume_index": None}
+def test_the_tour_record_round_trips(client: FlaskClient) -> None:
+    # A workspace the bootstrap did not mark new is not offered the tour until something asks for it.
+    assert client.get("/api/tour").get_json() == {"is_seen": True, "resume_index": None}
     assert client.post("/api/tour", json={"is_seen": True}).get_json() == {"is_seen": True, "resume_index": None}
     assert client.post("/api/tour", json={"is_seen": True, "resume_index": 3}).get_json() == {
         "is_seen": True,
