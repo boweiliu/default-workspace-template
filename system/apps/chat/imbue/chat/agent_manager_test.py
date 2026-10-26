@@ -90,6 +90,7 @@ from imbue.chat.harnesses.registry import get_model_state_path
 from imbue.chat.harnesses.session import FileHarnessSession
 from imbue.chat.harnesses.session import SendOutcome
 from imbue.chat.main_chat import MAIN_CHAT_FILENAME
+from imbue.chat.main_chat import MAIN_CHAT_INTRODUCTION
 from imbue.chat.main_chat import MAIN_CHAT_NAME
 from imbue.chat.main_chat import MainChatStore
 from imbue.chat.message_stamps import MessageStampStore
@@ -101,6 +102,7 @@ from imbue.chat.models import AgentStateItem
 from imbue.chat.models import AgentStopError
 from imbue.chat.models import ChatAccountBinding
 from imbue.chat.models import ChatConvergingError
+from imbue.chat.models import CreatedChat
 from imbue.chat.models import HandoffError
 from imbue.chat.models import HandoffFailedStep
 from imbue.chat.models import HandoffPhase
@@ -1312,6 +1314,332 @@ def test_with_no_chat_left_the_chat_the_list_opens_becomes_the_main_chat(broadca
 
         assert _next_chat_listing(q)["main_chat_id"] == opened.chat_id
         assert manager.get_main_chat_id() == opened.chat_id
+    finally:
+        manager.stop()
+
+
+def _upgrading_manager(
+    broadcaster: WebSocketBroadcaster,
+    tmp_path: Path,
+    store: InMemoryChatRecordStore,
+    message_stamps: MessageStampStore | None = None,
+    is_secondary: bool = False,
+) -> AgentManager:
+    """A manager with its main chat on disk, as the chat app builds one."""
+    return AgentManager.build(
+        broadcaster,
+        message_stamps=message_stamps,
+        main_chat=MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME),
+        chat_record_store=store,
+        chat_files_root=_seed_files_root(tmp_path),
+        is_secondary=is_secondary,
+    )
+
+
+def _seed_older_apps_welcome_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, store: InMemoryChatRecordStore
+) -> CreatedChat:
+    """The "Welcome" chat an older Mind app seeded, before there was a main chat."""
+    older_app = AgentManager.build(broadcaster, chat_record_store=store, chat_files_root=_seed_files_root(tmp_path))
+    try:
+        return older_app.seed_chat("Welcome", _seed_turns())
+    finally:
+        older_app.stop()
+
+
+def _main_chat_records(store: InMemoryChatRecordStore) -> list[ChatRecord]:
+    return [record for record in store.read_all().values() if record.seed_title == MAIN_CHAT_NAME]
+
+
+def test_a_workspace_with_chats_but_no_main_chat_opens_a_new_main_chat_ahead_of_its_update_and_welcome_chats(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """A workspace from before there was a main chat, whose update just ran in a chat of its own, opens a
+    seeded "Main" chat on the introduction when the agent list is first read, and that chat is the main
+    chat: not the update chat messaged last, nor an older app's welcome chat. A restart opens no other."""
+    store = InMemoryChatRecordStore()
+    welcome = _seed_older_apps_welcome_chat(broadcaster, tmp_path, store)
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    update = _agent_details("Update-to-v0-9-0", labels={"display_name": "Update to v0.9.0"})
+    stamps = MessageStampStore(path=None)
+    stamps.record(ChatId(str(other.id)), at=100.0)
+    stamps.record(ChatId(str(update.id)), at=200.0)
+
+    manager = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        q = broadcaster.register()
+        manager._handle_observe_event(make_full_agent_state_event([other, update]))
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None
+        assert main_id not in {welcome.chat_id, str(other.id), str(update.id)}
+        main = manager.get_provisional_chat(main_id)
+        assert main is not None and main.name == MAIN_CHAT_NAME and main.is_seeded
+        events = read_seed_events(_seed_files_root(tmp_path) / main_id)
+        assert [event["text"] for event in events] == [turn.text for turn in MAIN_CHAT_INTRODUCTION]
+        assert _next_chat_listing(q)["main_chat_id"] == main_id
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == main_id
+
+        manager._handle_observe_event(make_full_agent_state_event([other, update]))
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+    restarted = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        restarted._handle_observe_event(make_full_agent_state_event([other, update]))
+        assert restarted.get_main_chat_id() == main_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        restarted.stop()
+
+
+def test_initial_discovery_of_a_workspace_with_chats_but_no_main_chat_opens_the_new_main_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """The live app reads the agent list first through initial discovery, before the observe stream."""
+    chat = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._adopt_initial_listing(
+            [
+                AgentInfo(
+                    id=str(chat.id),
+                    name=str(chat.name),
+                    state="RUNNING",
+                    agent_state_dir=tmp_path / "agent_state",
+                    claude_config_dir=tmp_path / "claude_config",
+                    labels=dict(chat.labels),
+                )
+            ]
+        )
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None and main_id != str(chat.id)
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == main_id
+
+        manager._handle_observe_event(make_full_agent_state_event([chat]))
+        assert manager.get_main_chat_id() == main_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
+def test_a_new_workspace_opens_no_main_chat_of_its_own_and_its_first_chat_takes_it(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([]))
+        assert manager.get_main_chat_id() is None
+        first = _agent_details("Chat-1", labels={"user_created": "true"})
+
+        manager._handle_observe_event(make_agent_state_event(first))
+
+        assert manager.get_main_chat_id() == ChatId(str(first.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_new_workspaces_welcome_chat_is_its_main_chat_and_no_other_opens(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """The seed route answers only once the agent list is known, which is when the upgrade check has already run
+    on a workspace with no chats; the welcome chat seeded after it is the main chat, on disk at once."""
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([]))
+
+        welcome = manager.seed_chat("Main", _seed_turns())
+
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == welcome.chat_id
+        assert manager.get_main_chat_id() == welcome.chat_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
+def test_a_welcome_seed_stopped_before_its_files_are_written_leaves_the_main_chat_recorded(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """The welcome chat is recorded as the main chat before its seed is written, so a seed that never finished
+    leaves no workspace that looks like one from before there was a main chat."""
+    _seed_files_root(tmp_path).write_text("not a folder")
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([]))
+        with pytest.raises(OSError):
+            manager.seed_chat("Main", _seed_turns())
+    finally:
+        manager.stop()
+    assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() is not None
+
+    _seed_files_root(tmp_path).unlink()
+    first = _agent_details("Chat-1", labels={"user_created": "true"})
+    restarted = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        restarted._handle_observe_event(make_full_agent_state_event([first]))
+
+        assert restarted.get_main_chat_id() == ChatId(str(first.id))
+        assert store.read_all() == {}
+    finally:
+        restarted.stop()
+
+
+def test_a_main_chat_left_by_an_opening_stopped_part_way_is_made_the_main_chat_rather_than_opened_again(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """The upgrade writes its chat before ``main_chat.json``; a chat app stopped between the two leaves a seeded
+    "Main" chat and no main chat file, and the next start makes that chat the main chat, not the older app's
+    welcome chat seeded before it."""
+    store = InMemoryChatRecordStore()
+    _seed_older_apps_welcome_chat(broadcaster, tmp_path, store)
+    interrupted = AgentManager.build(broadcaster, chat_record_store=store, chat_files_root=_seed_files_root(tmp_path))
+    try:
+        left = interrupted.seed_chat(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)
+    finally:
+        interrupted.stop()
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    update = _agent_details("Update-to-v0-9-0", labels={"display_name": "Update to v0.9.0"})
+    stamps = MessageStampStore(path=None)
+    stamps.record(ChatId(str(update.id)), at=200.0)
+    manager = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([other, update]))
+
+        assert manager.get_main_chat_id() == left.chat_id
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == left.chat_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
+def test_a_secondary_chat_app_opens_no_main_chat_for_a_workspace_from_before_there_was_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    chat = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store, is_secondary=True)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([chat]))
+
+        assert manager.get_main_chat_id() == ChatId(str(chat.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_an_agent_event_before_the_agent_list_is_known_leaves_the_new_main_chat_for_the_full_list(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    gone = _agent_details("Chat-9", labels={"user_created": "true"})
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_agent_removed_event(gone.id, gone.name, gone.host.id))
+        assert manager.get_main_chat_id() is None
+
+        manager._handle_observe_event(make_full_agent_state_event([other]))
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None and main_id != str(other.id)
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+
+def test_a_workspace_whose_main_chat_is_recorded_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    starred = _agent_details("Chat-1", labels={"user_created": "true"})
+    MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).write(ChatId(str(starred.id)))
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([starred]))
+
+        assert manager.get_main_chat_id() == ChatId(str(starred.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_workspace_that_lost_every_chat_after_having_a_main_chat_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """Deleting the last chat leaves the main chat file naming none; a chat made later (by a bare ``mngr create``
+    while this app was down) is not a workspace from before there was a main chat."""
+    earlier = MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME)
+    earlier.write(ChatId("agent-" + "1" * 32))
+    earlier.write(None)
+    later = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([later]))
+
+        assert manager.get_main_chat_id() == ChatId(str(later.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_workspace_with_a_chat_already_named_main_opens_no_new_one_and_falls_back_to_the_latest_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    named_main = _agent_details("Main", labels={"user_created": "true"})
+    latest = _agent_details("Chat-2", labels={"user_created": "true"})
+    stamps = MessageStampStore(path=None)
+    stamps.record(ChatId(str(named_main.id)), at=100.0)
+    stamps.record(ChatId(str(latest.id)), at=200.0)
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([named_main, latest]))
+
+        assert manager.get_main_chat_id() == ChatId(str(latest.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_chat_made_main_before_the_agent_list_is_read_keeps_it_and_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    store = InMemoryChatRecordStore()
+    welcome = _seed_older_apps_welcome_chat(broadcaster, tmp_path, store)
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        assert manager.make_main_chat(welcome.chat_id)
+
+        manager._handle_observe_event(make_full_agent_state_event([other]))
+
+        assert manager.get_main_chat_id() == welcome.chat_id
+        assert _main_chat_records(store) == []
+    finally:
+        manager.stop()
+
+
+def test_a_main_chat_that_cannot_be_written_leaves_the_agent_list_read_and_falls_back_to_the_latest_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    _seed_files_root(tmp_path).write_text("not a folder")
+    latest = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([latest]))
+
+        assert manager.is_agent_list_known()
+        assert manager.get_main_chat_id() == ChatId(str(latest.id))
+        assert store.read_all() == {}
     finally:
         manager.stop()
 
