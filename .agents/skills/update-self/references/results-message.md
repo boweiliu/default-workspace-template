@@ -82,8 +82,9 @@ List each, in plain terms:
 - **Each app it stopped**: name each one, say it was stopped to make room for
   the update, and that it is running again. One whose window they had open is
   worth saying plainly: the window stayed where it was and the page works
-  again. If the update did not land and an app could not be started again, say
-  which, and that opening it starts it.
+  again. Name any the resume could not start again -- whatever the ending, since
+  an update that renamed or removed a program reaches no restart for it either --
+  and say that opening it starts it.
 - **Each browser it stopped**: name each one, say it was stopped to make room
   for the update, that its tabs are kept, and that it starts again the next
   time they open it. A browser is not started by the update's restart, so do
