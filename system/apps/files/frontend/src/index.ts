@@ -17,6 +17,7 @@ import { createContextMenuOpener } from "@imbue/workspace-ui/src/components/cont
 import { installElementContextMenu } from "@imbue/workspace-ui/src/context_menu";
 import type { ContextMenuRow } from "@imbue/workspace-ui/src/context_menu_rows";
 import { installCursorHidingWhileTyping } from "@imbue/workspace-ui/src/hideCursorWhileTyping";
+import { wearThemeFromMessage } from "@imbue/workspace-ui/src/themes/themeClient";
 
 import { entryOf, pageUrlOf, readPageData } from "./models/server";
 import { decodePathname, isFolderPath, titleOf } from "./models/paths";
@@ -60,6 +61,7 @@ function bootstrap(): void {
   // The handshake comes as a message, so after the window below exists.
   let filesApp: FilesController | null = null;
   const connection = connectToShell({
+    onTheme: (theme, revision, isPreview) => void wearThemeFromMessage({ theme, revision, isPreview }),
     onHandshake: (received) => {
       handshake = received;
       filesApp?.setOpensLocalFiles(received.opensLocalFiles);

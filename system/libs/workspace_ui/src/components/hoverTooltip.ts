@@ -45,6 +45,7 @@
  */
 
 import type m from "mithril";
+import { applyPartAttrs, partAttrs } from "../themes/parts";
 
 /** Hover-intent delay before a tooltip appears. */
 const TOOLTIP_DELAY_MS = 250;
@@ -196,6 +197,7 @@ function ensureBubble(): HTMLDivElement {
     bubbleElement = document.createElement("div");
     bubbleElement.className = TOOLTIP_CLASS;
     bubbleElement.setAttribute("role", "tooltip");
+    applyPartAttrs(bubbleElement, partAttrs("tooltip"));
     document.body.appendChild(bubbleElement);
   }
   return bubbleElement;
