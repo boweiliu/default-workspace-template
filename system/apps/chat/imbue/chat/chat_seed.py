@@ -168,7 +168,7 @@ def read_seed_events(chat_dir: Path) -> list[dict[str, Any]]:
 def seed_transcript(events: list[dict[str, Any]]) -> str:
     """The seed segment's turns as the conversation they were: one tagged block per turn, in order.
 
-    The turns are markdown the Imbue Studio app wrote, so they are quoted whole rather than summarised.
+    The turns are markdown written before any agent joined the chat, so they are quoted whole rather than summarised.
     A closing context tag inside a turn is broken up, so the block the page strips always ends
     where this builder put its end.
     """
