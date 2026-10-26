@@ -47,16 +47,34 @@ def _is_already(result: CompletedCommand, state: str) -> bool:
     return state in _answer(result).lower()
 
 
+def _timed_out(result: CompletedCommand) -> bool:
+    """Whether the runner gave up waiting rather than hearing a refusal.
+
+    ``update_chat_pause.run_command`` turns a ``subprocess.TimeoutExpired`` into a failed
+    ``CompletedProcess`` carrying that exception's text, whose wording is CPython's
+    ``Command '...' timed out after N seconds``. There is nothing else to key on, so a runner
+    that words a timeout differently reads here as a refusal -- the safe way round for
+    ``start_programs``, and for ``stop_programs`` only as safe as not checking at all.
+    """
+    return "timed out" in _answer(result).lower()
+
+
 def stop_programs(
     programs: Sequence[str],
     run: CommandRunner,
     record: Callable[[str], None],
 ) -> list[str]:
-    """Stop each program, calling ``record`` for each one that is down afterwards.
+    """Stop each program, calling ``record`` for every one this pass may now owe a start.
 
     ``record`` is called before the next program is touched, so a pass killed partway through
     leaves a record of everything it has already stopped. Returns one line per program that could
-    not be stopped; those are not recorded, since nothing has to bring them back.
+    not be stopped.
+
+    A program is recorded unless supervisorctl plainly refused the stop. A stop that *timed out*
+    is recorded as well, and still reported: a timeout says the answer never came, not that the
+    program is up, and the asymmetry runs one way. Recording one that turns out to be running
+    costs a redundant start the resume forgets; not recording one that is down leaves it stopped
+    with nothing to bring it back, which is the whole reason this record exists.
     """
     problems: list[str] = []
     for program in programs:
@@ -65,9 +83,11 @@ def stop_programs(
         except OSError as e:
             problems.append(f"could not run supervisorctl for {program}: {e}")
             continue
-        if result.returncode != 0 and not _is_already(result, _ALREADY_STOPPED):
+        is_stopped = result.returncode == 0 or _is_already(result, _ALREADY_STOPPED)
+        if not is_stopped:
             problems.append(f"could not stop {program}: {_answer(result)}")
-            continue
+            if not _timed_out(result):
+                continue
         record(program)
     return problems
 

@@ -14,6 +14,7 @@ import stat
 from pathlib import Path
 
 import pytest
+import update_app_pause
 import update_apply_contract
 import update_self
 
@@ -124,6 +125,26 @@ def test_an_app_that_would_not_stop_is_not_recorded_as_one_to_start(
     assert _main(tmp_path, "run-status", "start") == 0
 
     assert _main(tmp_path, "run-status", "stop-apps", "ghost", "daily-digest") == 1
+
+    assert _record(tmp_path).stopped_programs == ["daily-digest"]
+
+
+def test_a_stop_that_times_out_is_reported_but_still_recorded(
+    tmp_path: Path, supervisord: FakeSupervisord, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout says the answer never came, not that the app is up. Recording one that turns out
+    to be running costs a redundant start the resume forgets; not recording one that is down
+    leaves it stopped with nothing to bring it back."""
+    assert _main(tmp_path, "run-status", "start") == 0
+    slow = tmp_path / "slow-supervisorctl"
+    slow.mkdir()
+    script = slow / "supervisorctl"
+    script.write_text("#!/bin/sh\nsleep 30\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+    monkeypatch.setenv("PATH", f"{slow}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setattr(update_app_pause, "STOP_TIMEOUT_SECONDS", 0.3)
+
+    assert _main(tmp_path, "run-status", "stop-apps", "daily-digest") == 1
 
     assert _record(tmp_path).stopped_programs == ["daily-digest"]
 

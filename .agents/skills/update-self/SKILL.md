@@ -517,8 +517,10 @@ each command on its own:
        data/.tasks/update-self/reports/consumed/$(date +%s)-question.md
    ```
 
-3. Run Step 6's opening commands (they drop the history bridge and bring back
-   any chat this pass paused), then release the `updating workspace` lease:
+3. Run Step 6's opening commands (they drop the history bridge, bring back any
+   chat this pass paused, and start any app it stopped for memory -- the user
+   may take days over this decision, and the workspace has to run as usual
+   while they do), then release the `updating workspace` lease:
    `tk close "$UPDATE_LEASE_ID" "Waiting on the user's decision."`. Leave the
    tracking ticket open; the re-land closes it.
 
