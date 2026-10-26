@@ -21,9 +21,12 @@ from typing import Protocol
 STOP_TIMEOUT_SECONDS = 120.0
 START_TIMEOUT_SECONDS = 180.0
 
-# What supervisord answers for a program that is already in the state being asked for. Both are
-# the outcome the caller wanted, so neither is a problem.
-_ALREADY_STOPPED = "already stopped"
+# What supervisorctl prints for a program that is already in the state being asked for: ``ERROR
+# (not running)`` for a redundant stop, ``ERROR (already started)`` for a redundant start. Either
+# is the outcome the caller wanted, so neither is a problem. supervisorctl exits 0 for both (both
+# faults are the ignored one for their subcommand), which is what the returncode test catches
+# first; this is the belt to that braces, for a supervisorctl that reports them as failures.
+_ALREADY_STOPPED = "not running"
 _ALREADY_STARTED = "already started"
 
 

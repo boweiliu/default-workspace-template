@@ -30,7 +30,7 @@ if program in state.get("refuse", {}).get(action, []):
     print(f"{program}: ERROR (no such process)", file=sys.stderr)
     sys.exit(1)
 if program in state.get("already", {}).get(action, []):
-    print(f"{program}: ERROR (already {'stopped' if action == 'stop' else 'started'})")
+    print(f"{program}: ERROR ({'not running' if action == 'stop' else 'already started'})")
     sys.exit(1)
 running = set(state.get("running", []))
 running.discard(program) if action == "stop" else running.add(program)
@@ -131,8 +131,9 @@ def test_an_app_that_would_not_stop_is_not_recorded_as_one_to_start(
 def test_an_app_already_stopped_counts_as_stopped(
     tmp_path: Path, supervisord: FakeSupervisord
 ) -> None:
-    """supervisord answers a redundant stop with an error; the state the caller wanted is the one
-    it has, so the app is still this pass's to start again."""
+    """supervisorctl answers a redundant stop with ``ERROR (not running)``; the state the caller
+    wanted is the one it has, so the app is still this pass's to start again. The fake fails the
+    call as well, which the real one does not, so the wording and not the exit code decides it."""
     supervisord.set_state(already={"stop": ["daily-digest"]})
     assert _main(tmp_path, "run-status", "start") == 0
 
