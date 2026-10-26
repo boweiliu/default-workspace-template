@@ -1,6 +1,6 @@
 """Tests for the apps an update stops to free memory: that each one is on the run record before
-the next is touched, that only a program that is actually down is recorded, and that the record
-outlives the chat that made it.
+the next is touched, that a program supervisorctl refused to stop is left off the record while one
+whose stop never answered goes on it, and that the record outlives the chat that made it.
 
 The supervisord side is a fake ``supervisorctl`` on PATH, so the tests exercise the same
 ``run_command`` shell-out the flow uses.
