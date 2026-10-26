@@ -1328,7 +1328,7 @@ class AgentManager:
         manager._message_stamps = message_stamps if message_stamps is not None else MessageStampStore(path=None)
         manager._main_chat = main_chat if main_chat is not None else MainChatStore(path=None)
         manager._keeps_main_chat_awake = keeps_main_chat_awake
-        manager._is_main_chat_opening_pending = opens_main_chat_on_upgrade and manager._main_chat.read() is None
+        manager._is_main_chat_opening_pending = opens_main_chat_on_upgrade
         manager._main_chat_wake_started_at = {}
         manager._transcript_broadcaster = None
         manager._watcher_eviction_callback = None
@@ -3484,7 +3484,7 @@ class AgentManager:
         if not self._is_main_chat_opening_pending:
             return None
         self._is_main_chat_opening_pending = False
-        if not self._main_chat_candidates_locked():
+        if self._main_chat.read() is not None or not self._main_chat_candidates_locked():
             return None
         try:
             provisional = self._seed_chat_locked(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)

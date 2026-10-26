@@ -102,6 +102,7 @@ from imbue.chat.models import AgentStateItem
 from imbue.chat.models import AgentStopError
 from imbue.chat.models import ChatAccountBinding
 from imbue.chat.models import ChatConvergingError
+from imbue.chat.models import CreatedChat
 from imbue.chat.models import HandoffError
 from imbue.chat.models import HandoffFailedStep
 from imbue.chat.models import HandoffPhase
@@ -1334,6 +1335,17 @@ def _upgrading_manager(
     )
 
 
+def _seed_older_apps_welcome_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path, store: InMemoryChatRecordStore
+) -> CreatedChat:
+    """The "Welcome" chat an older Mind app seeded, before there was a main chat."""
+    older_app = AgentManager.build(broadcaster, chat_record_store=store, chat_files_root=_seed_files_root(tmp_path))
+    try:
+        return older_app.seed_chat("Welcome", _seed_turns())
+    finally:
+        older_app.stop()
+
+
 def _main_chat_records(store: InMemoryChatRecordStore) -> list[ChatRecord]:
     return [record for record in store.read_all().values() if record.seed_title == MAIN_CHAT_NAME]
 
@@ -1345,11 +1357,7 @@ def test_a_workspace_with_chats_but_no_main_chat_opens_a_new_main_chat_ahead_of_
     seeded "Main" chat on the introduction when the agent list is first read, and that chat is the main
     chat: not the update chat messaged last, nor an older app's welcome chat. A restart opens no other."""
     store = InMemoryChatRecordStore()
-    older_app = AgentManager.build(broadcaster, chat_record_store=store, chat_files_root=_seed_files_root(tmp_path))
-    try:
-        welcome = older_app.seed_chat("Welcome", _seed_turns())
-    finally:
-        older_app.stop()
+    welcome = _seed_older_apps_welcome_chat(broadcaster, tmp_path, store)
     other = _agent_details("Chat-1", labels={"user_created": "true"})
     update = _agent_details("Update-to-v0-9-0", labels={"display_name": "Update to v0.9.0"})
     stamps = MessageStampStore(path=None)
@@ -1434,6 +1442,24 @@ def test_a_workspace_with_a_chat_already_named_main_opens_no_new_one_and_falls_b
 
         assert manager.get_main_chat_id() == ChatId(str(latest.id))
         assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_chat_made_main_before_the_agent_list_is_read_keeps_it_and_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    store = InMemoryChatRecordStore()
+    welcome = _seed_older_apps_welcome_chat(broadcaster, tmp_path, store)
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        assert manager.make_main_chat(welcome.chat_id)
+
+        manager._handle_observe_event(make_full_agent_state_event([other]))
+
+        assert manager.get_main_chat_id() == welcome.chat_id
+        assert _main_chat_records(store) == []
     finally:
         manager.stop()
 
