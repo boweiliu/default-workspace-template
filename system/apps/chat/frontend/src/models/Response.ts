@@ -222,7 +222,7 @@ export interface SpecialTranscriptEvent extends BaseTranscriptEvent {
 }
 
 /** The ``source`` of the events of a seeded chat's seed segment (the backend's ``SEED_SOURCE``):
- *  the turns the Imbue Studio app wrote before the workspace had any agent. */
+ *  turns written before any agent joined the chat. */
 export const SEED_SOURCE = "seed";
 
 /** The pseudo-harness a seed segment reads as (the backend's ``HarnessType.SEED``). */
