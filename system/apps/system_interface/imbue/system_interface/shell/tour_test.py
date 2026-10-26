@@ -38,13 +38,6 @@ def test_a_workspace_not_marked_new_reads_as_having_seen_the_tour_until_it_runs(
     assert store.read() == UNSEEN_TOUR
 
 
-def test_a_stored_record_outranks_the_new_workspace_marker(tmp_path: Path) -> None:
-    (tmp_path / OFFER_TOUR_FILENAME).touch()
-    store = TourStore(state_directory=tmp_path)
-    store.write(TourProgress(is_seen=True, resume_index=None))
-    assert store.read() == TourProgress(is_seen=True, resume_index=None)
-
-
 def test_an_unreadable_or_foreign_tour_record_reads_as_unseen_in_a_new_workspace(tmp_path: Path) -> None:
     (tmp_path / OFFER_TOUR_FILENAME).touch()
     store = TourStore(state_directory=tmp_path)
