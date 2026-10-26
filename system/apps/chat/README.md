@@ -454,6 +454,16 @@ The workspace has one **main chat**, where a text with no chat of its own goes
 crash, or a relaunch leaves it where it is. The seeded chat takes it first, named
 "Main" (`MAIN_CHAT_NAME`) whatever title the Mind app sent, and a chat's "Make main chat" menu row (`POST
 /api/chats/<chat-id>/make-main`, 409 for a helper another agent started) moves it there.
+A workspace that had chats before there was a main chat (one updated from an earlier
+version) gets a new one instead: when the app first reads the agent list and finds chats
+but no `main_chat.json`, it opens a seeded chat named "Main" on a short introduction to the
+main chat (`MAIN_CHAT_INTRODUCTION`) and makes it the main chat, ahead of the chat messaged
+last (often the one that ran the update) and of an older app's "Welcome" chat. It writes the
+chat before `main_chat.json`, so a "Main" chat left by an opening the app was stopped in the
+middle of is made the main chat on the next start rather than opened again. The seeded
+welcome chat goes the other way round: it is recorded in `main_chat.json` before its own files
+are written. Both happen in the same step that makes the agent list known, before the seed
+route answers anything but 503, so the two never race.
 When the chat it names is deleted, another takes it at once: the chat
 messaged most recently, never a helper another agent started; with no chat left, the
 chat the list opens (one awaiting its first send) takes it. Every `chats_updated` push
