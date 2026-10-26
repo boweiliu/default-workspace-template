@@ -27,7 +27,7 @@ from imbue.chat.harnesses.session import SessionDeps
 @pytest.mark.parametrize(
     ("recorded_model", "recorded_effort", "expected_option_id"),
     [
-        # What the statusline records for each listed model, as captured from agy 1.4.3.
+        # What the statusline records for each listed model, as captured from agy 1.4.7.
         ("Gemini 3.8 Flash", "high", "gemini-3.8-flash"),
         ("Gemini 3.8 Flash", "low", "gemini-3.8-flash"),
         ("Claude Sonnet 4.6 (Thinking)", None, "claude-sonnet-4-6"),
