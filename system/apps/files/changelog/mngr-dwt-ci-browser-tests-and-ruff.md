@@ -1,1 +1,1 @@
-Re-sorted import blocks to satisfy `ruff check`, which CI now runs. No behavior change.
+Re-sorted one import block to satisfy `ruff check`, which CI now runs. No behavior change.
