@@ -70,6 +70,8 @@ class TourStore(MutableModel):
         return TourProgress(is_seen=document.is_seen, resume_index=document.resume_index)
 
     def write(self, progress: TourProgress) -> None:
-        document = _TourDocument(version=TOUR_FILE_VERSION, is_seen=progress.is_seen, resume_index=progress.resume_index)
+        document = _TourDocument(
+            version=TOUR_FILE_VERSION, is_seen=progress.is_seen, resume_index=progress.resume_index
+        )
         with STATE_FILES_LOCK:
             write_json_atomic(self._path(), document.model_dump(mode="json"))
