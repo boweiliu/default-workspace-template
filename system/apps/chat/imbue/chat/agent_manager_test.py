@@ -1438,6 +1438,23 @@ def test_a_workspace_with_a_chat_already_named_main_opens_no_new_one_and_falls_b
         manager.stop()
 
 
+def test_a_main_chat_that_cannot_be_written_leaves_the_agent_list_read_and_falls_back_to_the_latest_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    _seed_files_root(tmp_path).write_text("not a folder")
+    latest = _agent_details("Chat-1", labels={"user_created": "true"})
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([latest]))
+
+        assert manager.is_agent_list_known()
+        assert manager.get_main_chat_id() == ChatId(str(latest.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
 def test_a_seeded_chat_waiting_for_its_first_send_takes_a_new_name_and_keeps_it_across_a_restart(
     broadcaster: WebSocketBroadcaster, tmp_path: Path
 ) -> None:

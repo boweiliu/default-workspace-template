@@ -3488,7 +3488,7 @@ class AgentManager:
             return None
         try:
             provisional = self._seed_chat_locked(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)
-        except AgentNameConflictError as e:
+        except (AgentNameConflictError, OSError) as e:
             _loguru_logger.warning("Did not open a new main chat: {}", e)
             return None
         self._main_chat.write(provisional.chat_id)
