@@ -90,6 +90,7 @@ from imbue.chat.harnesses.registry import get_model_state_path
 from imbue.chat.harnesses.session import FileHarnessSession
 from imbue.chat.harnesses.session import SendOutcome
 from imbue.chat.main_chat import MAIN_CHAT_FILENAME
+from imbue.chat.main_chat import MAIN_CHAT_INTRODUCTION
 from imbue.chat.main_chat import MAIN_CHAT_NAME
 from imbue.chat.main_chat import MainChatStore
 from imbue.chat.message_stamps import MessageStampStore
@@ -1312,6 +1313,127 @@ def test_with_no_chat_left_the_chat_the_list_opens_becomes_the_main_chat(broadca
 
         assert _next_chat_listing(q)["main_chat_id"] == opened.chat_id
         assert manager.get_main_chat_id() == opened.chat_id
+    finally:
+        manager.stop()
+
+
+def _upgrading_manager(
+    broadcaster: WebSocketBroadcaster,
+    tmp_path: Path,
+    store: InMemoryChatRecordStore,
+    message_stamps: MessageStampStore | None = None,
+) -> AgentManager:
+    """A manager built as the live chat app builds one: its main chat on disk, opening one on upgrade."""
+    return AgentManager.build(
+        broadcaster,
+        message_stamps=message_stamps,
+        main_chat=MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME),
+        opens_main_chat_on_upgrade=True,
+        chat_record_store=store,
+        chat_files_root=_seed_files_root(tmp_path),
+    )
+
+
+def _main_chat_records(store: InMemoryChatRecordStore) -> list[ChatRecord]:
+    return [record for record in store.read_all().values() if record.seed_title == MAIN_CHAT_NAME]
+
+
+def test_a_workspace_with_chats_but_no_main_chat_opens_a_new_main_chat_ahead_of_its_update_and_welcome_chats(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    """A workspace from before there was a main chat, whose update just ran in a chat of its own, opens a
+    seeded "Main" chat on the introduction when the agent list is first read, and that chat is the main
+    chat: not the update chat messaged last, nor an older app's welcome chat. A restart opens no other."""
+    store = InMemoryChatRecordStore()
+    older_app = AgentManager.build(broadcaster, chat_record_store=store, chat_files_root=_seed_files_root(tmp_path))
+    try:
+        welcome = older_app.seed_chat("Welcome", _seed_turns())
+    finally:
+        older_app.stop()
+    other = _agent_details("Chat-1", labels={"user_created": "true"})
+    update = _agent_details("Update-to-v0-9-0", labels={"display_name": "Update to v0.9.0"})
+    stamps = MessageStampStore(path=None)
+    stamps.record(ChatId(str(other.id)), at=100.0)
+    stamps.record(ChatId(str(update.id)), at=200.0)
+
+    manager = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        q = broadcaster.register()
+        manager._handle_observe_event(make_full_agent_state_event([other, update]))
+
+        main_id = manager.get_main_chat_id()
+        assert main_id is not None
+        assert main_id not in {welcome.chat_id, str(other.id), str(update.id)}
+        main = manager.get_provisional_chat(main_id)
+        assert main is not None and main.name == MAIN_CHAT_NAME and main.is_seeded
+        events = read_seed_events(_seed_files_root(tmp_path) / main_id)
+        assert [event["text"] for event in events] == [turn.text for turn in MAIN_CHAT_INTRODUCTION]
+        assert _next_chat_listing(q)["main_chat_id"] == main_id
+        assert MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).read() == main_id
+
+        manager._handle_observe_event(make_full_agent_state_event([other, update]))
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        manager.stop()
+
+    restarted = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        restarted._handle_observe_event(make_full_agent_state_event([other, update]))
+        assert restarted.get_main_chat_id() == main_id
+        assert len(_main_chat_records(store)) == 1
+    finally:
+        restarted.stop()
+
+
+def test_a_new_workspace_opens_no_main_chat_of_its_own_and_its_first_chat_takes_it(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([]))
+        assert manager.get_main_chat_id() is None
+        first = _agent_details("Chat-1", labels={"user_created": "true"})
+
+        manager._handle_observe_event(make_agent_state_event(first))
+
+        assert manager.get_main_chat_id() == ChatId(str(first.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_workspace_whose_main_chat_is_recorded_opens_no_new_one(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    starred = _agent_details("Chat-1", labels={"user_created": "true"})
+    MainChatStore(path=tmp_path / MAIN_CHAT_FILENAME).write(ChatId(str(starred.id)))
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([starred]))
+
+        assert manager.get_main_chat_id() == ChatId(str(starred.id))
+        assert store.read_all() == {}
+    finally:
+        manager.stop()
+
+
+def test_a_workspace_with_a_chat_already_named_main_opens_no_new_one_and_falls_back_to_the_latest_chat(
+    broadcaster: WebSocketBroadcaster, tmp_path: Path
+) -> None:
+    named_main = _agent_details("Main", labels={"user_created": "true"})
+    latest = _agent_details("Chat-2", labels={"user_created": "true"})
+    stamps = MessageStampStore(path=None)
+    stamps.record(ChatId(str(named_main.id)), at=100.0)
+    stamps.record(ChatId(str(latest.id)), at=200.0)
+    store = InMemoryChatRecordStore()
+    manager = _upgrading_manager(broadcaster, tmp_path, store, message_stamps=stamps)
+    try:
+        manager._handle_observe_event(make_full_agent_state_event([named_main, latest]))
+
+        assert manager.get_main_chat_id() == ChatId(str(latest.id))
+        assert store.read_all() == {}
     finally:
         manager.stop()
 

@@ -139,6 +139,7 @@ def build_production_state(
         main_chat=MainChatStore(path=data_dir / MAIN_CHAT_FILENAME),
         # The main chat never sleeps; a secondary's chats are a preview's, so it wakes nothing.
         keeps_main_chat_awake=not is_secondary,
+        opens_main_chat_on_upgrade=not is_secondary,
         # The window of a chat the Imbue Studio app starts is opened through the shell, and which chats
         # have had theirs is remembered beside the stamps so a restart never re-pops one.
         auto_open=None

@@ -7,6 +7,11 @@ When the chat it names is gone (deleted, or never listed), another chat takes it
 welcome chat if one is still listed, else the chat messaged most recently, else one still awaiting
 its first send. A chat another agent started (a helper) never takes it. With no chat at all there
 is no main chat until one exists: the chat list opens a chat awaiting its first send, which takes it.
+
+A workspace that had chats before there was a main chat (one updated from an earlier version) has
+no main chat file and chats already listed when this app first reads the agent list. Rather than
+hand the main chat to whichever of those was messaged last (often the chat that ran the update),
+the chat app opens a new one on ``MAIN_CHAT_INTRODUCTION`` and makes it the main chat.
 """
 
 import json
@@ -22,6 +27,8 @@ from loguru import logger
 from pydantic import Field
 from pydantic import PrivateAttr
 
+from imbue.chat.chat_seed import SeedRole
+from imbue.chat.chat_seed import SeedTurn
 from imbue.chat.primitives import AGENT_ID_PATTERN
 from imbue.chat.primitives import ChatId
 from imbue.imbue_common.frozen_model import FrozenModel
@@ -32,6 +39,22 @@ MAIN_CHAT_FILENAME: Final[str] = "main_chat.json"
 # What the seeded chat is called: a name the app chose, so the first message never renames it.
 MAIN_CHAT_NAME: Final[str] = "Main"
 _CHAT_ID_KEY: Final[str] = "chat_id"
+
+# What the main chat opened for a workspace that had chats before there was a main chat says.
+MAIN_CHAT_INTRODUCTION: Final[tuple[SeedTurn, ...]] = (
+    SeedTurn(
+        role=SeedRole.ASSISTANT,
+        text=(
+            "This is your **main chat**.\n\n"
+            "Your workspace now has a main chat: the default place to talk to me. It stays at the top of "
+            "the chat list, it's where a message typed into the desktop launcher lands, and it never goes "
+            "to sleep, so it's always ready to pick up where you left off.\n\n"
+            "All your other chats are still here, below it. They're still good for focused pieces of work, "
+            'and you can make any of them the main chat from its menu ("Make main chat").\n\n'
+            "What would you like to work on?"
+        ),
+    ),
+)
 
 
 class MainChatCandidate(FrozenModel):

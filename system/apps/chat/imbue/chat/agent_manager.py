@@ -141,6 +141,7 @@ from imbue.chat.harnesses.session_watcher import TranscriptReader
 from imbue.chat.harnesses.startup_readiness import is_harness_starting_up
 from imbue.chat.imbue_studio_notifications import ImbueStudioNotificationsClient
 from imbue.chat.latchkey_gateway import GatewayAccess
+from imbue.chat.main_chat import MAIN_CHAT_INTRODUCTION
 from imbue.chat.main_chat import MAIN_CHAT_NAME
 from imbue.chat.main_chat import MainChatCandidate
 from imbue.chat.main_chat import MainChatStore
@@ -1142,6 +1143,8 @@ class AgentManager:
     _main_chat: MainChatStore
     # Whether the main chat's agent is started again whenever it is found stopped (the live chat app's).
     _keeps_main_chat_awake: bool
+    # Whether the first read of the agent list still owes a workspace with chats but no main chat a new one.
+    _is_main_chat_opening_pending: bool
     # When this manager last started each main-chat agent it found stopped, monotonic seconds.
     _main_chat_wake_started_at: dict[str, float]
     # Re-tags chat agents' OOM ``oom_score_adj`` from live activity: page presence and
@@ -1210,6 +1213,7 @@ class AgentManager:
         message_stamps: MessageStampStore | None = None,
         main_chat: MainChatStore | None = None,
         keeps_main_chat_awake: bool = False,
+        opens_main_chat_on_upgrade: bool = False,
         auto_open: AutoOpenReactor | None = None,
         chat_record_store: ChatRecordStore | None = None,
         chat_files_root: Path = DEFAULT_CHAT_RECORDS_ROOT,
@@ -1231,7 +1235,9 @@ class AgentManager:
         passes one backed by the chat app's data directory, as it does ``main_chat``, which
         holds the workspace's main chat (``main_chat.py``). ``keeps_main_chat_awake`` starts the main chat's agent
         again whenever it is found stopped; the live chat app sets it, and a test that does not ask for it never
-        runs ``mngr start``. ``auto_open``
+        runs ``mngr start``. ``opens_main_chat_on_upgrade`` opens a new main chat when the first read of the agent
+        list finds chats but ``main_chat`` holds none (a workspace from before there was a main chat); the live
+        chat app sets it. ``auto_open``
         surfaces labeled chats' windows; the default remembers nothing and reaches
         no shell, so a real server passes one backed by the ledger and the shell.
         ``chat_record_store`` holds the records of the chats that have run on several
@@ -1322,6 +1328,7 @@ class AgentManager:
         manager._message_stamps = message_stamps if message_stamps is not None else MessageStampStore(path=None)
         manager._main_chat = main_chat if main_chat is not None else MainChatStore(path=None)
         manager._keeps_main_chat_awake = keeps_main_chat_awake
+        manager._is_main_chat_opening_pending = opens_main_chat_on_upgrade and manager._main_chat.read() is None
         manager._main_chat_wake_started_at = {}
         manager._transcript_broadcaster = None
         manager._watcher_eviction_callback = None
@@ -3424,40 +3431,68 @@ class AgentManager:
         empty title mints the first free "Chat N".
         """
         explicit_title = explicit_chat_name(title)
+        with self._lock:
+            provisional = self._seed_chat_locked(explicit_title, turns)
+        self._publish_seeded_chat(provisional)
+        return CreatedChat(
+            chat_id=provisional.chat_id, name=canonical_agent_name(provisional.name), display_name=provisional.name
+        )
+
+    def _seed_chat_locked(self, explicit_title: str, turns: tuple[SeedTurn, ...]) -> ProvisionalChat:
+        """Write a seeded chat's seed and record and list it as provisional, for ``_publish_seeded_chat`` to announce.
+        Raises ``AgentNameConflictError`` for a title already in use. Lock held."""
         chat_id = ChatId(str(AgentId()))
         now = datetime.now(timezone.utc)
         events = seed_events(chat_id, turns, now)
-        with self._lock:
-            display_name = self._mint_display_name_locked(explicit_title)
-            record = ChatRecord(
-                chat_id=chat_id,
-                agents=(
-                    ChatAgentEntry(
-                        seq=1,
-                        agent_id=str(chat_id),
-                        lane="",
-                        account_id="",
-                        harness=HarnessType.SEED,
-                        started_at=now,
-                        ended_at=now,
-                        final_event_count=len(events),
-                    ),
+        display_name = self._mint_display_name_locked(explicit_title)
+        record = ChatRecord(
+            chat_id=chat_id,
+            agents=(
+                ChatAgentEntry(
+                    seq=1,
+                    agent_id=str(chat_id),
+                    lane="",
+                    account_id="",
+                    harness=HarnessType.SEED,
+                    started_at=now,
+                    ended_at=now,
+                    final_event_count=len(events),
                 ),
-                seed_title=display_name,
-            )
-            write_seed_file(self._chat_files_root / chat_id, events)
-            self._write_record_locked(record)
-            provisional = ProvisionalChat(
-                chat_id=chat_id,
-                name=display_name,
-                phase=ProvisionalChatPhase.AWAITING_FIRST_SEND,
-                is_seeded=True,
-            )
-            self._provisional_chats[chat_id] = provisional
+            ),
+            seed_title=display_name,
+        )
+        write_seed_file(self._chat_files_root / chat_id, events)
+        self._write_record_locked(record)
+        provisional = ProvisionalChat(
+            chat_id=chat_id,
+            name=display_name,
+            phase=ProvisionalChatPhase.AWAITING_FIRST_SEND,
+            is_seeded=True,
+        )
+        self._provisional_chats[chat_id] = provisional
+        return provisional
+
+    def _publish_seeded_chat(self, provisional: ProvisionalChat) -> None:
+        """Push a newly seeded chat and the list that holds it to every client, and have its window opened."""
         self._broadcast_provisional(provisional)
         self._broadcast_chats_updated()
-        self._auto_open.request_open(chat_id)
-        return CreatedChat(chat_id=chat_id, name=canonical_agent_name(display_name), display_name=display_name)
+        self._auto_open.request_open(provisional.chat_id)
+
+    def _open_main_chat_on_upgrade_locked(self) -> ProvisionalChat | None:
+        """On the first read of the agent list, open a new main chat for a workspace that had chats before there
+        was a main chat (``main_chat.py``), and make it the main chat; the chat to publish, or None. Lock held."""
+        if not self._is_main_chat_opening_pending:
+            return None
+        self._is_main_chat_opening_pending = False
+        if not self._main_chat_candidates_locked():
+            return None
+        try:
+            provisional = self._seed_chat_locked(MAIN_CHAT_NAME, MAIN_CHAT_INTRODUCTION)
+        except AgentNameConflictError as e:
+            _loguru_logger.warning("Did not open a new main chat: {}", e)
+            return None
+        self._main_chat.write(provisional.chat_id)
+        return provisional
 
     def mint_awaiting_chat(self, account_id: str) -> ProvisionalChat:
         """Mint a chat with no seed that waits for its first send (post-launch-paths plan section 3.7).
@@ -4136,12 +4171,15 @@ class AgentManager:
                     )
                     self._agents[agent_info.id] = agent_state
                 self._is_agent_list_known = True
+                opened_main_chat = self._open_main_chat_on_upgrade_locked()
                 labels_by_chat_id = {
                     self._chat_id_of_agent_locked(agent_info.id): agent_info.labels
                     for agent_info in agents
                     if not self._is_archived_member_locked(agent_info.id)
                 }
             self._auto_open.seed_at_startup(labels_by_chat_id)
+            if opened_main_chat is not None:
+                self._publish_seeded_chat(opened_main_chat)
 
             for agent_info in agents:
                 self._ensure_activity_tracking(agent_info.id)
@@ -4338,6 +4376,7 @@ class AgentManager:
                 new_agents[agent_id] = self._agents.get(agent_id, created.agent)
             self._agents = new_agents
             self._match_by_agent_id = new_matches
+            opened_main_chat = None if was_agent_list_known else self._open_main_chat_on_upgrade_locked()
 
         for agent_id in added_agent_ids:
             added_agent_state = new_agents.get(agent_id)
@@ -4377,6 +4416,8 @@ class AgentManager:
             self._auto_open.seed_at_startup(
                 {chat_id: dict(details_by_id[agent_id].labels) for agent_id, chat_id in chat_id_by_agent_id.items()}
             )
+            if opened_main_chat is not None:
+                self._publish_seeded_chat(opened_main_chat)
         else:
             for agent_id in added_agent_ids:
                 added = details_by_id.get(agent_id)
