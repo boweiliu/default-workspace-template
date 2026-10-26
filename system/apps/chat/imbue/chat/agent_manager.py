@@ -4166,7 +4166,8 @@ class AgentManager:
             _loguru_logger.opt(exception=e).error("Initial agent discovery failed")
 
     def _adopt_initial_listing(self, agents: Sequence[AgentInfo]) -> None:
-        """Install the agents initial discovery found as the known agent list, and start per-agent tracking."""
+        """Install the agents initial discovery found as the known agent list, open the upgrade main chat it may
+        owe (``_open_main_chat_on_upgrade_locked``), and start per-agent tracking."""
         with self._lock:
             for agent_info in agents:
                 agent_state = AgentStateItem(
