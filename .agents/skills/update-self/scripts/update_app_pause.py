@@ -72,11 +72,15 @@ def stop_programs(
     stop is recorded without anyone knowing the program is down. Returns one line per program
     that could not be stopped.
 
-    A program is recorded unless supervisorctl plainly refused the stop. A stop that *timed out*
-    is recorded as well, and still reported: a timeout says the answer never came, not that the
-    program is up, and the asymmetry runs one way. Recording one that turns out to be running
-    costs a redundant start the resume forgets; not recording one that is down leaves it stopped
-    with nothing to bring it back, which is the whole reason this record exists.
+    Recorded: a confirmed stop, a program already down, and a stop that *timed out*. Everything
+    else -- a refusal, an unreachable supervisord, any other answer -- is reported and left off,
+    because a program that is still up needs no start.
+
+    The timeout is the one that is recorded while reported, and it earns that: a timeout says the
+    answer never came, not that the program is up, and the asymmetry runs one way. Recording one
+    that turns out to be running costs a redundant start the resume forgets; not recording one
+    that is down leaves it stopped with nothing to bring it back, which is the whole reason this
+    record exists.
     """
     problems: list[str] = []
     for program in programs:
