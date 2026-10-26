@@ -26,8 +26,6 @@ A chat is usable while its agent is still starting or connecting.
 
 - Typing into a chat whose agent is stopped starts the agent in the background, so the message usually finds it up and "Connecting…" is rarely seen.
 
-- The agent's terminal view opens at once for an agent that is already running, instead of saying "Starting agent..." while it checks. It says "Starting agent…" only for a stopped one.
-
 **Starting, switching and renaming show what is happening**
 
 Starting, switching and renaming chats now show what is happening instead of a blank page.
@@ -51,5 +49,3 @@ Chat names are now consistent, and a name you give a chat always sticks.
 - A name you type no longer flips back to "Chat N". After a rename, mngr's observe stream sometimes delivered a snapshot it had read before the rename, and the list showed the old name again for several seconds (measured on a staging workspace: back to the old name 0.8 s after the rename landed, for 3.3 s). The chat app now keeps the new name over such a snapshot until the stream reports the rename.
 
 - Your rename wins over the automatic name. Before, the automatic name could be shown over the name you just typed, and its rename could run alongside yours and land last, replacing your name. Now, while your rename runs, no automatic name is shown or made for that chat, and an automatic rename already running finishes before yours. The rail keeps the name you typed until the chat app answers, instead of giving way to the first other name it shows.
-
-- Every chat whose first message says what it is about gets a name, whatever provider it runs on. Chats on Google (Antigravity), OpenCode Go, OpenRouter or an API key used to keep "Chat N" for good, because those providers have no way to ask a small model; so did chats whose account had been signed out, chats where the model call failed, and chats where the model answered the message instead of naming it (a message saying "reply with OK" got "OK"). Those chats are now named from the opening words of the first message, and the message reaches the model marked off as material to name, so it is named rather than answered. An opener with no clear subject ("hi") still keeps "Chat N" and the next message is tried, up to three.

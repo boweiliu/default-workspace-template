@@ -5,7 +5,8 @@
  * tmux session), UNKNOWN keeps the iframe (non-evidence is not death), and a start that
  * FAILS while the agent stays dead must say so on the stopped face -- the face is what
  * renders after the failure, so without the error line the Start button would appear to
- * silently do nothing.
+ * silently do nothing. An agent the chat already reports alive skips the start, so opening
+ * its terminal never claims to start an agent that is running.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -59,32 +60,6 @@ describe("the agent terminal's liveness gate", () => {
     );
   });
 
-  it("mounts the terminal at once for an agent the chat list shows running, without waiting on the start", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise(() => {})),
-    );
-    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { state: "WAITING" } });
-
-    const root = mountPanel();
-
-    expect(root.querySelector(".iframe-panel-stub")).not.toBeNull();
-    expect(root.textContent).not.toContain("Starting agent");
-  });
-
-  it("says it is starting a stopped agent, and only opening the terminal of one it knows nothing about", () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise(() => {})),
-    );
-    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { state: "STOPPED" } });
-    expect(mountPanel().textContent).toContain("Starting agent…");
-
-    document.body.innerHTML = "";
-    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { state: "UNKNOWN" } });
-    expect(mountPanel().textContent).toContain("Opening the agent's terminal…");
-  });
-
   it("unmounts the iframe for a positively-dead agent and offers a Start button", async () => {
     agentState.agent = chatSnapshotFixture("agent-1", {
       name: "sunny-hollow",
@@ -122,6 +97,32 @@ describe("the agent terminal's liveness gate", () => {
       expect(root.querySelector(".iframe-panel-stub"), state).not.toBeNull();
       expect(root.querySelector(".agent-terminal-stopped"), state).toBeNull();
     }
+  });
+
+  it("mounts the iframe at once for a running agent, with no start and no starting line", () => {
+    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { name: "sunny-hollow", state: "WAITING" } });
+    const root = mountPanel();
+    expect(root.querySelector(".iframe-panel-stub")).not.toBeNull();
+    expect(root.querySelector(".agent-terminal-starting")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("says the agent is starting while a stopped agent's start runs, then mounts the iframe", async () => {
+    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { name: "sunny-hollow", state: "STOPPED" } });
+    let resolveStart: (value: unknown) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise((resolve) => (resolveStart = resolve))),
+    );
+    const root = mountPanel();
+    expect(root.querySelector(".agent-terminal-starting")?.textContent).toBe("Starting the agent...");
+    expect(root.querySelector(".iframe-panel-stub")).toBeNull();
+
+    agentState.agent = chatSnapshotFixture("agent-1", { active_agent: { name: "sunny-hollow", state: "RUNNING" } });
+    resolveStart({ ok: true, status: 200, json: async () => ({}) });
+    await settle();
+    expect(root.querySelector(".agent-terminal-starting")).toBeNull();
+    expect(root.querySelector(".iframe-panel-stub")).not.toBeNull();
   });
 
   it("surfaces a failed start on the stopped face instead of failing silently", async () => {
