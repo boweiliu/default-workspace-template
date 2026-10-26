@@ -20,9 +20,9 @@ It joins four sources, each read independently so one failing leaves the others 
   reports plus every live pid the agent-pid registry holds for it;
 - apps, from the shell's ``GET /api/inventory`` joined to the programs supervisord is running: an
   app the workspace is allowed to stop (with a program of its own that no critical app shares, and
-  neither critical nor internal itself), with how
-  many windows show it, since that is what decides whether stopping it takes something off the
-  user's screen. Its memory is the summed RSS of its program's process tree;
+  neither critical nor internal itself), with how many windows show it, since that is what decides
+  whether stopping it takes something off the user's screen. Its memory is the summed RSS of its
+  program's process tree;
 - browsers, from the browser service's ``GET /browsers``: a ``running`` browser that no desktop
   window shows, per the same inventory document. Its memory is the summed RSS of every
   Chromium process on its profile.
@@ -702,7 +702,7 @@ def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSect
         # same document, so saying "not an inventory document" for a malformed window would send
         # the reader after a shell that answered perfectly well.
         reason = (
-            shell.error or "not an inventory document"
+            (shell.error or "not an inventory document")
             if windows is None
             else "a browser window carried a path the read could not parse"
         )
