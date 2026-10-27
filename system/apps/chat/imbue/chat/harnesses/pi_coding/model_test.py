@@ -34,7 +34,7 @@ def _agent_info(tmp_path: Path) -> AgentInfo:
     )
 
 
-# --- effort derivation (pi's getSupportedThinkingLevels) ------------------------
+# effort derivation (pi's getSupportedThinkingLevels)
 
 
 def test_non_reasoning_model_supports_only_off() -> None:
@@ -57,7 +57,7 @@ def test_reasoning_model_no_map_drops_xhigh_and_max() -> None:
     assert _supported_thinking_levels({"reasoning": True}) == ("off", "minimal", "low", "medium", "high")
 
 
-# --- catalog build (efforts are verbatim strings) -------------------------------
+# catalog build (efforts are verbatim strings)
 
 
 def _write_provider(data_dir: Path, provider: str, models: dict[str, Any]) -> None:
@@ -105,7 +105,7 @@ def test_the_pi_catalog_is_read_from_the_pi_on_path_even_after_another_pi_was_re
     assert [option.id for option in get_catalog(HarnessType.PI_CODING).options] == ["groq/vendor/second-model"]
 
 
-# --- pi --list-models parsing (the authed offer set) ----------------------------
+# pi --list-models parsing (the authed offer set)
 
 
 def test_parse_list_models_takes_provider_and_model_columns() -> None:
@@ -128,7 +128,7 @@ def test_parse_list_models_empty_output_is_empty() -> None:
     assert _parse_list_models("") == ()
 
 
-# --- resolver -------------------------------------------------------------------
+# resolver
 
 
 def test_list_offered_models_defaults_to_whole_catalog_for_non_pi(tmp_path: Path) -> None:
@@ -177,7 +177,7 @@ def test_switch_twice_leaves_only_the_latest_intent(tmp_path: Path) -> None:
     assert json.loads(control_path.read_text()) == {"model_id": "openai/gpt-5", "thinking_level": "high"}
 
 
-# --- the locked atomic flush writer ---------------------------------------------
+# the locked atomic flush writer
 # The send-in-flight branch (a held ``message.lock`` -> SEND_IN_FLIGHT, no write) is pinned in
 # server_test.py beside its codex sibling, where the bounded-wait constant is patched down; the
 # uncontended path is unit-tested here.

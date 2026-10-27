@@ -178,9 +178,8 @@ def build_catalog(data_dir: Path) -> HarnessCatalog:
     )
 
 
-# Parsed catalogs by the provider data dir they were read from. The data ships with the pi install, so a
-# catalog never changes for its dir; keying by dir rather than holding one catalog means a different pi
-# on PATH is read rather than served the first one's models. An empty catalog is never stored.
+# Parsed catalogs by the provider data dir they were read from, so each pi on PATH is served its own models.
+# An empty catalog is not stored, so a pi installed later is still read.
 _CATALOG_BY_DATA_DIR: dict[Path, HarnessCatalog] = {}
 
 
