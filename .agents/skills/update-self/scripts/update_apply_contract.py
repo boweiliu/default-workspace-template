@@ -572,10 +572,7 @@ class RunStatus:
     ``None`` when nothing recorded it, and is then left out of the file.
     ``stopped_agents`` is what ``run-status stop-chats`` paused, for
     ``resume-chats``; ``stopped_programs`` is what ``run-status stop-apps``
-    stopped to free memory, for ``resume-apps``. Both are here rather than in
-    the lead's head because the pass that stops them is the one running out of
-    memory, so its chat is exactly the one liable to be shed before it restores
-    anything.
+    stopped to free memory, for ``resume-apps``.
     """
 
     chat_agent_name: str

@@ -955,7 +955,7 @@ def _cmd_run_status_stop_apps(args: argparse.Namespace) -> int:
                 "so whether it is down is unknown."
             )
 
-    problems = stop_programs(args.program, run_command, record)
+    problems = stop_programs(args.program, record)
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     return 1 if problems else 0
@@ -970,12 +970,13 @@ def _cmd_run_status_resume_apps(args: argparse.Namespace) -> int:
         print("Nothing to start: this run's record names no app it stopped.")
         return 0
 
-    def forget(program: str) -> None:
+    def forget(program: str, is_started: bool) -> None:
         status.stopped_programs.remove(program)
         write_run_status(status, repo_root, now)
-        print(f"Started {program}.")
+        if is_started:
+            print(f"Started {program}.")
 
-    problems = start_programs(list(status.stopped_programs), run_command, forget)
+    problems = start_programs(list(status.stopped_programs), forget)
     for problem in problems:
         print(f"error: {problem}", file=sys.stderr)
     return 1 if problems else 0

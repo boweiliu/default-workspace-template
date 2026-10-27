@@ -2,8 +2,7 @@
 the next is touched, that a program supervisorctl refused to stop is left off the record while one
 whose stop never answered goes on it, and that the record outlives the chat that made it.
 
-The supervisord side is a fake ``supervisorctl`` on PATH, so the tests exercise the same
-``run_command`` shell-out the flow uses.
+The supervisord side is a fake ``supervisorctl`` on PATH, so the tests exercise the real shell-out.
 """
 
 from __future__ import annotations
@@ -27,12 +26,13 @@ state = json.load(open(os.environ["FAKE_SUPERVISORCTL_STATE"]))
 action, program = sys.argv[1], sys.argv[2]
 with open(os.environ["FAKE_SUPERVISORCTL_CALLS"], "a") as calls:
     calls.write(f"{action} {program}\\n")
-if program in state.get("refuse", {}).get(action, []):
-    print(f"{program}: ERROR (no such process)", file=sys.stderr)
+reason = state.get("refuse", {}).get(action, {}).get(program)
+if reason is not None:
+    print(f"{program}: ERROR ({reason})")
     sys.exit(1)
 if program in state.get("already", {}).get(action, []):
     print(f"{program}: ERROR ({'not running' if action == 'stop' else 'already started'})")
-    sys.exit(1)
+    sys.exit(0)
 running = set(state.get("running", []))
 running.discard(program) if action == "stop" else running.add(program)
 state["running"] = sorted(running)
@@ -42,7 +42,8 @@ print(f"{program}: {'stopped' if action == 'stop' else 'started'}")
 
 
 class FakeSupervisord:
-    """A ``supervisorctl`` on PATH whose answers the test sets."""
+    """A ``supervisorctl`` on PATH answering as supervisor 4.2.5's does: a refusal exits 1 with its
+    reason on stdout, a redundant stop or start prints its ERROR line and exits 0."""
 
     def __init__(self, bin_dir: Path, state_path: Path, calls_path: Path) -> None:
         self.state_path = state_path
@@ -56,7 +57,7 @@ class FakeSupervisord:
     def set_state(
         self,
         running: list[str] | None = None,
-        refuse: dict[str, list[str]] | None = None,
+        refuse: dict[str, dict[str, str]] | None = None,
         already: dict[str, list[str]] | None = None,
     ) -> None:
         self.state_path.write_text(
@@ -121,7 +122,9 @@ def test_each_app_is_on_the_record_before_the_next_one_is_touched(
 def test_an_app_that_would_not_stop_is_not_recorded_as_one_to_start(
     tmp_path: Path, supervisord: FakeSupervisord
 ) -> None:
-    supervisord.set_state(running=["daily-digest", "ghost"], refuse={"stop": ["ghost"]})
+    supervisord.set_state(
+        running=["daily-digest", "ghost"], refuse={"stop": {"ghost": "no such process"}}
+    )
     assert _main(tmp_path, "run-status", "start") == 0
 
     assert _main(tmp_path, "run-status", "stop-apps", "ghost", "daily-digest") == 1
@@ -161,8 +164,7 @@ def test_an_app_already_stopped_counts_as_stopped(
     tmp_path: Path, supervisord: FakeSupervisord
 ) -> None:
     """supervisorctl answers a redundant stop with ``ERROR (not running)``; the state the caller
-    wanted is the one it has, so the app is still this pass's to start again. The fake fails the
-    call as well, which the real one does not, so the wording and not the exit code decides it."""
+    wanted is the one it has, so the app is still this pass's to start again."""
     supervisord.set_state(already={"stop": ["daily-digest"]})
     assert _main(tmp_path, "run-status", "start") == 0
 
@@ -212,12 +214,35 @@ def test_an_app_that_will_not_start_stays_on_the_record_for_the_next_try(
     supervisord.set_state(running=["daily-digest", "broken"])
     assert _main(tmp_path, "run-status", "start") == 0
     assert _main(tmp_path, "run-status", "stop-apps", "broken", "daily-digest") == 0
-    supervisord.set_state(running=[], refuse={"start": ["broken"]})
+    supervisord.set_state(running=[], refuse={"start": {"broken": "spawn error"}})
 
     assert _main(tmp_path, "run-status", "resume-apps") == 1
 
     assert _record(tmp_path).stopped_programs == ["broken"]
     assert supervisord.running == ["daily-digest"]
+
+
+def test_an_app_the_update_removed_is_reported_once_and_dropped_from_the_record(
+    tmp_path: Path, supervisord: FakeSupervisord, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No later resume could start a program supervisord no longer has, so keeping it would carry
+    it into every run after and report it as down in every results message."""
+    supervisord.set_state(running=["daily-digest", "old-digest"])
+    assert _main(tmp_path, "run-status", "start") == 0
+    assert _main(tmp_path, "run-status", "stop-apps", "old-digest", "daily-digest") == 0
+    supervisord.set_state(
+        running=[], refuse={"start": {"old-digest": "no such process"}}
+    )
+    capsys.readouterr()
+
+    assert _main(tmp_path, "run-status", "resume-apps") == 1
+
+    assert _record(tmp_path).stopped_programs == []
+    assert supervisord.running == ["daily-digest"]
+    captured = capsys.readouterr()
+    assert "Started old-digest." not in captured.out
+    assert "old-digest is no longer a program in this workspace" in captured.err
+    assert _main(tmp_path, "run-status", "resume-apps") == 0
 
 
 def test_a_new_run_carries_over_apps_the_last_one_never_started(

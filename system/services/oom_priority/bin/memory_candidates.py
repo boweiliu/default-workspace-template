@@ -698,9 +698,6 @@ def collect_browser_section(sources: Sources, shell: ShellAnswer) -> BrowserSect
     # Only a running browser holds memory, and only the shell knows which ones a window shows.
     windows = shell.windows
     if windows is None or windows.browser_names is None:
-        # The two halves fail for different reasons, and the apps section above is listed from the
-        # same document, so saying "not an inventory document" for a malformed window would send
-        # the reader after a shell that answered perfectly well.
         reason = (
             (shell.error or "not an inventory document")
             if windows is None
