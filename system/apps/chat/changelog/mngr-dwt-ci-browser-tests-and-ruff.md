@@ -8,4 +8,4 @@ The app's browser tests run in CI again, and some had gone stale or never passed
 
 A Pi chat's model list is now read from the `pi` on PATH and cached per install, rather than cached once for the whole process. Before, a process that had read one `pi`'s models kept serving them after a different `pi` came first on PATH; a test that put its own `pi` on PATH after an earlier test had read the image's saw no model row in the menu.
 
-Fixed the app's `ruff check` findings, which CI now enforces: two import blocks, three lambda assignments in tests, and a `noqa` on seven deliberate no-op hook methods. The trailing-comment ratchet rises from 2 to 9 for those `noqa` directives, which it does not yet exempt the way it exempts `# ty: ignore`. No behavior change.
+Fixed the app's `ruff check` findings, which CI now enforces: two import blocks, three lambda assignments in tests, and a `noqa` on seven deliberate no-op hook methods. No behavior change.
