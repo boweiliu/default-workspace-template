@@ -133,7 +133,8 @@ verdict and record the Imbue Studio app, bootstrap and the system interface read
 ``update_environment``, ``update_probes``, ``update_ledger``,
 ``update_history_bridge``, ``update_apply`` (the apply and recover
 orchestration), ``update_chat_pause`` (``run-status stop-chats`` /
-``resume-chats``) and ``update_resume_note`` (the note a resumed chat is
+``resume-chats``), ``update_app_pause`` (``run-status stop-apps`` /
+``resume-apps``) and ``update_resume_note`` (the note a resumed chat is
 sent).
 """
 
