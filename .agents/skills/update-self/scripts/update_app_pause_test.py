@@ -145,7 +145,7 @@ def test_a_stop_that_times_out_is_reported_but_still_recorded(
     slow = tmp_path / "slow-supervisorctl"
     slow.mkdir()
     script = slow / "supervisorctl"
-    script.write_text("#!/bin/sh\nsleep 30\n")
+    script.write_text("#!/bin/sh\nexec sleep 30\n")
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
     monkeypatch.setenv("PATH", f"{slow}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setattr(update_app_pause, "STOP_TIMEOUT_SECONDS", 0.3)
