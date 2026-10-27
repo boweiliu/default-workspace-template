@@ -2408,6 +2408,8 @@ def test_the_phone_model_menu_shows_a_pi_chats_model_search_inside_the_card(
         expect(menu.locator("button", has_text="openrouter/vendor/model-11")).to_be_attached()
 
         track = menu.locator("[data-menu-track]")
+        # Measured once the slide has landed: mid-slide the pane is still on its way in from the side.
+        track.locator(".sliding-menu-track").evaluate("el => Promise.all(el.getAnimations().map((a) => a.finished))")
         card = track.bounding_box()
         assert card is not None
         for shown in (menu.locator("[data-menu-track-back]"), search):

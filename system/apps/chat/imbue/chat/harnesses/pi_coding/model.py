@@ -178,8 +178,14 @@ def build_catalog(data_dir: Path) -> HarnessCatalog:
     )
 
 
+# Parsed catalogs by the provider data dir they were read from. The data ships with the pi install, so a
+# catalog never changes for its dir; keying by dir rather than holding one catalog means a different pi
+# on PATH is read rather than served the first one's models. An empty catalog is never stored.
+_CATALOG_BY_DATA_DIR: dict[Path, HarnessCatalog] = {}
+
+
 def get_catalog() -> HarnessCatalog:
-    """pi's master catalog, or an empty one when pi's data is absent (invariant: never raise)."""
+    """The master catalog of the ``pi`` on PATH, or an empty one when pi's data is absent (invariant: never raise)."""
     executable = shutil.which("pi")
     data_dir = find_provider_data_dir(Path(executable)) if executable else None
     if data_dir is None:
@@ -192,7 +198,13 @@ def get_catalog() -> HarnessCatalog:
             # pi interrupts natively via the lifecycle extension (interrupt + resubmit).
             native_atomic_shoulder_tap_possible=True,
         )
-    return build_catalog(data_dir)
+    cached = _CATALOG_BY_DATA_DIR.get(data_dir)
+    if cached is not None:
+        return cached
+    catalog = build_catalog(data_dir)
+    if catalog.options:
+        _CATALOG_BY_DATA_DIR[data_dir] = catalog
+    return catalog
 
 
 class PiModelResolver(HarnessModelResolver):

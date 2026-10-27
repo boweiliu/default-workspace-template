@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from imbue.chat.agent_discovery import AgentInfo
 from imbue.chat.harnesses.claude.model import ClaudeModelResolver
 from imbue.chat.harnesses.harness_type import HarnessType
@@ -17,6 +19,8 @@ from imbue.chat.harnesses.pi_coding.model import _parse_list_models
 from imbue.chat.harnesses.pi_coding.model import _supported_thinking_levels
 from imbue.chat.harnesses.pi_coding.model import build_catalog
 from imbue.chat.harnesses.pi_coding.model import flush_pi_queue_atomic
+from imbue.chat.harnesses.registry import get_catalog
+from imbue.chat.testing import put_stand_in_pi_on_path
 
 
 def _agent_info(tmp_path: Path) -> AgentInfo:
@@ -89,6 +93,16 @@ def test_build_catalog_tags_and_string_efforts(tmp_path: Path) -> None:
     assert [e.level for e in by_id["anthropic/haiku-lite"].efforts] == ["off"]
     # no model supports fast
     assert all(not opt.supports_fast for opt in catalog.options)
+
+
+def test_the_pi_catalog_is_read_from_the_pi_on_path_even_after_another_pi_was_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    put_stand_in_pi_on_path(tmp_path / "first", "openrouter", ["vendor/first-model"], monkeypatch)
+    assert [option.id for option in get_catalog(HarnessType.PI_CODING).options] == ["openrouter/vendor/first-model"]
+
+    put_stand_in_pi_on_path(tmp_path / "second", "groq", ["vendor/second-model"], monkeypatch)
+    assert [option.id for option in get_catalog(HarnessType.PI_CODING).options] == ["groq/vendor/second-model"]
 
 
 # --- pi --list-models parsing (the authed offer set) ----------------------------
