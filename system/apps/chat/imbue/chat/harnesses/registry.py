@@ -623,5 +623,5 @@ def get_model_state_path(harness: HarnessType, agent_state_dir: Path) -> Path:
 
 
 def get_catalog(harness: HarnessType) -> HarnessCatalog:
-    """The model catalog for ``harness``, from its factory (pi's caches what it parses)."""
+    """The model catalog for ``harness``, from its factory (pi's factory caches the catalogs it parses)."""
     return get_harness_spec(harness).catalog_factory()
