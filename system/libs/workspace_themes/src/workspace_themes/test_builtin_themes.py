@@ -8,8 +8,8 @@ from workspace_themes.primitives import ThemeSource
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _BUILTIN_THEME_IDS = ("standard", "mac-classic", "windows-2000")
 # The apps a user sees that the template ships. Only these need a built-in theme's icon: a workspace
-# built from the template may carry user-built apps, which take the theme's fallback icon, and this
-# suite runs there too.
+# built from the template may carry user-built apps, whose icon the theme derives from the app's own,
+# and this suite runs there too.
 _BUILT_IN_VISIBLE_APP_NAMES = frozenset(
     {
         "browser",
