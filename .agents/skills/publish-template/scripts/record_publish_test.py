@@ -1,5 +1,6 @@
 """`record_publish.py` writing the ledger of a real workspace-shaped repo."""
 
+import importlib
 import re
 import subprocess
 import sys
@@ -9,9 +10,20 @@ import pytest
 from publish_testing import git, init_repo
 
 _SCRIPT = Path(__file__).resolve().parent / "record_publish.py"
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_UPDATE_SELF_SCRIPTS = Path(__file__).resolve().parents[2] / "update-self" / "scripts"
 _LEDGER = "docs/VERSION_HISTORY.md"
 _TODAY = "2026-10-20"
+
+
+def _shipped_ledger() -> str:
+    """The ledger a template release ships, before any workspace has written to it.
+
+    Not this checkout's own `docs/VERSION_HISTORY.md`: in a workspace that one
+    already records where the workspace came from.
+    """
+    if str(_UPDATE_SELF_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(_UPDATE_SELF_SCRIPTS))
+    return importlib.import_module("update_ledger").VERSION_HISTORY_STARTER
 
 
 @pytest.fixture
@@ -19,7 +31,7 @@ def workspace(tmp_path: Path) -> Path:
     """A template release tagged minds-v0.9.1, then bootstrap's marker, then work."""
     root = init_repo(tmp_path / "workspace")
     (root / "docs").mkdir()
-    (root / _LEDGER).write_text((_REPO_ROOT / _LEDGER).read_text())
+    (root / _LEDGER).write_text(_shipped_ledger())
     git(root, "add", "-A")
     git(root, "commit", "-qm", "Template release")
     git(root, "tag", "minds-v0.9.1")
