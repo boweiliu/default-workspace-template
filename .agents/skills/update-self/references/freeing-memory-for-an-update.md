@@ -86,7 +86,7 @@ python3 data/.tasks/update-self/skill-at-target/.agents/skills/update-self/scrip
 
 It starts every app the record names and drops each one as it comes up, so it is safe to re-run and
 a no-op when nothing was stopped or a landed apply got there first. An app it cannot start stays on
-the record, and the next run carries it over.
+the record, and the next run carries it over, unless the update removed its program.
 
 A browser is not a program, so no ending brings one back: the browser service restores a stopped
 browser as stopped, with its tabs, and its next window is what starts it
