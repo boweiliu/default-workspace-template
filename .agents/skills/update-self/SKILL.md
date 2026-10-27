@@ -476,8 +476,9 @@ report, re-arm the poll. The last ends the pass, as below.
    reports *after* it. Memory pressure is never a reason to narrow the gate, so
    never answer it by telling the worker to skip or trim one. It reaches the
    user only when the licence is spent and the room is still not there: then
-   ask them, recording the wait with Step 2's `run-status hold` and clearing it
-   with `resume`, and name what is left to stop and what stopping it costs
+   ask them, recording the wait with the staged copy's `run-status hold` and
+   clearing it with `resume` (an older own copy drops the record of the apps
+   you stopped), and name what is left to stop and what stopping it costs
    them. The worker keeps its branch and waits; this is not the §4b hold.
 4. **A customization hold** (its §4b verdict): something the user built that
    the update **cannot keep**, after the worker genuinely tried to re-fit it.
