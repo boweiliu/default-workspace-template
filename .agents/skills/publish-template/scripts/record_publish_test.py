@@ -1,16 +1,15 @@
 """`record_publish.py` writing the ledger of a real workspace-shaped repo."""
 
-import importlib
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import record_publish
 from publish_testing import git, init_repo
 
 _SCRIPT = Path(__file__).resolve().parent / "record_publish.py"
-_UPDATE_SELF_SCRIPTS = Path(__file__).resolve().parents[2] / "update-self" / "scripts"
 _LEDGER = "docs/VERSION_HISTORY.md"
 _TODAY = "2026-10-20"
 
@@ -21,9 +20,7 @@ def _shipped_ledger() -> str:
     Not this checkout's own `docs/VERSION_HISTORY.md`: in a workspace that one
     already records where the workspace came from.
     """
-    if str(_UPDATE_SELF_SCRIPTS) not in sys.path:
-        sys.path.insert(0, str(_UPDATE_SELF_SCRIPTS))
-    return importlib.import_module("update_ledger").VERSION_HISTORY_STARTER
+    return record_publish._update_self_module("update_ledger").VERSION_HISTORY_STARTER
 
 
 @pytest.fixture
