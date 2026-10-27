@@ -1,8 +1,8 @@
 """Unit tests for antigravity's model catalog and resolver."""
 
 import json
-from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -101,7 +101,9 @@ def test_a_switch_that_changes_neither_model_nor_effort_holds_nothing(tmp_path: 
 
 
 def _session(model_state_path: Path) -> AntigravityHarnessSession:
-    unused: Callable[..., object] = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unused"))
+    def unused(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("unused")
+
     return AntigravityHarnessSession.build(
         SessionDeps(
             harness=HarnessType.ANTIGRAVITY,
