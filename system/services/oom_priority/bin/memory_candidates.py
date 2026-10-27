@@ -731,8 +731,8 @@ def stoppable_app_candidates(
     """The running apps the workspace is allowed to stop, largest memory first.
 
     The filter is the shell's own ``stoppable_program_of``
-    (``system_interface/shell/data_types.py``), which decides what the workspace may stop, park and
-    wake: an app with a program, not critical (the shell, the chat and the terminal are what the
+    (``system/apps/system_interface/imbue/system_interface/shell/data_types.py``), which decides
+    what the workspace may stop, park and wake: an app with a program, not critical (the shell, the chat and the terminal are what the
     workspace is reached and talked to through), and not sharing a critical app's program, since
     stopping that program would take the critical app down with it. An internal app the user cannot
     open is left out as well, and so is the browser: its service holds almost no memory and its
